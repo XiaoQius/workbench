@@ -4,7 +4,8 @@ import {
   NModal, NInput, NSlider, NSwitch, NButton, NTag, NText, NList, NListItem, NThing, NSelect, NTabs, NTabPane,
 } from 'naive-ui'
 import { useSettings, UPDATE_SOURCE, type CustomCard } from '@/composables/useSettings'
-import { modules } from '@/theme/tokens'
+import { modules, THEMES, tokens } from '@/theme/tokens'
+import { useThemeStore } from '@/stores/theme'
 import { exportBackupTo, checkUpdate, llmStatus } from '@/composables/useTauri'
 import { APP_VERSION } from '@/composables/useSettings'
 import { llmConfigured, llmConfigLabel, llmChat } from '@/composables/llmClient'
@@ -19,6 +20,19 @@ const props = defineProps<{ show: boolean }>()
 const emit = defineEmits<{ (e: 'update:show', v: boolean): void }>()
 
 const s = useSettings()
+const themeStore = useThemeStore()
+
+// 主题选择：每项用该主题自己的 bg / accent / border 自绘小色卡预览
+const themeOptions = THEMES.map((t) => {
+  const tk = tokens[t.key]
+  return {
+    meta: t,
+    bg: tk.bg,
+    accent: tk.accent,
+    border: tk.border,
+    text: tk.text1,
+  }
+})
 
 
 // ---- 设置面板二级分类（工作台升级：单页过长过乱，按类别分组） ----
@@ -172,6 +186,13 @@ const syncStateLabel = computed(() => ({
   error: '异常',
   offline: '离线',
 }[syncStatus.value.state] || syncStatus.value.state))
+
+// 字号滑块：拖动时用本地值保持流畅，松手才提交到全局设置（避免每帧触发深监听写盘）
+const fontScaleDraft = ref(s.fontScale)
+function commitFontScale(v: number) {
+  fontScaleDraft.value = v
+  s.fontScale = v
+}
 </script>
 
 <template>
@@ -185,7 +206,7 @@ const syncStateLabel = computed(() => ({
           <div class="sp-label">无障碍 · 字号可调（F-SYS-11）</div>
           <div class="sp-row">
             <span class="sp-dim">85%</span>
-            <NSlider v-model:value="s.fontScale" :min="0.85" :max="1.3" :step="0.05" style="flex: 1" />
+            <NSlider :value="fontScaleDraft" :min="0.85" :max="1.3" :step="0.05" style="flex: 1" @update-value="commitFontScale" />
             <span class="sp-dim">130%</span>
           </div>
           <div class="sp-row">
@@ -223,8 +244,29 @@ const syncStateLabel = computed(() => ({
         </div>
       </NTabPane>
 
-      <!-- 显示：板块显示开关 -->
+      <!-- 显示：主题选择 + 板块显示开关 -->
       <NTabPane name="display" tab="显示">
+        <div class="sp-sec">
+          <div class="sp-label">主题（4 选 1，立即全局生效）</div>
+          <div class="theme-grid">
+            <button
+              v-for="o in themeOptions"
+              :key="o.meta.key"
+              type="button"
+              class="theme-item"
+              :class="{ active: themeStore.themeKey === o.meta.key }"
+              @click="themeStore.setTheme(o.meta.key)"
+            >
+              <span class="theme-swatch" :style="{ background: o.bg, borderColor: o.border }">
+                <span class="swatch-bar" :style="{ background: o.accent }"></span>
+                <span class="swatch-block" :style="{ background: o.bg, borderColor: o.border, color: o.text }"></span>
+              </span>
+              <span class="theme-name">{{ o.meta.label }}</span>
+            </button>
+          </div>
+          <div class="sp-dim">顶栏的 ☀/☾ 按钮与 Ctrl+Shift+D 仍是「浅色 ⇄ 深色」快捷切换；这里的选项会记住并在重启后保持。</div>
+        </div>
+
         <div class="sp-sec">
           <div class="sp-label">板块显示（关闭后在左侧菜单隐藏对应板块）</div>
           <div class="sp-grid">
@@ -290,7 +332,7 @@ const syncStateLabel = computed(() => ({
             <NInput v-model:value="s.gitSyncDir" placeholder="本地备份目录，如 D:\sync\workbench" style="flex: 1" />
             <NButton size="small" type="primary" ghost :loading="syncing" @click="syncToGitDir">导出备份</NButton>
           </div>
-          <div class="sp-dim" v-if="syncMsg" style="white-space: pre-line; color: #16a34a">{{ syncMsg }}</div>
+          <div class="sp-dim" v-if="syncMsg" style="white-space: pre-line; color: var(--wb-success)">{{ syncMsg }}</div>
           <div class="sp-dim">将工作台全部数据导出为 JSON 备份文件，可搭配网盘或 Git 实现多机同步。</div>
         </div>
       </NTabPane>
@@ -352,6 +394,45 @@ const syncStateLabel = computed(() => ({
 .sp-label { font-size: 13px; font-weight: 600; margin-bottom: 8px; }
 .sp-row { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; font-size: 13px; }
 .sp-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 0 16px; }
-.sp-dim { font-size: 12px; color: #999; margin-top: 4px; }
+.sp-dim { font-size: 12px; color: var(--wb-text-3); margin-top: 4px; }
 .sp-k { width: 110px; flex: none; margin-top: 0; }
+.theme-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
+.theme-item {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 6px;
+  padding: 6px;
+  border: 1px solid var(--wb-border);
+  border-radius: var(--wb-radius-md);
+  background: var(--wb-card);
+  cursor: pointer;
+  font: inherit;
+  color: var(--wb-text-1);
+  transition: border-color 120ms ease-out, box-shadow 120ms ease-out;
+}
+.theme-item:hover { border-color: var(--wb-accent); }
+.theme-item.active {
+  border: 2px solid var(--wb-accent);
+  padding: 5px;
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--wb-accent) 22%, transparent);
+}
+.theme-swatch {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 6px;
+  border-radius: var(--wb-radius-sm);
+  border: 2px solid;
+}
+.swatch-bar { height: 8px; border-radius: 3px; }
+.swatch-block {
+  height: 20px;
+  border-radius: 3px;
+  border: 1px solid;
+  font-size: 9px;
+  line-height: 18px;
+  text-align: center;
+}
+.theme-name { font-size: 12px; text-align: center; }
 </style>
