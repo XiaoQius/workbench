@@ -43,6 +43,9 @@ const KEY = 'wb_settings_v1'
  */
 export const UPDATE_SOURCE = 'https://testapi.xusn.cn/api/app/latest'
 
+/** 应用版本（与 package.json / tauri.conf.json 保持一致，更新检查用） */
+export const APP_VERSION = '0.1.3'
+
 function defaults() {
   return {
     fontScale: 1,
