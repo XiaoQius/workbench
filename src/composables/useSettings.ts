@@ -37,9 +37,11 @@ const KEY = 'wb_settings_v1'
 
 /**
  * 更新检查源（内置常量，对普通用户不可见、无需配置）：
- * 指向本应用官方发布仓库的 Releases 页，供「检查更新」与启动时静默检测使用。
+ * 指向自建云端的更新端点（免鉴权），供「检查更新」与启动时静默检测使用。
+ * 之所以不用 GitHub Releases API：本仓库是私有的，匿名请求会 404；
+ * 云端端点返回 { version, url, notes }，由服务器上的 app-release.json 维护。
  */
-export const UPDATE_SOURCE = 'XiaoQius/workbench'
+export const UPDATE_SOURCE = 'https://testapi.xusn.cn/api/app/latest'
 
 function defaults() {
   return {

@@ -19,7 +19,7 @@ const emit = defineEmits<{ (e: 'update:show', v: boolean): void }>()
 
 const s = useSettings()
 
-const APP_VERSION = '0.1.2'
+const APP_VERSION = '0.1.3'
 
 // ---- 设置面板二级分类（工作台升级：单页过长过乱，按类别分组） ----
 const activeTab = ref('general')
