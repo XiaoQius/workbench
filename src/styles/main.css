@@ -1,0 +1,223 @@
+/* ============================================================
+   WORKBENCH 全局样式：设计 token CSS 变量 + 基础排版
+   浅色默认，html.dark 切换深色
+   ============================================================ */
+
+:root {
+  --wb-bg: #fafaf9;
+  --wb-card: #ffffff;
+  --wb-card-alt: #f4f4f5;
+  --wb-border: #e4e4e7;
+  --wb-text-1: #18181b;
+  --wb-text-2: #71717a;
+  --wb-text-3: #a1a1aa;
+  --wb-accent: #4f46e5;
+  --wb-success: #16a34a;
+  --wb-warning: #d97706;
+  --wb-danger: #dc2626;
+  --wb-info: #2563eb;
+  --wb-module-home: #4f46e5;
+  --wb-module-workspace: #0d9488;
+  --wb-module-dev: #059669;
+  --wb-module-ops: #d97706;
+  --wb-module-life: #db2777;
+  --wb-module-study: #7c3aed;
+  --wb-module-knowledge: #2563eb;
+  --wb-shadow-hover: 0 4px 16px rgba(0, 0, 0, 0.06);
+  --wb-radius-sm: 6px;
+  --wb-radius-md: 8px;
+  --wb-radius-lg: 12px;
+  --wb-font: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC',
+    'Hiragino Sans GB', 'Microsoft YaHei', 'Helvetica Neue', Arial, sans-serif;
+  --wb-font-mono: 'JetBrains Mono', 'Cascadia Code', Consolas, 'Courier New',
+    monospace;
+}
+
+html.dark {
+  --wb-bg: #0f0f10;
+  --wb-card: #1a1a1c;
+  --wb-card-alt: #232326;
+  --wb-border: #27272a;
+  --wb-text-1: #f4f4f5;
+  --wb-text-2: #a1a1aa;
+  --wb-text-3: #71717a;
+  --wb-accent: #818cf8;
+  --wb-success: #4ade80;
+  --wb-warning: #fbbf24;
+  --wb-danger: #f87171;
+  --wb-info: #60a5fa;
+  --wb-module-home: #818cf8;
+  --wb-module-workspace: #2dd4bf;
+  --wb-module-dev: #34d399;
+  --wb-module-ops: #fbbf24;
+  --wb-module-life: #f472b6;
+  --wb-module-study: #a78bfa;
+  --wb-module-knowledge: #60a5fa;
+  --wb-shadow-hover: 0 4px 16px rgba(0, 0, 0, 0.35);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#app {
+  height: 100%;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  background: var(--wb-bg);
+  color: var(--wb-text-1);
+  font-family: var(--wb-font);
+  font-size: 13px;
+  line-height: 1.55;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+  transition: background-color 150ms ease-out, color 150ms ease-out;
+}
+
+/* 紧凑滚动条 */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--wb-text-3);
+  border-radius: 4px;
+  opacity: 0.6;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+/* 等宽数字/代码 */
+.mono {
+  font-family: var(--wb-font-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+/* 细分割线 */
+.hairline {
+  border-top: 1px solid var(--wb-border);
+}
+
+/* 模块色小圆点 */
+.module-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex: none;
+}
+
+/* 卡片基调：白底 1px 边框 12px 圆角，hover 轻微上浮 */
+.wb-card {
+  background: var(--wb-card);
+  border: 1px solid var(--wb-border);
+  border-radius: var(--wb-radius-lg);
+  transition: box-shadow 150ms ease-out, transform 150ms ease-out,
+    border-color 150ms ease-out;
+}
+.wb-card.hoverable:hover {
+  transform: translateY(-2px);
+  box-shadow: var(--wb-shadow-hover);
+  border-color: var(--wb-text-3);
+}
+
+/* 强调色左条（模块标题用） */
+.accent-bar {
+  width: 3px;
+  border-radius: 2px;
+  align-self: stretch;
+}
+
+/* 命令面板遮罩与容器 */
+.palette-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 3000;
+  background: rgba(0, 0, 0, 0.4);
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding-top: 12vh;
+}
+.palette-panel {
+  width: 560px;
+  max-width: calc(100vw - 48px);
+  max-height: 60vh;
+  background: var(--wb-card);
+  border: 1px solid var(--wb-border);
+  border-radius: var(--wb-radius-lg);
+  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.18);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+/* 越界告警条 */
+.alert-strip {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 14px;
+  border-radius: var(--wb-radius-md);
+  font-size: 12.5px;
+  border: 1px solid;
+}
+.alert-strip.danger {
+  background: color-mix(in srgb, var(--wb-danger) 8%, transparent);
+  border-color: color-mix(in srgb, var(--wb-danger) 35%, transparent);
+  color: var(--wb-danger);
+}
+.alert-strip.warn {
+  background: color-mix(in srgb, var(--wb-warning) 8%, transparent);
+  border-color: color-mix(in srgb, var(--wb-warning) 35%, transparent);
+  color: var(--wb-warning);
+}
+
+/* 动效：尊重 prefers-reduced-motion */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+/* 空状态 */
+.empty-wrap {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 40px 16px;
+  color: var(--wb-text-3);
+}
+.empty-icon {
+  width: 44px;
+  height: 44px;
+  border-radius: 12px;
+  border: 1px dashed var(--wb-border);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 20px;
+  color: var(--wb-text-3);
+}
+
+/* 启动引导 */
+.boot-screen {
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  color: var(--wb-text-2);
+}

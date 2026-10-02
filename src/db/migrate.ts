@@ -1,0 +1,436 @@
+import { exec } from './client'
+
+// ============================================================
+// 迁移链 v1：幂等建表（CREATE TABLE IF NOT EXISTS）
+// 与 drizzle/schema.ts 保持一致；后续版本按序追加到数组末尾。
+// 启动时由 App.vue 调用 initDb() 全量执行。
+// ============================================================
+
+const MIGRATIONS_V1: string[] = [
+  // ---- 跨模块表 ----
+  `CREATE TABLE IF NOT EXISTS tasks (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    title TEXT NOT NULL,
+    scope TEXT NOT NULL DEFAULT 'dev',
+    type TEXT NOT NULL DEFAULT 'task',
+    priority TEXT NOT NULL DEFAULT 'medium',
+    projectId INTEGER,
+    status TEXT NOT NULL DEFAULT 'todo',
+    dueDate TEXT,
+    focusDate TEXT,
+    note TEXT,
+    createdAt TEXT,
+    updatedAt TEXT
+  )`,
+  `CREATE TABLE IF NOT EXISTS deadlines (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    title TEXT NOT NULL,
+    dueDate TEXT NOT NULL,
+    source TEXT NOT NULL,
+    sourceId INTEGER,
+    status TEXT NOT NULL DEFAULT 'open',
+    remindDays INTEGER NOT NULL DEFAULT 3,
+    createdAt TEXT
+  )`,
+  `CREATE TABLE IF NOT EXISTS links (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    fromType TEXT NOT NULL,
+    fromId INTEGER NOT NULL,
+    toType TEXT NOT NULL,
+    toId INTEGER NOT NULL,
+    label TEXT,
+    createdAt TEXT
+  )`,
+  // ---- 开发 DEV ----
+  `CREATE TABLE IF NOT EXISTS projects (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL,
+    description TEXT,
+    status TEXT NOT NULL DEFAULT 'active',
+    techStack TEXT,
+    repoPath TEXT,
+    createdAt TEXT,
+    updatedAt TEXT
+  )`,
+  `CREATE TABLE IF NOT EXISTS snippets (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    title TEXT NOT NULL,
+    language TEXT NOT NULL DEFAULT 'text',
+    code TEXT NOT NULL,
+    description TEXT,
+    tags TEXT,
+    createdAt TEXT,
+    updatedAt TEXT
+  )`,
+  // ---- 工作台 WORKSPACE ----
+  `CREATE TABLE IF NOT EXISTS tools (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL,
+    category TEXT NOT NULL DEFAULT 'other',
+    launchType TEXT NOT NULL DEFAULT 'protocol',
+    target TEXT NOT NULL,
+    port INTEGER,
+    note TEXT,
+    docUrl TEXT,
+    hitCount INTEGER NOT NULL DEFAULT 0,
+    createdAt TEXT
+  )`,
+  `CREATE TABLE IF NOT EXISTS agents (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL,
+    vendor TEXT,
+    task TEXT,
+    status TEXT NOT NULL DEFAULT 'idle',
+    startedAt TEXT,
+    note TEXT,
+    createdAt TEXT
+  )`,
+  // ---- 运维 OPS ----
+  `CREATE TABLE IF NOT EXISTS servers (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL,
+    purpose TEXT,
+    vendor TEXT,
+    region TEXT,
+    ip TEXT,
+    sshPort INTEGER NOT NULL DEFAULT 22,
+    user TEXT,
+    config TEXT,
+    monthlyCost REAL,
+    expireDate TEXT,
+    status TEXT NOT NULL DEFAULT 'active',
+    note TEXT,
+    createdAt TEXT
+  )`,
+  `CREATE TABLE IF NOT EXISTS domains (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL,
+    registrar TEXT,
+    dnsProvider TEXT,
+    expireDate TEXT,
+    serverId INTEGER,
+    sslExpireDate TEXT,
+    note TEXT,
+    createdAt TEXT
+  )`,
+  `CREATE TABLE IF NOT EXISTS backups (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL,
+    location TEXT,
+    lastBackupAt TEXT,
+    verified INTEGER NOT NULL DEFAULT 0,
+    note TEXT,
+    createdAt TEXT
+  )`,
+  // ---- 生活 LIFE ----
+  `CREATE TABLE IF NOT EXISTS habits (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL,
+    color TEXT NOT NULL DEFAULT '#059669',
+    createdAt TEXT
+  )`,
+  `CREATE TABLE IF NOT EXISTS habitLogs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    habitId INTEGER NOT NULL,
+    date TEXT NOT NULL,
+    createdAt TEXT,
+    UNIQUE(habitId, date)
+  )`,
+  `CREATE TABLE IF NOT EXISTS ledger (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    type TEXT NOT NULL DEFAULT 'expense',
+    amount REAL NOT NULL,
+    category TEXT NOT NULL DEFAULT '其他',
+    note TEXT,
+    date TEXT NOT NULL,
+    createdAt TEXT
+  )`,
+  // 番茄钟（F-LIFE-04）
+  `CREATE TABLE IF NOT EXISTS pomodoros (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    task TEXT,
+    minutes INTEGER NOT NULL DEFAULT 25,
+    startedAt TEXT,
+    completed INTEGER NOT NULL DEFAULT 0,
+    createdAt TEXT
+  )`,
+  // 健康记录（F-LIFE-06）
+  `CREATE TABLE IF NOT EXISTS healthLogs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    date TEXT NOT NULL,
+    sleepHours REAL,
+    exerciseMin INTEGER,
+    mood INTEGER,
+    weight REAL,
+    note TEXT,
+    createdAt TEXT
+  )`,
+  // ---- 学习 STUDY ----
+  `CREATE TABLE IF NOT EXISTS courses (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL,
+    weekday TEXT NOT NULL DEFAULT '一',
+    startPeriod INTEGER NOT NULL DEFAULT 1,
+    endPeriod INTEGER NOT NULL DEFAULT 2,
+    location TEXT,
+    teacher TEXT,
+    weeks TEXT,
+    note TEXT
+  )`,
+  `CREATE TABLE IF NOT EXISTS assignments (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    courseId INTEGER,
+    title TEXT NOT NULL,
+    dueDate TEXT,
+    status TEXT NOT NULL DEFAULT 'todo',
+    note TEXT,
+    createdAt TEXT
+  )`,
+  `CREATE TABLE IF NOT EXISTS notes (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    title TEXT NOT NULL,
+    content TEXT,
+    tags TEXT,
+    courseId INTEGER,
+    createdAt TEXT,
+    updatedAt TEXT
+  )`,
+  // ---- 知识库 KNOWLEDGE ----
+  `CREATE TABLE IF NOT EXISTS pitfalls (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    title TEXT NOT NULL,
+    category TEXT NOT NULL DEFAULT '其他',
+    problem TEXT,
+    solution TEXT,
+    tags TEXT,
+    createdAt TEXT,
+    updatedAt TEXT
+  )`,
+  `CREATE TABLE IF NOT EXISTS resources (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    title TEXT NOT NULL,
+    url TEXT NOT NULL,
+    category TEXT NOT NULL DEFAULT 'favorite',
+    note TEXT,
+    createdAt TEXT
+  )`,
+  // ---- 运维台账 OPS REGISTRY ----
+  `CREATE TABLE IF NOT EXISTS opsFlows (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL,
+    metric TEXT NOT NULL DEFAULT 'qps',
+    threshold REAL NOT NULL DEFAULT 0,
+    current REAL NOT NULL DEFAULT 0,
+    status TEXT NOT NULL DEFAULT 'ok',
+    note TEXT,
+    updatedAt TEXT,
+    createdAt TEXT
+  )`,
+  `CREATE TABLE IF NOT EXISTS opsChanges (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    title TEXT NOT NULL,
+    env TEXT NOT NULL DEFAULT 'prod',
+    category TEXT NOT NULL DEFAULT 'config',
+    detail TEXT,
+    operator TEXT,
+    changedAt TEXT,
+    status TEXT NOT NULL DEFAULT 'done',
+    createdAt TEXT
+  )`,
+  `CREATE TABLE IF NOT EXISTS opsSecChecks (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    title TEXT NOT NULL,
+    category TEXT NOT NULL DEFAULT 'other',
+    severity TEXT NOT NULL DEFAULT 'low',
+    result TEXT NOT NULL DEFAULT 'pass',
+    detail TEXT,
+    checkedAt TEXT,
+    createdAt TEXT
+  )`,
+  `CREATE TABLE IF NOT EXISTS opsSecrets (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL,
+    provider TEXT,
+    account TEXT,
+    status TEXT NOT NULL DEFAULT 'active',
+    expiresAt TEXT,
+    note TEXT,
+    createdAt TEXT
+  )`,
+  `CREATE TABLE IF NOT EXISTS opsDns (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL,
+    recordType TEXT NOT NULL DEFAULT 'A',
+    host TEXT NOT NULL DEFAULT '@',
+    value TEXT NOT NULL,
+    ttl INTEGER NOT NULL DEFAULT 600,
+    status TEXT NOT NULL DEFAULT 'active',
+    note TEXT,
+    createdAt TEXT
+  )`,
+  `CREATE TABLE IF NOT EXISTS deployments (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    project TEXT NOT NULL,
+    env TEXT NOT NULL DEFAULT 'prod',
+    version TEXT,
+    status TEXT NOT NULL DEFAULT 'success',
+    deployedAt TEXT,
+    operator TEXT,
+    note TEXT,
+    createdAt TEXT
+  )`,
+  `CREATE TABLE IF NOT EXISTS envVars (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    key TEXT NOT NULL,
+    value TEXT,
+    scope TEXT NOT NULL DEFAULT 'user',
+    note TEXT,
+    updatedAt TEXT,
+    createdAt TEXT
+  )`,
+  `CREATE TABLE IF NOT EXISTS techDebts (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    title TEXT NOT NULL,
+    category TEXT NOT NULL DEFAULT 'tech',
+    severity TEXT NOT NULL DEFAULT 'medium',
+    project TEXT,
+    status TEXT NOT NULL DEFAULT 'open',
+    detail TEXT,
+    createdAt TEXT
+  )`,
+  `CREATE TABLE IF NOT EXISTS cmdSnippets (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    title TEXT NOT NULL,
+    category TEXT NOT NULL DEFAULT 'shell',
+    command TEXT NOT NULL,
+    note TEXT,
+    hitCount INTEGER NOT NULL DEFAULT 0,
+    createdAt TEXT
+  )`,
+  `CREATE TABLE IF NOT EXISTS decisions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    title TEXT NOT NULL,
+    context TEXT,
+    decision TEXT,
+    alternatives TEXT,
+    status TEXT NOT NULL DEFAULT 'proposed',
+    decidedAt TEXT,
+    createdAt TEXT
+  )`,
+  `CREATE TABLE IF NOT EXISTS skillTree (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL,
+    parentId INTEGER,
+    level INTEGER NOT NULL DEFAULT 1,
+    status TEXT NOT NULL DEFAULT 'todo',
+    note TEXT,
+    createdAt TEXT
+  )`,
+  `CREATE TABLE IF NOT EXISTS learningPaths (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    title TEXT NOT NULL,
+    goal TEXT,
+    step TEXT NOT NULL DEFAULT '1',
+    resource TEXT,
+    status TEXT NOT NULL DEFAULT 'todo',
+    orderIndex INTEGER NOT NULL DEFAULT 0,
+    createdAt TEXT
+  )`,
+  `CREATE TABLE IF NOT EXISTS threeDProjects (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL,
+    tool TEXT,
+    category TEXT NOT NULL DEFAULT 'model',
+    status TEXT NOT NULL DEFAULT 'planning',
+    path TEXT,
+    note TEXT,
+    createdAt TEXT
+  )`,
+  `CREATE TABLE IF NOT EXISTS portfolios (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    title TEXT NOT NULL,
+    category TEXT NOT NULL DEFAULT 'code',
+    url TEXT,
+    path TEXT,
+    status TEXT NOT NULL DEFAULT 'draft',
+    note TEXT,
+    createdAt TEXT
+  )`,
+  `CREATE TABLE IF NOT EXISTS contentCalendars (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    title TEXT NOT NULL,
+    platform TEXT NOT NULL DEFAULT 'other',
+    plannedAt TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'planned',
+    note TEXT,
+    createdAt TEXT
+  )`,
+  `CREATE TABLE IF NOT EXISTS fixedBills (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL,
+    amount REAL NOT NULL DEFAULT 0,
+    category TEXT NOT NULL DEFAULT '订阅',
+    cycle TEXT NOT NULL DEFAULT 'monthly',
+    dueDay INTEGER NOT NULL DEFAULT 1,
+    payMethod TEXT,
+    status TEXT NOT NULL DEFAULT 'active',
+    note TEXT,
+    createdAt TEXT
+  )`,
+  `CREATE TABLE IF NOT EXISTS grades (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    courseId INTEGER,
+    courseName TEXT NOT NULL,
+    examType TEXT NOT NULL DEFAULT '期中',
+    score REAL NOT NULL DEFAULT 0,
+    total REAL NOT NULL DEFAULT 100,
+    weight REAL NOT NULL DEFAULT 1,
+    date TEXT,
+    note TEXT,
+    createdAt TEXT
+  )`,
+  `CREATE TABLE IF NOT EXISTS flashcards (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    front TEXT NOT NULL,
+    back TEXT NOT NULL,
+    deck TEXT NOT NULL DEFAULT '默认',
+    level INTEGER NOT NULL DEFAULT 0,
+    dueDate TEXT,
+    lastReview TEXT,
+    reviewCount INTEGER NOT NULL DEFAULT 0,
+    createdAt TEXT
+  )`,
+  `CREATE TABLE IF NOT EXISTS readQueue (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    title TEXT NOT NULL,
+    author TEXT,
+    category TEXT,
+    url TEXT,
+    status TEXT NOT NULL DEFAULT 'queue',
+    priority INTEGER NOT NULL DEFAULT 1,
+    totalPages INTEGER NOT NULL DEFAULT 0,
+    currentPage INTEGER NOT NULL DEFAULT 0,
+    rating INTEGER,
+    note TEXT,
+    addedAt TEXT,
+    finishedAt TEXT
+  )`,
+  `CREATE TABLE IF NOT EXISTS feynmanLogs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    topic TEXT NOT NULL,
+    explanation TEXT NOT NULL,
+    gap TEXT,
+    source TEXT,
+    status TEXT NOT NULL DEFAULT 'draft',
+    createdAt TEXT
+  )`,
+]
+
+/** 执行全部迁移（幂等） */
+export async function initDb(): Promise<void> {
+  for (const sql of MIGRATIONS_V1) {
+    await exec(sql)
+  }
+}
+
+export const migrationVersion = 1
