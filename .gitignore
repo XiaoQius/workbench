@@ -25,3 +25,11 @@ Thumbs.db
 # Logs
 *.log
 npm-debug.log*
+
+# Local build artifacts
+build_*.txt
+dev_*.txt
+check_*.txt
+check_*.log
+shot_*.png
+build_release.log

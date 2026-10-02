@@ -1,8 +1,8 @@
 <script setup lang="ts">
-import { ref, onMounted, computed } from 'vue'
+import { watch, ref, onMounted, computed } from 'vue'
+import { refreshTick } from '@/stores/ui'
 import { NButton, NTag, NTabs, NTabPane, NIcon, useMessage, NInput } from 'naive-ui'
 import { Plus, Trash, ExternalLink, AlertTriangle, Refresh } from '@vicons/tabler'
-import PageHeader from '@/components/PageHeader.vue'
 import EmptyState from '@/components/EmptyState.vue'
 import ModalForm, { type FieldDef } from '@/components/ModalForm.vue'
 import { pitfallsRepo, resourcesRepo, decisionsRepo, skillTreeRepo, learningPathsRepo, threeDProjectsRepo, portfoliosRepo, contentCalendarsRepo, linksRepo } from '@/db'
@@ -136,6 +136,7 @@ async function load() {
     console.warn(e)
   }
 }
+watch(refreshTick, () => load())
 onMounted(load)
 
 // ---- 踩坑库 ----
@@ -493,9 +494,6 @@ async function shareSnapshot() {
 
 <template>
   <div>
-    <PageHeader title="知识库" desc="踩坑库 · 学习资源" module="knowledge">
-      <NButton size="small" @click="load">刷新</NButton>
-    </PageHeader>
 
     <n-tabs type="line" class="wb-tabs">
       <!-- 踩坑库 -->

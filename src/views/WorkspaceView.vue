@@ -1,8 +1,8 @@
 <script setup lang="ts">
-import { ref, onMounted, computed } from 'vue'
+import { watch, ref, onMounted, computed } from 'vue'
+import { refreshTick } from '@/stores/ui'
 import { NButton, NTag, NInput, NSelect, NModal, NForm, NFormItem, NSpace, useMessage, NIcon } from 'naive-ui'
 import { Plus, Trash, Rocket, Refresh } from '@vicons/tabler'
-import PageHeader from '@/components/PageHeader.vue'
 import EmptyState from '@/components/EmptyState.vue'
 import ModalForm, { type FieldDef } from '@/components/ModalForm.vue'
 import { toolsRepo, agentsRepo } from '@/db'
@@ -308,6 +308,7 @@ async function load() {
 // ---- 实时运行时长（跳秒，F-AGT-04）/ 完成通知（F-AGT-06） ----
 const tick = ref(0)
 const scanAt = ref(0)
+watch(refreshTick, () => { load() })
 onMounted(() => {
   load()
   loadWfHistory()
@@ -619,9 +620,6 @@ function loadRollbackPoints() {
 
 <template>
   <div>
-    <PageHeader title="工作台" desc="工具启动台 · Agent 手动台账" module="workspace">
-      <NButton size="small" @click="load">刷新</NButton>
-    </PageHeader>
 
     <div class="grid">
       <!-- 工具启动台 -->

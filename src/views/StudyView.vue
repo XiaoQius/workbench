@@ -1,8 +1,8 @@
 <script setup lang="ts">
-import { ref, onMounted, computed } from 'vue'
+import { watch, ref, onMounted, computed } from 'vue'
+import { refreshTick } from '@/stores/ui'
 import { NButton, NTag, NTabs, NTabPane, NIcon, useMessage, NSelect, NDatePicker } from 'naive-ui'
 import { Plus, Trash, Check, Checkbox } from '@vicons/tabler'
-import PageHeader from '@/components/PageHeader.vue'
 import EmptyState from '@/components/EmptyState.vue'
 import ModalForm, { type FieldDef } from '@/components/ModalForm.vue'
 import { coursesRepo, assignmentsRepo, notesRepo, gradesRepo, flashcardsRepo, pitfallsRepo, readQueueRepo, feynmanLogsRepo, tasksRepo, pomodorosRepo } from '@/db'
@@ -59,6 +59,7 @@ async function load() {
     console.warn(e)
   }
 }
+watch(refreshTick, () => load())
 onMounted(load)
 
 // ---- 课程表 ----
@@ -465,9 +466,6 @@ const focusMaxMin = computed(() => Math.max(1, ...focusWeek.value.map((d) => d.m
 
 <template>
   <div>
-    <PageHeader title="学习" desc="课程表 · 作业双轨 · 学习笔记" module="study">
-      <NButton size="small" @click="load">刷新</NButton>
-    </PageHeader>
 
     <n-tabs type="line" class="wb-tabs">
       <!-- 课程表 -->

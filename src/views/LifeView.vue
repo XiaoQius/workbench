@@ -1,8 +1,8 @@
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted, computed } from 'vue'
+import { watch, ref, onMounted, onUnmounted, computed } from 'vue'
+import { refreshTick } from '@/stores/ui'
 import { NButton, NTag, NTabs, NTabPane, NIcon, useMessage, NInputNumber, NSelect, NInput, NSlider, NDatePicker } from 'naive-ui'
 import { Plus, Trash, Check } from '@vicons/tabler'
-import PageHeader from '@/components/PageHeader.vue'
 import EmptyState from '@/components/EmptyState.vue'
 import ModalForm, { type FieldDef } from '@/components/ModalForm.vue'
 import { habitsRepo, habitLogsRepo, ledgerRepo, pomodorosRepo, healthLogsRepo, fixedBillsRepo, deadlinesRepo, tasksRepo } from '@/db'
@@ -41,6 +41,7 @@ async function load() {
     console.warn(e)
   }
 }
+watch(refreshTick, () => load())
 onMounted(load)
 
 // ---- 习惯打卡 ----
@@ -378,9 +379,6 @@ const remindItems = computed(() => {
 
 <template>
   <div>
-    <PageHeader title="生活" desc="习惯打卡 · 极简记账" module="life">
-      <NButton size="small" @click="load">刷新</NButton>
-    </PageHeader>
 
     <n-tabs type="line" class="wb-tabs">
       <!-- 习惯打卡 -->

@@ -3,10 +3,11 @@ import { ref, computed } from 'vue'
 import {
   NModal, NInput, NSlider, NSwitch, NButton, NTag, NText, NList, NListItem, NThing, NSelect, NTabs, NTabPane,
 } from 'naive-ui'
-import { useSettings, type CustomCard } from '@/composables/useSettings'
+import { useSettings, UPDATE_SOURCE, type CustomCard } from '@/composables/useSettings'
 import { modules } from '@/theme/tokens'
-import { exportBackupTo, checkUpdate, gitRemoteInfo, gitInitRepo, gitCommitAll, gitGhUpload, llmStatus } from '@/composables/useTauri'
+import { exportBackupTo, checkUpdate, llmStatus } from '@/composables/useTauri'
 import { llmConfigured, llmConfigLabel, llmChat } from '@/composables/llmClient'
+import { cloudRegister, cloudLogin, cloudLogout, syncNow, onSyncStatus, type SyncStatus } from '@/db/sync'
 import {
   tasksRepo, deadlinesRepo, projectsRepo, snippetsRepo, habitsRepo, ledgerRepo,
   coursesRepo, assignmentsRepo, notesRepo, pitfallsRepo, serversRepo, domainsRepo,
@@ -18,11 +19,7 @@ const emit = defineEmits<{ (e: 'update:show', v: boolean): void }>()
 
 const s = useSettings()
 
-const APP_VERSION = '0.1.0'
-// workbench 项目自身目录（Git 版本管理 / 上传 GitHub 的根目录）
-const WORKBENCH_DIR = 'E:\\CODEX\\workbench'
-// GitHub 仓库自动配置（上传后更新检查地址自动指向该仓库，无需手动填写）
-const GITHUB_REPO = 'XiaoQius/workbench'
+const APP_VERSION = '0.1.2'
 
 // ---- 设置面板二级分类（工作台升级：单页过长过乱，按类别分组） ----
 const activeTab = ref('general')
@@ -41,12 +38,7 @@ async function checkUpdateNow() {
   updateMsg.value = ''
   checking.value = true
   try {
-    const url = s.updateUrl.trim()
-    if (!url) {
-      updateMsg.value = '未配置更新检查地址（应指向 GitHub 仓库 owner/repo）'
-      return
-    }
-    const res = await checkUpdate(url, APP_VERSION)
+    const res = await checkUpdate(UPDATE_SOURCE, APP_VERSION)
     if (res.has_update) {
       updateMsg.value = `发现新版本 v${res.latest}（当前 v${APP_VERSION}）` + (res.release_url ? `\n发布页：${res.release_url}` : '')
     } else {
@@ -88,67 +80,7 @@ async function testLlm() {
   }
 }
 
-// ---- Git 版本管理 / 上传 GitHub（Rust 命令 git_remote_info / git_init_repo / git_commit_all / git_gh_upload） ----
-const ghPrivate = ref(false)
-const ghBusy = ref(false)
-const ghMsg = ref('')
-async function gitOverview() {
-  ghMsg.value = ''
-  try {
-    const info = await gitRemoteInfo(WORKBENCH_DIR)
-    if (!info.is_repo) {
-      ghMsg.value = 'workbench 项目尚未初始化 git 仓库，点击「初始化并上传 GitHub」一键完成'
-      return
-    }
-    const parts = [`仓库：${info.branch || '(无分支)'}`]
-    parts.push(`远端：${info.remote_url ?? '未配置'}`)
-    parts.push(`未提交改动：${info.changed_files} 个文件`)
-    ghMsg.value = parts.join('\n')
-  } catch (e) {
-    ghMsg.value = '状态读取失败：' + String(e)
-  }
-}
-async function commitChanges() {
-  ghMsg.value = ''
-  ghBusy.value = true
-  try {
-    const msg = await gitCommitAll(WORKBENCH_DIR, 'chore: workbench 同步改动')
-    ghMsg.value = msg
-  } catch (e) {
-    ghMsg.value = '提交失败：' + String(e)
-  } finally {
-    ghBusy.value = false
-  }
-}
-async function initAndUpload() {
-  ghMsg.value = ''
-  ghBusy.value = true
-  try {
-    const info = await gitRemoteInfo(WORKBENCH_DIR)
-    if (!info.is_repo) {
-      await gitInitRepo(WORKBENCH_DIR)
-      ghMsg.value = '已初始化 git 仓库\n'
-    }
-    const name = s.githubRepo.trim()
-    if (!name) {
-      ghMsg.value += 'GitHub 仓库未配置，请先完成上传配置'
-      return
-    }
-    const repoName = name.includes('/') ? name.split('/').pop()! : name
-    const out = await gitGhUpload(WORKBENCH_DIR, repoName, ghPrivate.value)
-    ghMsg.value += out
-    if (!s.updateUrl.trim() && name.includes('/')) {
-      s.updateUrl = name
-      ghMsg.value += '\n已将更新检查地址设置为该 GitHub 仓库，启动时将自动检测新版本'
-    }
-  } catch (e) {
-    ghMsg.value = '上传失败：' + String(e)
-  } finally {
-    ghBusy.value = false
-  }
-}
-
-// ---- Git 数据同步（F-SYS-07） ----
+// ---- 数据备份（F-SYS-07）：导出全部数据为 JSON 到本地目录 ----
 const syncing = ref(false)
 const syncMsg = ref('')
 async function syncToGitDir() {
@@ -157,7 +89,7 @@ async function syncToGitDir() {
   try {
     const dir = s.gitSyncDir.trim()
     if (!dir) {
-      syncMsg.value = '请先填写 Git 同步目录（私有仓库本地路径）'
+      syncMsg.value = '请先填写本地备份目录'
       return
     }
     const [tasks, deadlines, projects, snippets, habits, ledger, courses, assignments, notes, pitfalls, servers, domains, tools, agents] =
@@ -175,9 +107,9 @@ async function syncToGitDir() {
       tables: { tasks, deadlines, projects, snippets, habits, ledger, courses, assignments, notes, pitfalls, servers, domains, tools, agents },
     }
     const target = await exportBackupTo(dir, JSON.stringify(payload))
-    syncMsg.value = `已写入：${target}\n在 Git 仓库中执行 git add/commit/push 即可完成多机同步`
+    syncMsg.value = `已导出备份：${target}\n将该目录接入网盘或 Git 即可实现多机同步`
   } catch (e) {
-    syncMsg.value = '同步失败：' + String(e)
+    syncMsg.value = '备份失败：' + String(e)
   } finally {
     syncing.value = false
   }
@@ -202,6 +134,44 @@ function removeCard(id: string) {
 }
 
 const hintColor = '#999'
+
+// ---- 云同步：注册/登录 + 状态（可选能力，不开启不影响本地使用） ----
+const cloudForm = ref({ server: s.cloudUrl || 'https://testapi.xusn.cn', username: '', password: '', device: '我的电脑' })
+const cloudBusy = ref(false)
+const cloudMsg = ref('')
+const syncStatus = ref<SyncStatus>({ state: 'idle', message: '', lastSyncAt: null, pending: 0 })
+onSyncStatus((st) => {
+  syncStatus.value = st
+  if (st.lastSyncAt) s.lastSyncAt = st.lastSyncAt
+})
+async function doCloudRegister() {
+  cloudBusy.value = true; cloudMsg.value = ''
+  try {
+    await cloudRegister(cloudForm.value.server, cloudForm.value.username.trim(), cloudForm.value.password, cloudForm.value.device.trim() || '我的电脑')
+    cloudMsg.value = '注册成功，已开始首次同步…'
+    void syncNow()
+  } catch (e) { cloudMsg.value = '注册失败：' + String(e instanceof Error ? e.message : e) } finally { cloudBusy.value = false }
+}
+async function doCloudLogin() {
+  cloudBusy.value = true; cloudMsg.value = ''
+  try {
+    await cloudLogin(cloudForm.value.server, cloudForm.value.username.trim(), cloudForm.value.password, cloudForm.value.device.trim() || '我的电脑')
+    cloudMsg.value = '登录成功，正在同步…'
+    void syncNow()
+  } catch (e) { cloudMsg.value = '登录失败：' + String(e instanceof Error ? e.message : e) } finally { cloudBusy.value = false }
+}
+function doCloudLogout() {
+  cloudLogout(); cloudMsg.value = '已退出云同步（本地数据保留不动）'
+}
+async function doSyncNow() {
+  cloudMsg.value = ''; void syncNow()
+}
+const syncStateLabel = computed(() => ({
+  idle: s.cloudToken ? '已连接' : '未启用',
+  syncing: '同步中…',
+  error: '异常',
+  offline: '离线',
+}[syncStatus.value.state] || syncStatus.value.state))
 </script>
 
 <template>
@@ -298,48 +268,74 @@ const hintColor = '#999'
         </div>
       </NTabPane>
 
-      <!-- 版本与同步：Git 上传 / 升级检测 / 数据同步 -->
-      <NTabPane name="version" tab="版本与同步">
+      <!-- 更新与备份：应用更新 / 数据备份 -->
+      <NTabPane name="version" tab="更新与备份">
         <div class="sp-sec">
-          <div class="sp-label">Git 版本管理 · GitHub（项目：{{ WORKBENCH_DIR }}）</div>
+          <div class="sp-label">应用更新 · 当前 v{{ APP_VERSION }}</div>
           <div class="sp-row">
-            <span class="sp-dim sp-k">目标仓库</span>
-            <NInput :value="s.githubRepo || GITHUB_REPO" readonly style="flex: 1" />
-            <span class="sp-dim">私有</span>
-            <NSwitch v-model:value="ghPrivate" size="small" />
-          </div>
-          <div class="sp-row">
-            <NButton size="small" type="primary" ghost :loading="ghBusy" @click="initAndUpload">初始化并上传 GitHub</NButton>
-            <NButton size="small" ghost :loading="ghBusy" @click="commitChanges">提交改动</NButton>
-            <NButton size="small" quaternary @click="gitOverview">查看状态</NButton>
-          </div>
-          <div class="sp-dim" v-if="ghMsg" style="white-space: pre-line; color: #16a34a">{{ ghMsg }}</div>
-          <div class="sp-dim">仓库已自动配置为 {{ GITHUB_REPO }}，无需手动填写；上传后更新检查地址自动指向该仓库。</div>
-        </div>
-
-        <div class="sp-sec">
-          <div class="sp-label">升级检测 · 当前 v{{ APP_VERSION }}</div>
-          <div class="sp-row">
-            <span class="sp-dim sp-k">更新源</span>
-            <NInput :value="s.updateUrl || GITHUB_REPO" readonly style="flex: 1" />
             <NButton size="small" type="primary" ghost :loading="checking" @click="checkUpdateNow">检查更新</NButton>
+            <span class="sp-dim">更新检查已内置，无需配置</span>
           </div>
           <div class="sp-row">
             <span>启动时自动检查更新</span>
             <NSwitch v-model:value="s.autoCheckUpdate" size="small" />
           </div>
           <div class="sp-dim" v-if="updateMsg" style="white-space: pre-line">{{ updateMsg }}</div>
-          <div class="sp-dim">更新源已随 GitHub 仓库自动配置（{{ GITHUB_REPO }}），启动时检测 GitHub Releases 新版本。</div>
+          <div class="sp-dim">启动后自动检测官方发布的新版本，发现更新会在顶栏状态区提示。</div>
         </div>
 
         <div class="sp-sec">
-          <div class="sp-label">Git 数据同步（F-SYS-07）</div>
+          <div class="sp-label">数据备份（F-SYS-07）</div>
           <div class="sp-row">
-            <NInput v-model:value="s.gitSyncDir" placeholder="私有仓库本地目录，如 D:\sync\workbench" style="flex: 1" />
-            <NButton size="small" type="primary" ghost :loading="syncing" @click="syncToGitDir">导出并同步</NButton>
+            <NInput v-model:value="s.gitSyncDir" placeholder="本地备份目录，如 D:\sync\workbench" style="flex: 1" />
+            <NButton size="small" type="primary" ghost :loading="syncing" @click="syncToGitDir">导出备份</NButton>
           </div>
           <div class="sp-dim" v-if="syncMsg" style="white-space: pre-line; color: #16a34a">{{ syncMsg }}</div>
+          <div class="sp-dim">将工作台全部数据导出为 JSON 备份文件，可搭配网盘或 Git 实现多机同步。</div>
         </div>
+      </NTabPane>
+
+      <!-- 云同步：可选能力。注册/登录后多端实时同步；不开启则纯本地，无强制登录 -->
+      <NTabPane name="cloud" tab="云同步">
+        <div class="sp-sec">
+          <div class="sp-row">
+            <span style="flex:1">启用云同步（多端实时同步全部数据）</span>
+            <NSwitch v-model:value="s.cloudEnabled" />
+          </div>
+          <div class="sp-dim">云端服务为可选能力：不注册、不登录，工作台所有功能照常本地使用。</div>
+        </div>
+
+        <template v-if="!s.cloudToken">
+          <div class="sp-sec">
+            <div class="sp-label">注册 / 登录云端账户</div>
+            <div class="sp-row"><NInput v-model:value="cloudForm.server" placeholder="服务地址" style="flex: 1" /></div>
+            <div class="sp-row"><NInput v-model:value="cloudForm.username" placeholder="用户名" style="flex: 1" /></div>
+            <div class="sp-row"><NInput v-model:value="cloudForm.password" type="password" show-password-on="click" placeholder="密码（≥6位）" style="flex: 1" /></div>
+            <div class="sp-row"><NInput v-model:value="cloudForm.device" placeholder="设备名称" style="flex: 1" /></div>
+            <div class="sp-row">
+              <NButton size="small" type="primary" :loading="cloudBusy" @click="doCloudRegister">注册并同步</NButton>
+              <NButton size="small" :loading="cloudBusy" @click="doCloudLogin">登录</NButton>
+            </div>
+            <div class="sp-dim" v-if="cloudMsg" style="white-space: pre-line">{{ cloudMsg }}</div>
+          </div>
+        </template>
+
+        <template v-else>
+          <div class="sp-sec">
+            <div class="sp-label">同步状态</div>
+            <div class="sp-row"><span class="sp-dim" style="margin:0">状态：</span><NTag size="small" :type="syncStatus.state === 'error' ? 'error' : 'success'">{{ syncStateLabel }}</NTag>
+              <span class="sp-dim" style="margin:0 0 0 10px" v-if="syncStatus.message">{{ syncStatus.message }}</span></div>
+            <div class="sp-row"><span class="sp-dim" style="margin:0">设备：{{ s.deviceName || '（未命名）' }}</span></div>
+            <div class="sp-row"><span class="sp-dim" style="margin:0">上次同步：{{ s.lastSyncAt ? new Date(s.lastSyncAt).toLocaleString() : '从未' }}</span>
+              <span class="sp-dim" style="margin:0 0 0 10px">待推送：{{ syncStatus.pending }} 行</span></div>
+            <div class="sp-row">
+              <NButton size="small" type="primary" ghost :loading="syncStatus.state === 'syncing'" @click="doSyncNow">立即同步</NButton>
+              <NButton size="small" quaternary type="warning" @click="doCloudLogout">退出登录</NButton>
+            </div>
+            <div class="sp-dim" v-if="cloudMsg" style="white-space: pre-line">{{ cloudMsg }}</div>
+            <div class="sp-dim">改动会实时推送到云端并同步到你的其他设备；断网时本地照常使用，联网后自动补传。冲突按"最新修改优先"合并。</div>
+          </div>
+        </template>
       </NTabPane>
     </NTabs>
 
