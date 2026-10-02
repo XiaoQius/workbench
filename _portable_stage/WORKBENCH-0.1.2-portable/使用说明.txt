@@ -1,0 +1,8 @@
+﻿WORKBENCH v0.1.2 便携版
+========================
+直接运行 WORKBENCH.exe 即可，无需安装。
+
+说明：
+- 数据保存在 %APPDATA%\com.local.workbench（与安装版共用，可无缝互换）
+- 需要 Windows 10/11 自带的 WebView2 运行时（绝大多数电脑已内置）
+- 杀毒软件若误报，请添加信任后运行
