@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, ref, computed, h } from 'vue'
+import { onMounted, ref, computed, h, nextTick } from 'vue'
 import { darkTheme, zhCN, dateZhCN, NConfigProvider, NMessageProvider, NDialogProvider } from 'naive-ui'
 import { useThemeStore } from './stores/theme'
 import { useDataStore } from './stores/data'
@@ -22,15 +22,32 @@ const overrides = computed(() => naiveOverrides(themeStore.themeKey))
 useKeyboard()
 
 // F-SYS-11 无障碍：字号可调 + 减少动效（全局生效）
+// 只监听实际用到的两个字段，避免对整个 settings 做深遍历
 applyAccessibility(settings)
-watch(settings, () => applyAccessibility(settings), { deep: true })
+watch(
+  () => [settings.fontScale, settings.reducedMotion],
+  () => applyAccessibility(settings),
+)
+
+// 云同步（建 120 个触发器 + 全量拉取）延后到首屏渲染完成后的空闲时段执行，
+// 原先与 initDb 串行挤在同一 tick，是启动白屏过长的主因之一。
+function scheduleSync() {
+  const run = () => {
+    initSync().catch((e) => console.error('[WORKBENCH] 云同步初始化失败:', e))
+  }
+  if (typeof requestIdleCallback === 'function') {
+    requestIdleCallback(run, { timeout: 3000 })
+  } else {
+    setTimeout(run, 300)
+  }
+}
 
 onMounted(async () => {
   try {
     await initDb()
     dataStore.ready = true
-    // 云同步：建触发器 + 首推/增量 + WS 实时（失败不阻塞启动）
-    initSync().catch((e) => console.error('[WORKBENCH] 云同步初始化失败:', e))
+    // 等首屏渲染出来再启动云同步
+    nextTick(() => requestAnimationFrame(scheduleSync))
   } catch (e) {
     initError.value = e instanceof Error ? e.message : String(e)
     // 浏览器预览降级：仍进入界面，写操作会提示

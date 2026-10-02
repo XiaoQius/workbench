@@ -9,6 +9,7 @@
  * - 冲突：Last-Write-Wins，比较键为客户端时间戳 _ut(ms)
  */
 import { exec, query } from './client'
+import { ensureSyncIndexes, runBatch } from './migrate'
 import { useSettings } from '@/composables/useSettings'
 
 /** 与云端 db/schema.sql 对齐的 40 张业务表 */
@@ -41,6 +42,11 @@ const status: SyncStatus = { state: 'idle', message: '', lastSyncAt: null, pendi
 let syncing = false
 let ws: WebSocket | null = null
 let retryTimer: number | null = null
+let reconnectTimer: number | null = null
+let reconnectAttempt = 0
+let pollTimer: number | null = null
+const BASE_RETRY_MS = 5_000
+const MAX_RETRY_MS = 5 * 60 * 1000
 
 export function onSyncStatus(fn: StatusListener): () => void {
   listeners.add(fn)
@@ -86,17 +92,24 @@ export async function initSyncSchema(): Promise<void> {
   await exec(`CREATE TABLE IF NOT EXISTS _sync_flag (key TEXT PRIMARY KEY, v INTEGER NOT NULL DEFAULT 0)`)
   await exec(`INSERT OR IGNORE INTO _sync_flag (key, v) VALUES ('busy', 0)`)
 
+  // 触发器按表拼接后批量执行：120 条逐条 await 会拖慢启动
+  const batches: string[] = []
   for (const t of SYNC_TABLES) {
     const when = `WHEN (SELECT v FROM _sync_flag WHERE key='busy') = 0 BEGIN`
     const guard = `INSERT INTO _sync_state (tableName, rowId, serverId, ut, del, pending) VALUES ('${t}', NEW.id, NULL, ${NOW_MS}, 0, 1)
       ON CONFLICT(tableName, rowId) DO UPDATE SET ut=${NOW_MS}, del=0, pending=1;`
-    await exec(`CREATE TRIGGER IF NOT EXISTS _sync_${t}_i AFTER INSERT ON ${t} ${when} ${guard} END`)
-    await exec(`CREATE TRIGGER IF NOT EXISTS _sync_${t}_u AFTER UPDATE ON ${t} ${when} ${guard} END`)
-    await exec(`CREATE TRIGGER IF NOT EXISTS _sync_${t}_d AFTER DELETE ON ${t} ${when}
-      INSERT INTO _sync_state (tableName, rowId, serverId, ut, del, pending) VALUES ('${t}', OLD.id,
-        (SELECT serverId FROM _sync_state WHERE tableName='${t}' AND rowId=OLD.id), ${NOW_MS}, 1, 1)
-      ON CONFLICT(tableName, rowId) DO UPDATE SET ut=${NOW_MS}, del=1, pending=1; END`)
+    batches.push([
+      `CREATE TRIGGER IF NOT EXISTS _sync_${t}_i AFTER INSERT ON ${t} ${when} ${guard} END`,
+      `CREATE TRIGGER IF NOT EXISTS _sync_${t}_u AFTER UPDATE ON ${t} ${when} ${guard} END`,
+      `CREATE TRIGGER IF NOT EXISTS _sync_${t}_d AFTER DELETE ON ${t} ${when}
+        INSERT INTO _sync_state (tableName, rowId, serverId, ut, del, pending) VALUES ('${t}', OLD.id,
+          (SELECT serverId FROM _sync_state WHERE tableName='${t}' AND rowId=OLD.id), ${NOW_MS}, 1, 1)
+        ON CONFLICT(tableName, rowId) DO UPDATE SET ut=${NOW_MS}, del=1, pending=1; END`,
+    ].join(';\n'))
   }
+  await runBatch(batches)
+  // _sync_state 已存在，补建其索引（initDb 时该表可能尚未创建）
+  await ensureSyncIndexes()
 }
 
 /** 首次连接：把本地全部存量行登记为待推送 */
@@ -122,24 +135,34 @@ async function pushPending(): Promise<void> {
     )
     if (states.length === 0) continue
 
+    // 批量读取本批次的本地行，避免逐行 SELECT（N+1）
+    const liveIds = states.filter((s) => s.del === 0).map((s) => s.rowId)
+    const rowMap = new Map<number, Record<string, unknown>>()
+    if (liveIds.length > 0) {
+      const lp = liveIds.map(() => '?').join(', ')
+      const rowData = await query<Record<string, unknown>>(`SELECT * FROM ${t} WHERE id IN (${lp})`, liveIds)
+      for (const r of rowData) rowMap.set(r.id as number, r)
+    }
+
     // 服务端已删除但本地从未上送过的墓碑：直接丢弃
     const rows: Record<string, unknown>[] = []
     const entries: { rowId: number; serverId: number | null; del: number }[] = []
+    const orphan: number[] = [] // 本地行已不存在的残留状态
     for (const st of states) {
       if (st.del === 1 && st.serverId == null) {
-        await exec(`DELETE FROM _sync_state WHERE tableName = ? AND rowId = ?`, [t, st.rowId])
+        orphan.push(st.rowId)
         continue
       }
       if (st.del === 1) {
         rows.push({ id: st.serverId, _del: 1, _ut: st.ut })
       } else {
-        const rowData = await query<Record<string, unknown>>(`SELECT * FROM ${t} WHERE id = ?`, [st.rowId])
-        if (rowData.length === 0) {
-          await exec(`DELETE FROM _sync_state WHERE tableName = ? AND rowId = ?`, [t, st.rowId])
+        const rowData = rowMap.get(st.rowId)
+        if (!rowData) {
+          orphan.push(st.rowId)
           continue
         }
         const clean: Record<string, unknown> = { _ut: st.ut }
-        for (const [k, v] of Object.entries(rowData[0])) {
+        for (const [k, v] of Object.entries(rowData)) {
           if (k !== 'id' && !k.startsWith('_')) clean[k] = v
         }
         if (st.serverId != null) clean.id = st.serverId
@@ -148,6 +171,11 @@ async function pushPending(): Promise<void> {
       }
       entries.push({ rowId: st.rowId, serverId: st.serverId, del: st.del })
     }
+    // 孤儿状态批量清理
+    if (orphan.length > 0) {
+      const op = orphan.map(() => '?').join(', ')
+      await exec(`DELETE FROM _sync_state WHERE tableName = ? AND rowId IN (${op})`, [t, ...orphan])
+    }
     if (rows.length === 0) continue
 
     const r = await api<{ results: PushResult[] }>(`/sync/${t}/push`, {
@@ -155,23 +183,35 @@ async function pushPending(): Promise<void> {
       body: JSON.stringify({ rows }),
     })
 
+    // 结果回写：按「删除 / 标记已推送 / 放弃 stale」三类拼批，避免逐行 UPDATE
+    const doneDeletes: number[] = []
+    const doneUpdates: { rowId: number; serverId: number | null }[] = []
+    const staleIds: number[] = []
     for (let i = 0; i < entries.length; i++) {
       const entry = entries[i]
       const res = r.results[i]
       if (!res) continue
       if (res.accepted) {
-        const serverId = res.id ?? entry.serverId
-        if (entry.del === 1) {
-          await exec(`DELETE FROM _sync_state WHERE tableName = ? AND rowId = ?`, [t, entry.rowId])
-        } else {
-          await exec(`UPDATE _sync_state SET pending = 0, serverId = ? WHERE tableName = ? AND rowId = ?`, [serverId, t, entry.rowId])
-        }
-      }
-      // stale/冲突：放弃本次推送标记，保持 pending=0 由服务端版本为准（拉取会覆盖本地）
-      if (!res.accepted && res.reason === 'stale') {
-        await exec(`UPDATE _sync_state SET pending = 0 WHERE tableName = ? AND rowId = ?`, [t, entry.rowId])
+        if (entry.del === 1) doneDeletes.push(entry.rowId)
+        else doneUpdates.push({ rowId: entry.rowId, serverId: res.id ?? entry.serverId })
+      } else if (res.reason === 'stale') {
+        // 放弃本次推送标记，保持 pending=0 由服务端版本为准（拉取会覆盖本地）
+        staleIds.push(entry.rowId)
       }
     }
+    const stmts: string[] = []
+    if (doneDeletes.length > 0) {
+      stmts.push(`DELETE FROM _sync_state WHERE tableName = '${t}' AND rowId IN (${doneDeletes.join(', ')})`)
+    }
+    for (const u of doneUpdates) {
+      stmts.push(
+        `UPDATE _sync_state SET pending = 0, serverId = ${u.serverId ?? 'NULL'} WHERE tableName = '${t}' AND rowId = ${u.rowId}`,
+      )
+    }
+    if (staleIds.length > 0) {
+      stmts.push(`UPDATE _sync_state SET pending = 0 WHERE tableName = '${t}' AND rowId IN (${staleIds.join(', ')})`)
+    }
+    if (stmts.length > 0) await runBatch(stmts)
   }
 }
 
@@ -189,7 +229,7 @@ async function pullTable(t: string): Promise<void> {
     if (r.rows.length > 0) {
       await exec(`UPDATE _sync_flag SET v = 1 WHERE key = 'busy'`)
       try {
-        for (const row of r.rows) await applyRemote(t, row)
+        await applyRemoteBatch(t, r.rows)
       } finally {
         await exec(`UPDATE _sync_flag SET v = 0 WHERE key = 'busy'`)
       }
@@ -200,44 +240,96 @@ async function pullTable(t: string): Promise<void> {
   }
 }
 
-async function applyRemote(t: string, row: PullRow): Promise<void> {
-  const { id, _ut, _del } = row
-  const known = await query<{ rowId: number; ut: number }>(
-    `SELECT rowId, ut FROM _sync_state WHERE tableName = ? AND serverId = ?`, [t, id],
+/**
+ * 批量应用一页远端行。
+ * 原实现逐行 await，每行 3~6 次独立 SQL，40 表 × 500 行可达数万次 IPC 往返，
+ * 全部落在渲染主线程造成界面冻结。这里改为：
+ *   1) 一次查询解析整页的 serverId → 本地行映射
+ *   2) 一次查询取本表现有 id 集合与最大 id（避免逐行查占用）
+ *   3) 按「删除 / 更新 / 插入」三类分别拼批，各用少量语句完成
+ */
+async function applyRemoteBatch(t: string, rows: PullRow[]): Promise<void> {
+  if (rows.length === 0) return
+
+  const ids = rows.map((r) => r.id)
+  const ph = ids.map(() => '?').join(', ')
+
+  // 已知映射：serverId -> (rowId, ut)
+  const knownRows = await query<{ rowId: number; serverId: number; ut: number }>(
+    `SELECT rowId, serverId, ut FROM _sync_state WHERE tableName = ? AND serverId IN (${ph})`,
+    [t, ...ids],
   )
+  const known = new Map<number, { rowId: number; ut: number }>()
+  for (const k of knownRows) known.set(k.serverId, { rowId: k.rowId, ut: k.ut })
 
-  if (_del === 1) {
-    if (known.length > 0) {
-      await exec(`UPDATE _sync_flag SET v = 1 WHERE key = 'busy'`) // 触发器带 busy 护栏，这里的删除不会进队列
-      await exec(`DELETE FROM ${t} WHERE id = ?`, [known[0].rowId])
-      await exec(`DELETE FROM _sync_state WHERE tableName = ? AND rowId = ?`, [t, known[0].rowId])
+  // 本表现有 id 与最大 id，供插入时判占用
+  const existing = await query<{ id: number }>(`SELECT id FROM ${t}`)
+  const existingIds = new Set(existing.map((e) => e.id))
+  let maxId = 0
+  for (const e of existing) if (e.id > maxId) maxId = e.id
+
+  const deletes: number[] = [] // 本地 rowId
+  const updates: { rowId: number; ut: number; row: PullRow }[] = []
+  const inserts: { localId: number; row: PullRow }[] = []
+
+  for (const row of rows) {
+    const k = known.get(row.id)
+    if (row._del === 1) {
+      if (k) deletes.push(k.rowId)
+      continue
     }
-    return
+    if (k) {
+      if (row._ut <= k.ut) continue // 本地较新，跳过
+      if (!existingIds.has(k.rowId)) continue // 本地行已不存在
+      updates.push({ rowId: k.rowId, ut: row._ut, row })
+      continue
+    }
+    // 新行：优先用服务端 id，被占用则顺延
+    let localId = row.id
+    if (existingIds.has(localId)) localId = ++maxId
+    existingIds.add(localId)
+    inserts.push({ localId, row })
   }
 
-  if (known.length > 0) {
-    if (_ut <= known[0].ut) return // 本地较新，跳过
-    const local = await query<{ id: number }>(`SELECT id FROM ${t} WHERE id = ?`, [known[0].rowId])
-    if (local.length === 0) return
-    const cols = Object.keys(row).filter((k) => !['id', ...REMOTE_ONLY_COLS].includes(k))
-    const sets = cols.map((c) => `${c} = ?`).join(', ')
-    await exec(`UPDATE ${t} SET ${sets} WHERE id = ?`, [...cols.map((c) => (row as Record<string, unknown>)[c]), known[0].rowId])
-    await exec(`UPDATE _sync_state SET ut = ?, pending = 0 WHERE tableName = ? AND rowId = ?`, [_ut, t, known[0].rowId])
-    return
+  const stmts: string[] = []
+
+  // 删除：业务行 + 同步状态
+  for (const rowId of deletes) {
+    stmts.push(`DELETE FROM ${t} WHERE id = ${rowId}`)
+  }
+  if (deletes.length > 0) {
+    stmts.push(`DELETE FROM _sync_state WHERE tableName = '${t}' AND rowId IN (${deletes.join(', ')})`)
   }
 
-  // 本地没有该服务端行 → 插入（优先用服务端 id，被占用则换新 id）
-  let localId = id
-  const occupied = await query<{ id: number }>(`SELECT id FROM ${t} WHERE id = ?`, [id])
-  if (occupied.length > 0) {
-    const mx = await query<{ m: number }>(`SELECT MAX(id) AS m FROM ${t}`)
-    localId = (mx[0]?.m ?? 0) + 1
+  // 更新：业务行（每行列可能不同，逐条但同一批提交）
+  for (const u of updates) {
+    const cols = Object.keys(u.row).filter((k) => !['id', ...REMOTE_ONLY_COLS].includes(k))
+    if (cols.length === 0) continue
+    const sets = cols.map((c) => `${c} = ${sqlLit((u.row as Record<string, unknown>)[c])}`).join(', ')
+    stmts.push(`UPDATE ${t} SET ${sets} WHERE id = ${u.rowId}`)
+    stmts.push(`UPDATE _sync_state SET ut = ${u.ut}, pending = 0 WHERE tableName = '${t}' AND rowId = ${u.rowId}`)
   }
-  const cols = ['id', ...Object.keys(row).filter((k) => !REMOTE_ONLY_COLS.includes(k))]
-  const placeholders = cols.map(() => '?').join(', ')
-  const vals: unknown[] = [localId, ...cols.slice(1).map((c) => (row as Record<string, unknown>)[c])]
-  await exec(`INSERT INTO ${t} (${cols.join(', ')}) VALUES (${placeholders})`, vals)
-  await exec(`INSERT INTO _sync_state (tableName, rowId, serverId, ut, del, pending) VALUES (?, ?, ?, ?, 0, 0)`, [t, localId, id, _ut])
+
+  // 插入：业务行 + 同步状态
+  for (const ins of inserts) {
+    const cols = ['id', ...Object.keys(ins.row).filter((k) => !REMOTE_ONLY_COLS.includes(k))]
+    const vals = [ins.localId, ...cols.slice(1).map((c) => sqlLit((ins.row as Record<string, unknown>)[c]))]
+    stmts.push(`INSERT OR REPLACE INTO ${t} (${cols.join(', ')}) VALUES (${vals.join(', ')})`)
+    stmts.push(
+      `INSERT OR REPLACE INTO _sync_state (tableName, rowId, serverId, ut, del, pending) VALUES ('${t}', ${ins.localId}, ${ins.row.id}, ${ins.row._ut}, 0, 0)`,
+    )
+  }
+
+  if (stmts.length === 0) return
+  await runBatch(stmts)
+}
+
+/** 把 JS 值转成 SQL 字面量（远端行来自自家服务端，仍做转义以防注入/语法错误） */
+function sqlLit(v: unknown): string {
+  if (v === null || v === undefined) return 'NULL'
+  if (typeof v === 'number') return Number.isFinite(v) ? String(v) : 'NULL'
+  if (typeof v === 'boolean') return v ? '1' : '0'
+  return `'${String(v).replace(/'/g, "''")}'`
 }
 
 /** 服务端行中不落本地库的列（本地表没有这些列） */
@@ -304,6 +396,9 @@ export function connectLive(): void {
   try { ws?.close() } catch { /* ignore */ }
   const wsUrl = s.cloudUrl.replace(/^http/, 'ws')
   ws = new WebSocket(`${wsUrl}/ws?token=${s.cloudToken}`)
+  ws.onopen = () => {
+    reconnectAttempt = 0 // 连接成功则重置退避
+  }
   ws.onmessage = (ev) => {
     try {
       const m = JSON.parse(ev.data)
@@ -314,7 +409,13 @@ export function connectLive(): void {
     } catch { /* ignore */ }
   }
   ws.onclose = () => {
-    if (useSettings().cloudEnabled) window.setTimeout(connectLive, 10_000)
+    if (!useSettings().cloudEnabled) return
+    // 指数退避重连：云端不可达时固定 10s 重试会形成重连风暴，
+    // 每次重连还触发一次全量同步，表现为周期性假死。
+    const delay = Math.min(BASE_RETRY_MS * 2 ** reconnectAttempt, MAX_RETRY_MS)
+    reconnectAttempt++
+    if (reconnectTimer) window.clearTimeout(reconnectTimer)
+    reconnectTimer = window.setTimeout(() => void connectLive(), delay)
   }
 }
 
@@ -334,6 +435,8 @@ export async function initSync(): Promise<void> {
   if (!s.cloudEnabled || !s.cloudToken) return
   await syncNow()
   connectLive()
-  // 兜底周期同步（WS 断线也能追上）
-  window.setInterval(() => { if (useSettings().cloudEnabled) void syncNow() }, 5 * 60 * 1000)
+  // 兜底周期同步（WS 断线也能追上）。保存句柄去重：
+  // 每次登录/注册都会调 initSync，原先重复注册会叠加出多个轮询定时器。
+  if (pollTimer !== null) window.clearInterval(pollTimer)
+  pollTimer = window.setInterval(() => { if (useSettings().cloudEnabled) void syncNow() }, 5 * 60 * 1000)
 }

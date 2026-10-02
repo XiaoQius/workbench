@@ -44,7 +44,7 @@ const KEY = 'wb_settings_v1'
 export const UPDATE_SOURCE = 'https://testapi.xusn.cn/api/app/latest'
 
 /** 应用版本（与 package.json / tauri.conf.json 保持一致，更新检查用） */
-export const APP_VERSION = '0.1.3'
+export const APP_VERSION = '0.1.4'
 
 function defaults() {
   return {
@@ -114,17 +114,37 @@ function load(): WbSettings {
 
 const settings = reactive<WbSettings>(load())
 
+function persist() {
+  try {
+    localStorage.setItem(KEY, JSON.stringify(settings))
+  } catch {
+    // 存储不可用时静默降级（配置不持久化）
+  }
+}
+
+// 深监听 + 防抖写盘：滑块拖动等高频改动下避免每帧都深遍历并同步写 localStorage
+let persistTimer: number | undefined
 watch(
   settings,
   () => {
-    try {
-      localStorage.setItem(KEY, JSON.stringify(settings))
-    } catch {
-      // 存储不可用时静默降级（配置不持久化）
-    }
+    if (persistTimer !== undefined) clearTimeout(persistTimer)
+    persistTimer = setTimeout(() => {
+      persistTimer = undefined
+      persist()
+    }, 300) as unknown as number
   },
-  { deep: true },
+  { deep: true, flush: 'post' },
 )
+
+// 页面关闭前补写一次，避免防抖窗口内的最后改动丢失
+if (typeof window !== 'undefined') {
+  window.addEventListener('beforeunload', () => {
+    if (persistTimer !== undefined) {
+      clearTimeout(persistTimer)
+      persist()
+    }
+  })
+}
 
 export function useSettings() {
   return settings

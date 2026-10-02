@@ -186,6 +186,13 @@ const syncStateLabel = computed(() => ({
   error: '异常',
   offline: '离线',
 }[syncStatus.value.state] || syncStatus.value.state))
+
+// 字号滑块：拖动时用本地值保持流畅，松手才提交到全局设置（避免每帧触发深监听写盘）
+const fontScaleDraft = ref(s.fontScale)
+function commitFontScale(v: number) {
+  fontScaleDraft.value = v
+  s.fontScale = v
+}
 </script>
 
 <template>
@@ -199,7 +206,7 @@ const syncStateLabel = computed(() => ({
           <div class="sp-label">无障碍 · 字号可调（F-SYS-11）</div>
           <div class="sp-row">
             <span class="sp-dim">85%</span>
-            <NSlider v-model:value="s.fontScale" :min="0.85" :max="1.3" :step="0.05" style="flex: 1" />
+            <NSlider :value="fontScaleDraft" :min="0.85" :max="1.3" :step="0.05" style="flex: 1" @update-value="commitFontScale" />
             <span class="sp-dim">130%</span>
           </div>
           <div class="sp-row">
