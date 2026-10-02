@@ -1,8 +1,8 @@
 <script setup lang="ts">
-import { ref, onMounted, computed } from 'vue'
+import { watch, ref, onMounted, computed } from 'vue'
+import { refreshTick } from '@/stores/ui'
 import { NButton, NTag, NTabs, NTabPane, NIcon, useMessage, NProgress, NInput } from 'naive-ui'
 import { Plus, Trash, Refresh } from '@vicons/tabler'
-import PageHeader from '@/components/PageHeader.vue'
 import EmptyState from '@/components/EmptyState.vue'
 import ModalForm, { type FieldDef } from '@/components/ModalForm.vue'
 import { serversRepo, domainsRepo, opsFlowsRepo, opsChangesRepo, opsSecChecksRepo, opsSecretsRepo, opsDnsRepo } from '@/db'
@@ -187,6 +187,7 @@ async function load() {
     ports.value = await portUsage()
   } catch { ports.value = [] }
 }
+watch(refreshTick, () => load())
 onMounted(load)
 
 // ---- 服务器 ----
@@ -466,12 +467,6 @@ async function removeDns(d: OpsDnsRecord) {
 
 <template>
   <div>
-    <PageHeader title="运维" desc="服务器 · 域名 · 磁盘 · 端口" module="ops">
-      <NButton size="small" @click="load">
-        <template #icon><NIcon :component="Refresh" /></template>
-        刷新
-      </NButton>
-    </PageHeader>
 
     <div v-if="expiringCount" class="expire-alert">
       <span class="ea-dot"></span>

@@ -1,8 +1,8 @@
 <script setup lang="ts">
-import { ref, onMounted, computed } from 'vue'
+import { watch, ref, onMounted, computed } from 'vue'
+import { refreshTick } from '@/stores/ui'
 import { NButton, NTag, NInput, NTabs, NTabPane, NIcon, useMessage, NEmpty, NDropdown } from 'naive-ui'
 import { Plus, Trash, Edit, Check, Book2, Code, Refresh } from '@vicons/tabler'
-import PageHeader from '@/components/PageHeader.vue'
 import EmptyState from '@/components/EmptyState.vue'
 import ModalForm, { type FieldDef } from '@/components/ModalForm.vue'
 import { projectsRepo, tasksRepo, snippetsRepo, deploymentsRepo, envVarsRepo, techDebtsRepo, cmdSnippetsRepo } from '@/db'
@@ -89,6 +89,7 @@ async function load() {
     console.warn(e)
   }
 }
+watch(refreshTick, () => load())
 onMounted(load)
 
 // ---- F-DEV-07 片段变量占位符：识别 {{var}} 并提示 ----
@@ -476,9 +477,6 @@ const healthScore = computed(() => {
 
 <template>
   <div>
-    <PageHeader title="开发" desc="项目看板 · 任务列表 · 代码片段" module="dev">
-      <NButton size="small" @click="load">刷新</NButton>
-    </PageHeader>
 
     <n-tabs v-model:value="tab" type="line" class="wb-tabs">
       <!-- 项目看板 -->

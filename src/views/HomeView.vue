@@ -1,12 +1,11 @@
 <script setup lang="ts">
-import { ref, onMounted, computed } from 'vue'
+import { watch, ref, onMounted, computed } from 'vue'
 import { useRouter } from 'vue-router'
 import { NButton, NTag, NIcon, NSwitch, NSelect, NInput } from 'naive-ui'
 import { ArrowRight } from '@vicons/tabler'
-import PageHeader from '@/components/PageHeader.vue'
 import StatCard from '@/components/StatCard.vue'
 import EmptyState from '@/components/EmptyState.vue'
-import SettingsPanel from '@/components/SettingsPanel.vue'
+import { refreshTick } from '@/stores/ui'
 import { useSettings } from '@/composables/useSettings'
 import { useThemeStore } from '@/stores/theme'
 import { moduleColor, modules } from '@/theme/tokens'
@@ -17,6 +16,7 @@ import {
 } from '@/db'
 import { diskSpace, exportBackup, listBackups, readBackup, llmStatus, type DiskInfo, type BackupInfo, type LlmStatus } from '@/composables/useTauri'
 import { aiSemanticSearch, aiAutoClassify, aiDedupe, aiSuggest, aiSummarize, aiGenerate, aiQa, aiAutoTag, type AiEngineResult } from '@/composables/aiEngine'
+import { llmConfigured, llmConfigLabel } from '@/composables/llmClient'
 import type { Repo } from '@/db/repo'
 import type { Task, Deadline, Domain, Assignment, HabitLog } from '../../drizzle/schema'
 
@@ -24,7 +24,6 @@ const router = useRouter()
 const themeStore = useThemeStore()
 
 const settings = useSettings()
-const settingsShow = ref(false)
 
 const loading = ref(false)
 const counts = ref<Record<string, number>>({})
@@ -33,6 +32,13 @@ const deadlineAlerts = ref<Deadline[]>([])
 const disks = ref<DiskInfo[]>([])
 const backups = ref<BackupInfo[]>([])
 const llm = ref<LlmStatus | null>(null)
+
+// 智能层就绪状态：优先取「设置 → AI 与 LLM」里的自定义服务配置，
+// 其次回退到 Rust 侧的环境变量探测（llm_status）。
+const llmState = computed<LlmStatus | null>(() => {
+  if (llmConfigured()) return { configured: true, provider: llmConfigLabel() }
+  return llm.value
+})
 const exporting = ref(false)
 const restoring = ref(false)
 const allTasks = ref<Task[]>([])
@@ -210,6 +216,7 @@ async function load() {
   loading.value = false
 }
 
+watch(refreshTick, () => { load() })
 onMounted(() => {
   load()
   loadBackups()
@@ -521,10 +528,6 @@ onMounted(() => {
 
 <template>
   <div>
-    <PageHeader title="总览" desc="个人工作台 · 今日状态与越界告警" module="home">
-      <NButton size="small" :loading="loading" @click="load">刷新</NButton>
-      <NButton size="small" @click="settingsShow = true">系统设置</NButton>
-    </PageHeader>
 
     <!-- 自定义卡片（F-SYS-06 简化版：设置面板注册的文本卡片） -->
     <div v-if="settings.cards.length" class="plugin-cards" style="margin-bottom: 16px">
@@ -622,15 +625,15 @@ onMounted(() => {
           <h2>智能层 · 状态检测</h2>
         </header>
         <div class="cap-body">
-          <template v-if="llm">
+          <template v-if="llmState">
             <div class="llm-row">
-              <NTag size="small" :bordered="false" :type="llm.configured ? 'success' : 'warning'">
-                {{ llm.configured ? '已启用' : '未配置' }}
+              <NTag size="small" :bordered="false" :type="llmState.configured ? 'success' : 'warning'">
+                {{ llmState.configured ? '已启用' : '未配置' }}
               </NTag>
-              <span class="llm-provider">{{ llm.provider }}</span>
+              <span class="llm-provider">{{ llmState.provider }}</span>
             </div>
             <p class="llm-tip">
-              {{ llm.configured ? '智能层已就绪，可在「知识」页使用 AI 检索与问答能力。' : '未检测到 LLM API Key，智能层入口已自动隐藏，配置环境变量后刷新即可启用。' }}
+              {{ llmState.configured ? '智能层已就绪，智能问答会优先调用该服务生成回答。' : '未检测到 LLM 服务：请在「系统设置 → AI 与 LLM」填写服务地址与 API Key，或使用环境变量。下方各能力仍可本地运行。' }}
             </p>
           </template>
           <EmptyState v-else text="智能层状态不可用（浏览器降级）" />
@@ -812,7 +815,7 @@ onMounted(() => {
       </div>
     </section>
 
-    <SettingsPanel v-model:show="settingsShow" />
+    
   </div>
 </template>
 

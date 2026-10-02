@@ -35,20 +35,29 @@ export interface KeymapSwitches {
 
 const KEY = 'wb_settings_v1'
 
+/**
+ * 更新检查源（内置常量，对普通用户不可见、无需配置）：
+ * 指向本应用官方发布仓库的 Releases 页，供「检查更新」与启动时静默检测使用。
+ */
+export const UPDATE_SOURCE = 'XiaoQius/workbench'
+
 function defaults() {
   return {
     fontScale: 1,
     reducedMotion: false,
     gitSyncDir: '',
-    updateUrl: 'XiaoQius/workbench',
     keymap: { ctrlNum: true, gSeq: true, theme: true, newShortcut: true } as KeymapSwitches,
     cards: [] as CustomCard[],
     sections: Object.fromEntries(modules.map((m) => [m.key, true])) as Record<ModuleKey, boolean>,
     llmEnabled: true,
     sidebarCollapsed: false,
     autoCheckUpdate: true,
-    githubRepo: 'XiaoQius/workbench',
     llm: { provider: 'custom', baseUrl: '', apiKey: '', model: '' } as LlmConfig,
+    cloudEnabled: false,
+    cloudUrl: 'https://testapi.xusn.cn',
+    cloudToken: '',
+    deviceName: '',
+    lastSyncAt: 0 as number,
   }
 }
 
@@ -56,15 +65,18 @@ export interface WbSettings {
   fontScale: number
   reducedMotion: boolean
   gitSyncDir: string
-  updateUrl: string
   keymap: KeymapSwitches
   cards: CustomCard[]
   sections: Record<ModuleKey, boolean>
   llmEnabled: boolean
   sidebarCollapsed: boolean
   autoCheckUpdate: boolean
-  githubRepo: string
   llm: LlmConfig
+  cloudEnabled: boolean
+  cloudUrl: string
+  cloudToken: string
+  deviceName: string
+  lastSyncAt: number
 }
 
 function load(): WbSettings {
@@ -77,15 +89,18 @@ function load(): WbSettings {
       fontScale: typeof p.fontScale === 'number' ? p.fontScale : d.fontScale,
       reducedMotion: !!p.reducedMotion,
       gitSyncDir: typeof p.gitSyncDir === 'string' ? p.gitSyncDir : '',
-      updateUrl: typeof p.updateUrl === 'string' && p.updateUrl ? p.updateUrl : d.updateUrl,
       keymap: { ...d.keymap, ...(p.keymap || {}) },
       cards: Array.isArray(p.cards) ? p.cards : [],
       sections: { ...d.sections, ...(p.sections || {}) },
       llmEnabled: p.llmEnabled !== false,
       sidebarCollapsed: !!p.sidebarCollapsed,
       autoCheckUpdate: p.autoCheckUpdate !== false,
-      githubRepo: typeof p.githubRepo === 'string' && p.githubRepo ? p.githubRepo : d.githubRepo,
       llm: { ...d.llm, ...(p.llm || {}) },
+      cloudEnabled: !!p.cloudEnabled,
+      cloudUrl: typeof p.cloudUrl === 'string' && p.cloudUrl ? p.cloudUrl : d.cloudUrl,
+      cloudToken: typeof p.cloudToken === 'string' ? p.cloudToken : '',
+      deviceName: typeof p.deviceName === 'string' ? p.deviceName : '',
+      lastSyncAt: typeof p.lastSyncAt === 'number' ? p.lastSyncAt : 0,
     }
   } catch {
     return d

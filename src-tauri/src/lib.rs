@@ -12,6 +12,7 @@ pub fn run() {
             commands::system::list_backups,
             commands::system::read_backup,
             commands::ai::llm_status,
+            commands::ai::llm_chat,
             commands::agent::scan_agents,
             commands::git::git_status,
             commands::asset::scan_assets,

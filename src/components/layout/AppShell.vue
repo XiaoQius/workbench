@@ -2,14 +2,17 @@
 import { computed, onMounted, ref } from 'vue'
 import { useRoute } from 'vue-router'
 import { NButton, NIcon, NTag, NPopover, NTooltip } from 'naive-ui'
-import { Moon, Sun, Command, LayoutSidebar, Activity } from '@vicons/tabler'
+import { Moon, Sun, Command, LayoutSidebar, Activity, Refresh, Settings } from '@vicons/tabler'
 import { modules, moduleColor } from '@/theme/tokens'
 import { useThemeStore } from '@/stores/theme'
 import { usePaletteStore } from '@/stores/palette'
-import { useSettings } from '@/composables/useSettings'
+import { useSettings, UPDATE_SOURCE } from '@/composables/useSettings'
 import { llmConfigured } from '@/composables/llmClient'
 import { diskSpace, llmStatus, proxyDetect, checkUpdate, type DiskInfo, type LlmStatus, type ProxyInfo } from '@/composables/useTauri'
 import CommandPalette from './CommandPalette.vue'
+import SettingsPanel from '@/components/SettingsPanel.vue'
+import { refreshTick, settingsOpen, requestRefresh } from '@/stores/ui'
+import { onSyncStatus, type SyncStatus } from '@/db/sync'
 
 const route = useRoute()
 const themeStore = useThemeStore()
@@ -61,8 +64,8 @@ async function refreshSysStatus() {
     sysStatus.value.loading = false
     sysStatus.value.checkedAt = new Date().toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })
   }
-  // 更新检测：配置了 owner/repo 或 JSON 地址且允许自动检查时静默探测
-  const url = s.updateUrl.trim()
+  // 更新检测：使用内置更新源，用户无需配置；允许自动检查时静默探测
+  const url = UPDATE_SOURCE.trim()
   if (s.autoCheckUpdate && url) {
     try {
       const up = await checkUpdate(url, '0.1.0')
@@ -75,9 +78,17 @@ async function refreshSysStatus() {
   }
 }
 
+const syncStatus = ref<SyncStatus>({ state: 'idle', message: '', lastSyncAt: null, pending: 0 })
+onSyncStatus((st) => { syncStatus.value = st })
+const syncLabel = computed(() => {
+  if (!useSettings().cloudToken) return ''
+  if (syncStatus.value.state === 'syncing') return '同步中'
+  if (syncStatus.value.state === 'error') return '同步异常'
+  return syncStatus.value.pending > 0 ? '待同步 ' + syncStatus.value.pending : '已同步'
+})
+
 onMounted(() => {
   refreshSysStatus()
-  // 切换侧栏折叠后自动回到顶部逻辑无需处理；监听设置里 updateUrl 变化后静默刷新
 })
 </script>
 
@@ -127,8 +138,6 @@ onMounted(() => {
         <div class="crumb">
           <span class="accent-bar" :style="{ background: accent }"></span>
           <span class="crumb-module">{{ activeModule.label }}</span>
-          <span class="crumb-sep">/</span>
-          <span class="crumb-page">{{ String(route.name || activeModule.label) }}</span>
         </div>
         <div class="topbar-right">
           <!-- 启动即监控：本机状态摘要 -->
@@ -148,12 +157,22 @@ onMounted(() => {
               <div class="sys-checked">检查于 {{ sysStatus.checkedAt || '--' }}</div>
             </div>
           </NPopover>
-          <NButton size="tiny" quaternary :loading="sysStatus.loading" @click="refreshSysStatus">刷新</NButton>
-          <NTag size="small" :bordered="false" class="env-tag">v0.1 一期</NTag>
-          <NButton size="small" @click="paletteStore.openPanel()">
+          <NButton size="tiny" quaternary circle :loading="sysStatus.loading" @click="refreshSysStatus" title="刷新系统状态">
+            <template #icon><NIcon :component="Activity" /></template>
+          </NButton>
+          <span class="divider"></span>
+          <div v-if="syncLabel" class="sync-chip" :class="{ err: syncStatus.state === 'error', busy: syncStatus.state === 'syncing' }"
+              title="云同步状态，点击管理" @click="settingsOpen = true">
+            <span class="sync-dot"></span>{{ syncLabel }}
+          </div>
+          <NButton size="small" quaternary circle title="刷新当前页" @click="requestRefresh()">
+            <template #icon><NIcon :component="Refresh" /></template>
+          </NButton>
+          <NButton size="small" quaternary circle title="系统设置" @click="settingsOpen = true">
+            <template #icon><NIcon :component="Settings" /></template>
+          </NButton>
+          <NButton size="small" quaternary circle title="命令面板 (Ctrl K)" @click="paletteStore.openPanel()">
             <template #icon><NIcon :component="Command" /></template>
-            命令面板
-            <span class="kbd">Ctrl K</span>
           </NButton>
         </div>
       </header>
@@ -163,6 +182,7 @@ onMounted(() => {
     </div>
 
     <CommandPalette />
+    <SettingsPanel v-model:show="settingsOpen" />
   </div>
 </template>
 
@@ -303,21 +323,47 @@ html.dark .logo-mark {
   font-weight: 600;
   font-size: 13.5px;
 }
-.crumb-sep {
-  color: var(--wb-text-3);
-}
-.crumb-page {
-  color: var(--wb-text-2);
-  text-transform: capitalize;
-}
 .topbar-right {
   display: flex;
   align-items: center;
   gap: 10px;
   flex: none;
 }
-.env-tag {
+.divider {
+  width: 1px;
+  height: 18px;
+  background: var(--wb-border);
+}
+.sync-chip {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12px;
   color: var(--wb-text-2);
+  padding: 2px 8px;
+  border: 1px solid var(--wb-border);
+  border-radius: 20px;
+  cursor: pointer;
+  user-select: none;
+}
+.sync-chip:hover {
+  background: var(--wb-card-alt);
+}
+.sync-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #10b981;
+  box-shadow: 0 0 0 2px color-mix(in srgb, #10b981 20%, transparent);
+}
+.sync-chip.busy .sync-dot {
+  background: #f59e0b;
+  animation: wb-spin 1s linear infinite;
+  border-radius: 50% 2px 50% 50%;
+}
+.sync-chip.err .sync-dot {
+  background: #ef4444;
+  box-shadow: 0 0 0 2px color-mix(in srgb, #ef4444 20%, transparent);
 }
 .kbd {
   font-family: var(--wb-font-mono);

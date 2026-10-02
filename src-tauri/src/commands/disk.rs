@@ -1,4 +1,8 @@
 use serde::Serialize;
+use windows_sys::Win32::Storage::FileSystem::{GetDiskFreeSpaceExW, GetDriveTypeW};
+
+// GetDriveTypeW 返回值：DRIVE_UNKNOWN=0 / DRIVE_NO_ROOT_DIR=1 / DRIVE_REMOVABLE=2 / DRIVE_FIXED=3 / DRIVE_REMOTE=4 / DRIVE_CDROM=5 / DRIVE_RAMDISK=6
+const DRIVE_FIXED: u32 = 3;
 
 #[derive(Serialize)]
 pub struct DiskInfo {
@@ -9,49 +13,36 @@ pub struct DiskInfo {
     pub used_percent: f64,
 }
 
-/// 磁盘空间命令：通过 PowerShell CIM 读取本机逻辑磁盘（C/D/E 等）余量。
+fn wide(s: &str) -> Vec<u16> {
+    s.encode_utf16().chain(std::iter::once(0)).collect()
+}
+
+fn drive_type(path: &str) -> u32 {
+    let w = wide(path);
+    unsafe { GetDriveTypeW(w.as_ptr()) }
+}
+
+/// 磁盘空间命令：原生枚举固定磁盘（C/D/E 等）容量，不再调用系统命令行工具。
 /// 返回 { mount, total, free, used, used_percent } 列表。
 #[tauri::command]
 pub fn disk_space() -> Result<Vec<DiskInfo>, String> {
-    let script = r#"
-$drives = Get-CimInstance Win32_LogicalDisk -Filter "DriveType=3"
-$drives | ForEach-Object {
-  [PSCustomObject]@{
-    Device = $_.DeviceID
-    Total  = [double]$_.Size
-    Free   = [double]$_.FreeSpace
-  }
-} | ConvertTo-Json -Compress
-"#;
-    let out = std::process::Command::new("powershell")
-        .args(["-NoProfile", "-NonInteractive", "-Command", script])
-        .output()
-        .map_err(|e| format!("powershell 调用失败: {e}"))?;
-
-    let text = String::from_utf8_lossy(&out.stdout);
-    let trimmed = text.trim();
-    if trimmed.is_empty() {
-        return Err("未获取到磁盘数据".into());
-    }
-
-    let v: serde_json::Value =
-        serde_json::from_str(trimmed).map_err(|e| format!("解析磁盘 JSON 失败: {e}"))?;
-    let arr = match v {
-        serde_json::Value::Array(a) => a,
-        other => vec![other],
-    };
-
     let mut result = Vec::new();
-    for item in arr {
-        let mount = item["Device"].as_str().unwrap_or("").to_string();
-        let total = item["Total"].as_f64().unwrap_or(0.0) as u64;
-        let free = item["Free"].as_f64().unwrap_or(0.0) as u64;
+    for c in b'A'..=b'Z' {
+        let mount = format!("{}:", c as char);
+        let path = format!("{}\\", mount);
+        if drive_type(&path) != DRIVE_FIXED {
+            continue;
+        }
+        let w = wide(&path);
+        let mut total: u64 = 0;
+        let mut free: u64 = 0;
+        // 参数 2（可用字节）传 null 是允许的
+        let ok = unsafe { GetDiskFreeSpaceExW(w.as_ptr(), std::ptr::null_mut(), &mut total, &mut free) };
+        if ok == 0 || total == 0 {
+            continue;
+        }
         let used = total.saturating_sub(free);
-        let used_percent = if total > 0 {
-            (used as f64 / total as f64) * 100.0
-        } else {
-            0.0
-        };
+        let used_percent = used as f64 / total as f64 * 100.0;
         result.push(DiskInfo {
             mount,
             total,

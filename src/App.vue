@@ -5,6 +5,7 @@ import { useThemeStore } from './stores/theme'
 import { useDataStore } from './stores/data'
 import { naiveOverrides } from './theme/naive'
 import { initDb } from './db/migrate'
+import { initSync } from './db/sync'
 import { useKeyboard } from './composables/useKeyboard'
 import { useSettings, applyAccessibility } from './composables/useSettings'
 import { watch } from 'vue'
@@ -28,6 +29,8 @@ onMounted(async () => {
   try {
     await initDb()
     dataStore.ready = true
+    // 云同步：建触发器 + 首推/增量 + WS 实时（失败不阻塞启动）
+    initSync().catch((e) => console.error('[WORKBENCH] 云同步初始化失败:', e))
   } catch (e) {
     initError.value = e instanceof Error ? e.message : String(e)
     // 浏览器预览降级：仍进入界面，写操作会提示
