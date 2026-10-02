@@ -1,6 +1,9 @@
 use serde::Serialize;
 use std::fs;
+use std::os::windows::process::CommandExt;
 use std::path::PathBuf;
+
+const NO_WINDOW: u32 = 0x0800_0000;
 
 #[derive(Serialize)]
 pub struct InstalledApp {
@@ -13,6 +16,7 @@ pub struct InstalledApp {
 fn ps(script: &str) -> Result<String, String> {
     let out = std::process::Command::new("powershell")
         .args(["-NoProfile", "-NonInteractive", "-Command", script])
+        .creation_flags(NO_WINDOW)
         .output()
         .map_err(|e| format!("powershell 调用失败: {e}"))?;
     Ok(String::from_utf8_lossy(&out.stdout).trim().to_string())

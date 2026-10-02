@@ -1,4 +1,7 @@
 use serde::Serialize;
+use std::os::windows::process::CommandExt;
+
+const NO_WINDOW: u32 = 0x0800_0000;
 
 #[derive(Serialize)]
 pub struct GitStatus {
@@ -26,6 +29,7 @@ fn git(repo: &str, args: &[&str]) -> Result<String, String> {
         .arg("-C")
         .arg(repo)
         .args(args)
+        .creation_flags(NO_WINDOW)
         .output()
         .map_err(|e| format!("git 调用失败: {e}"))?;
     if !out.status.success() {
@@ -45,6 +49,7 @@ pub fn git_remote_info(repo_path: String) -> Result<GitRemoteInfo, String> {
         .arg(&repo_path)
         .arg("rev-parse")
         .arg("--is-inside-work-tree")
+        .creation_flags(NO_WINDOW)
         .output()
         .map(|o| String::from_utf8_lossy(&o.stdout).trim() == "true")
         .unwrap_or(false);
@@ -109,6 +114,7 @@ pub fn git_gh_upload(repo_path: String, repo_name: String, is_private: bool) -> 
     // 先确认 gh 已登录
     let auth = std::process::Command::new("gh")
         .args(["auth", "status"])
+        .creation_flags(NO_WINDOW)
         .output()
         .map_err(|e| format!("gh CLI 调用失败: {e}"))?;
     let auth_text = format!("{}{}", String::from_utf8_lossy(&auth.stdout), String::from_utf8_lossy(&auth.stderr));
@@ -118,6 +124,7 @@ pub fn git_gh_upload(repo_path: String, repo_name: String, is_private: bool) -> 
     let vis = if is_private { "--private" } else { "--public" };
     let out = std::process::Command::new("gh")
         .args(["repo", "create", &name, "--source", &repo_path, "--push", vis])
+        .creation_flags(NO_WINDOW)
         .output()
         .map_err(|e| format!("gh repo create 调用失败: {e}"))?;
     let text = format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));

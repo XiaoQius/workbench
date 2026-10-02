@@ -1,6 +1,9 @@
 use serde::Serialize;
+use std::os::windows::process::CommandExt;
 use std::net::{TcpStream, ToSocketAddrs};
 use std::time::{Duration, Instant};
+
+const NO_WINDOW: u32 = 0x0800_0000;
 
 #[derive(Serialize)]
 pub struct HealthResult {
@@ -40,6 +43,7 @@ pub fn health_check(target: String) -> Result<HealthResult, String> {
         );
         let out = std::process::Command::new("powershell")
             .args(["-NoProfile", "-NonInteractive", "-Command", &script])
+            .creation_flags(NO_WINDOW)
             .output()
             .map_err(|e| format!("powershell 调用失败: {e}"))?;
         let text = String::from_utf8_lossy(&out.stdout);
