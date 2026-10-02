@@ -33,3 +33,4 @@ check_*.txt
 check_*.log
 shot_*.png
 build_release.log
+_portable_stage/
