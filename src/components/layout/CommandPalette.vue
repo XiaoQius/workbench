@@ -6,6 +6,7 @@ import { useThemeStore } from '@/stores/theme'
 import { modules, moduleColor } from '@/theme/tokens'
 import type { ModuleKey } from '@/theme/tokens'
 import { projectsRepo, tasksRepo, snippetsRepo, serversRepo, domainsRepo, notesRepo, toolsRepo, ledgerRepo } from '@/db'
+import { refreshTick } from '@/stores/ui'
 
 interface Command {
   id: string
@@ -162,12 +163,18 @@ const DATA_SOURCES: Array<{ key: ModuleKey; label: string; load: () => Promise<{
   { key: 'life', label: '账目', load: () => ledgerRepo.listAll().then((rs) => rs.map((r: any) => ({ id: r.id, name: `${r.type === 'income' ? '收' : '支'} ¥${r.amount}`, sub: (r.category || '') + (r.note ? ' · ' + r.note : ''), meta: { type: '账目', tags: (r.category || '').toLowerCase(), scope: 'life' } }))) },
 ]
 
-async function loadDataCommands() {
+// 每个数据源最多纳入的条数：原先无上限，表一大时每次 Ctrl+K 都全表拉取并
+// 生成上千个命令对象，打开即卡住。
+const DATA_SOURCE_LIMIT = 50
+
+async function loadDataCommands(force = false) {
+  // 缓存：面板频繁开关时不必重复全表拉取
+  if (!force && dataCommands.value.length > 0) return
   try {
     const results = await Promise.all(DATA_SOURCES.map((s) => s.load().catch(() => [])))
     dataCommands.value = DATA_SOURCES.flatMap((s, i) => {
       const m = modules.find((x) => x.key === s.key)!
-      return results[i].map((r, j) => ({
+      return results[i].slice(0, DATA_SOURCE_LIMIT).map((r, j) => ({
         id: `data:${s.label}-${j}`,
         label: `${s.label} · ${r.name}`,
         hint: r.sub || m.label,
@@ -189,6 +196,11 @@ watch(() => paletteStore.open, (open) => {
     loadDataCommands()
     nextTick(scrollActive)
   }
+})
+
+// 顶栏「刷新当前页」后让数据命令缓存失效，保证能搜到新增记录
+watch(refreshTick, () => {
+  dataCommands.value = []
 })
 
 watch(all, () => {

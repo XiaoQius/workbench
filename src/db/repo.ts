@@ -8,6 +8,7 @@ export interface Repo<T extends { id: number }> {
   update(id: number, patch: Partial<T>): Promise<void>
   remove(id: number): Promise<void>
   count(): Promise<number>
+  clear(): Promise<void>
 }
 
 function nowIso(): string {
@@ -80,6 +81,10 @@ export function createRepo<T extends { id: number }>(
     async count() {
       const rows = await query<{ n: number }>(`SELECT COUNT(*) AS n FROM ${table}`)
       return rows[0]?.n ?? 0
+    },
+    /** 清空整表（比逐行 remove 快一个数量级，用于批量恢复等场景） */
+    async clear() {
+      await exec(`DELETE FROM ${table}`)
     },
   }
 }

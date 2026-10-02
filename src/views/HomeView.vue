@@ -158,9 +158,10 @@ async function doRestore(name: string) {
       { rows: tables.tools ?? [], repo: toolsRepo },
       { rows: tables.agents ?? [], repo: agentsRepo },
     ]
+    // 批量恢复：原先逐行 await remove + insert，N 行 = 2N 次 IPC 往返，
+    // 数据量大时会长时间卡死界面。改为整表清空 + 批量插入。
     for (const { rows, repo } of all) {
-      const olds = await repo.listAll()
-      for (const o of olds) await repo.remove(o.id)
+      await repo.clear()
       for (const row of rows) await repo.insert(row as never)
     }
     window.alert(`已从 ${name} 恢复数据`)
