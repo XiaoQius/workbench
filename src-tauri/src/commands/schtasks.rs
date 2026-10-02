@@ -1,4 +1,5 @@
 use serde::Serialize;
+use std::os::windows::process::CommandExt;
 
 #[derive(Serialize)]
 pub struct ScheduledTask {
@@ -32,8 +33,9 @@ foreach ($i in $items) {
 }
 ConvertTo-Json @($rows) -Compress
 "#;
-    let out = std::process::Command::new("powershell")
+let out = std::process::Command::new("powershell")
         .args(["-NoProfile", "-NonInteractive", "-Command", script])
+        .creation_flags(0x0800_0000u32)
         .output()
         .map_err(|e| format!("powershell 调用失败: {e}"))?;
     let text = String::from_utf8_lossy(&out.stdout);

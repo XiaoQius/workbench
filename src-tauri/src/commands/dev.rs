@@ -1,9 +1,14 @@
 use serde::Serialize;
 use std::collections::HashMap;
+use std::os::windows::process::CommandExt;
+
+/// 后台静默执行：不闪命令行窗口（CREATE_NO_WINDOW）
+const NO_WINDOW: u32 = 0x0800_0000;
 
 fn run_cmd(prog: &str, args: &[&str]) -> Result<String, String> {
     let out = std::process::Command::new(prog)
         .args(args)
+        .creation_flags(NO_WINDOW)
         .output()
         .map_err(|e| format!("命令调用失败: {e}"))?;
     if !out.status.success() {
@@ -31,6 +36,7 @@ pub fn open_path(path: String) -> Result<String, String> {
     if path.starts_with("vscode://") || path.starts_with("cursor://") || path.starts_with("trae://") {
         std::process::Command::new("cmd")
             .args(["/C", "start", "", &path])
+            .creation_flags(NO_WINDOW)
             .spawn()
             .map_err(|e| format!("打开协议失败: {e}"))?;
         return Ok(format!("已通过系统协议打开: {path}"));

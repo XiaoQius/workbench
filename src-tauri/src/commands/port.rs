@@ -1,7 +1,10 @@
 use serde::Serialize;
 use std::collections::HashMap;
+use std::os::windows::process::CommandExt;
 use std::net::{TcpStream, ToSocketAddrs};
 use std::time::{Duration, Instant};
+
+const NO_WINDOW: u32 = 0x0800_0000;
 
 #[derive(Serialize)]
 pub struct PortInfo {
@@ -18,6 +21,7 @@ pub struct PortInfo {
 pub fn port_usage() -> Result<Vec<PortInfo>, String> {
     let out = std::process::Command::new("netstat")
         .args(["-ano"])
+        .creation_flags(NO_WINDOW)
         .output()
         .map_err(|e| format!("netstat 调用失败: {e}"))?;
 
@@ -67,6 +71,7 @@ pub fn port_usage() -> Result<Vec<PortInfo>, String> {
     let mut names: HashMap<u32, String> = HashMap::new();
     if let Ok(out) = std::process::Command::new("powershell")
         .args(["-NoProfile", "-NonInteractive", "-Command", &script])
+        .creation_flags(NO_WINDOW)
         .output()
     {
         let text = String::from_utf8_lossy(&out.stdout);
