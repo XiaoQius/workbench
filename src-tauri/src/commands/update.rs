@@ -71,7 +71,13 @@ pub fn check_update(update_url: String, current_version: String) -> Result<Updat
             .map(|s| s.trim().to_string())
             .or_else(|| json.as_str().map(|s| s.trim().to_string()))
             .unwrap_or_default();
-        (Some(latest), None)
+        // 自定义端点可自带发布页地址（云端 app-release.json 的 url 字段）
+        let url = json["url"]
+            .as_str()
+            .or_else(|| json["html_url"].as_str())
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty());
+        (Some(latest), url)
     };
 
     let has_update = latest
