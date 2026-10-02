@@ -37,7 +37,7 @@ const accent = computed(() => props.color ?? 'var(--wb-accent)')
 .stat-icon {
   width: 38px;
   height: 38px;
-  border-radius: 10px;
+  border-radius: var(--wb-radius-md);
   display: flex;
   align-items: center;
   justify-content: center;

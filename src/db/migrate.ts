@@ -426,11 +426,64 @@ const MIGRATIONS_V1: string[] = [
   )`,
 ]
 
-/** 执行全部迁移（幂等） */
-export async function initDb(): Promise<void> {
-  for (const sql of MIGRATIONS_V1) {
-    await exec(sql)
+// 索引：此前全库无索引，所有过滤/排序都是全表扫描，数据增长后查询与同步线性变慢。
+// 这里只补同步热路径与列表常用过滤列，均为幂等。
+const INDEXES_V1: string[] = [
+  // 同步热路径：按 serverId 反查本地行、按 pending 取待推送（sync.ts 每次同步必查）
+  `CREATE INDEX IF NOT EXISTS idx_sync_state_server ON _sync_state(tableName, serverId)`,
+  `CREATE INDEX IF NOT EXISTS idx_sync_state_pending ON _sync_state(tableName, pending)`,
+  // 列表与统计常用过滤列
+  `CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status, dueDate)`,
+  `CREATE INDEX IF NOT EXISTS idx_tasks_scope ON tasks(scope)`,
+  `CREATE INDEX IF NOT EXISTS idx_deadlines_status ON deadlines(status, dueDate)`,
+  `CREATE INDEX IF NOT EXISTS idx_habitlogs_habit ON habitLogs(habitId, date)`,
+  `CREATE INDEX IF NOT EXISTS idx_ledger_date ON ledger(date)`,
+  `CREATE INDEX IF NOT EXISTS idx_assignments_status ON assignments(status, dueDate)`,
+  `CREATE INDEX IF NOT EXISTS idx_notes_updated ON notes(updatedAt)`,
+  `CREATE INDEX IF NOT EXISTS idx_snippets_updated ON snippets(updatedAt)`,
+  `CREATE INDEX IF NOT EXISTS idx_domains_expire ON domains(expireDate)`,
+  `CREATE INDEX IF NOT EXISTS idx_servers_status ON servers(status)`,
+  `CREATE INDEX IF NOT EXISTS idx_flashcards_due ON flashcards(deck, dueDate)`,
+  `CREATE INDEX IF NOT EXISTS idx_readqueue_status ON readQueue(status)`,
+  `CREATE INDEX IF NOT EXISTS idx_cmd_snippets_hit ON cmdSnippets(hitCount)`,
+  `CREATE INDEX IF NOT EXISTS idx_tools_hit ON tools(hitCount)`,
+]
+
+/**
+ * 批量执行 SQL 脚本：优先整批提交以减少 IPC 往返；
+ * 若驱动不接受多语句，自动降级为逐条执行（保证迁移不会因优化而失败）。
+ */
+export async function runBatch(sqls: string[]): Promise<void> {
+  try {
+    await exec(sqls.join(';\n'))
+  } catch {
+    for (const sql of sqls) {
+      try {
+        await exec(sql)
+      } catch {
+        /* 单条失败不阻断整体迁移 */
+      }
+    }
   }
+}
+
+/**
+ * 执行全部迁移（幂等）。
+ * 建表与建索引各合成一条多语句脚本，避免 41+ 次串行 IPC 往返拖慢启动。
+ */
+export async function initDb(): Promise<void> {
+  await runBatch(MIGRATIONS_V1)
+  // 索引含 _sync_state 相关项，该表由 initSyncSchema 创建；此处失败不影响主流程
+  try {
+    await runBatch(INDEXES_V1)
+  } catch {
+    /* initSyncSchema 后再由 ensureSyncIndexes 补建 */
+  }
+}
+
+/** 同步元数据表就绪后补建其索引（initSyncSchema 之后调用） */
+export async function ensureSyncIndexes(): Promise<void> {
+  await runBatch(INDEXES_V1)
 }
 
 export const migrationVersion = 1

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { watch, ref, onMounted, computed } from 'vue'
+import { watch, ref, onMounted, onUnmounted, computed } from 'vue'
 import { refreshTick } from '@/stores/ui'
 import { NButton, NTag, NInput, NSelect, NModal, NForm, NFormItem, NSpace, useMessage, NIcon } from 'naive-ui'
 import { Plus, Trash, Rocket, Refresh } from '@vicons/tabler'
@@ -306,7 +306,6 @@ async function load() {
 }
 
 // ---- 实时运行时长（跳秒，F-AGT-04）/ 完成通知（F-AGT-06） ----
-const tick = ref(0)
 const scanAt = ref(0)
 watch(refreshTick, () => { load() })
 onMounted(() => {
@@ -317,7 +316,6 @@ onMounted(() => {
   loadCost()
   loadPrompts()
   loadRollbackPoints()
-  setInterval(() => { tick.value++ }, 1000)
 })
 
 const liveAge = (s: AgentSessionInfo) => {
@@ -492,7 +490,8 @@ function onToolHotkey(e: KeyboardEvent) {
   }
 }
 if (typeof window !== 'undefined') {
-  window.addEventListener('keydown', onToolHotkey)
+  onMounted(() => window.addEventListener('keydown', onToolHotkey))
+  onUnmounted(() => window.removeEventListener('keydown', onToolHotkey))
 }
 // F-LP-06：生成工具启动 .bat 脚本（复制文本，用户保存为 .bat 使用）
 const batScript = ref('')
