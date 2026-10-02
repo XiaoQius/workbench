@@ -6,6 +6,7 @@ import {
 import { useSettings, UPDATE_SOURCE, type CustomCard } from '@/composables/useSettings'
 import { modules } from '@/theme/tokens'
 import { exportBackupTo, checkUpdate, llmStatus } from '@/composables/useTauri'
+import { APP_VERSION } from '@/composables/useSettings'
 import { llmConfigured, llmConfigLabel, llmChat } from '@/composables/llmClient'
 import { cloudRegister, cloudLogin, cloudLogout, syncNow, onSyncStatus, type SyncStatus } from '@/db/sync'
 import {
@@ -19,7 +20,6 @@ const emit = defineEmits<{ (e: 'update:show', v: boolean): void }>()
 
 const s = useSettings()
 
-const APP_VERSION = '0.1.3'
 
 // ---- 设置面板二级分类（工作台升级：单页过长过乱，按类别分组） ----
 const activeTab = ref('general')

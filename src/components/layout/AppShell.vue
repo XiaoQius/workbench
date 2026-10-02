@@ -6,7 +6,7 @@ import { Moon, Sun, Command, LayoutSidebar, Activity, Refresh, Settings } from '
 import { modules, moduleColor } from '@/theme/tokens'
 import { useThemeStore } from '@/stores/theme'
 import { usePaletteStore } from '@/stores/palette'
-import { useSettings, UPDATE_SOURCE } from '@/composables/useSettings'
+import { useSettings, UPDATE_SOURCE, APP_VERSION } from '@/composables/useSettings'
 import { llmConfigured } from '@/composables/llmClient'
 import { diskSpace, llmStatus, proxyDetect, checkUpdate, type DiskInfo, type LlmStatus, type ProxyInfo } from '@/composables/useTauri'
 import CommandPalette from './CommandPalette.vue'
@@ -68,7 +68,7 @@ async function refreshSysStatus() {
   const url = UPDATE_SOURCE.trim()
   if (s.autoCheckUpdate && url) {
     try {
-      const up = await checkUpdate(url, '0.1.0')
+      const up = await checkUpdate(url, APP_VERSION)
       sysStatus.value.update = up.has_update
         ? { has: true, latest: up.latest ?? '' }
         : null
