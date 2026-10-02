@@ -2,6 +2,7 @@
 // 说明：以本地台账数据 + 轻量算法实现语义搜索/自动分类/去重/建议/洞察/摘要/生成/问答/规则引擎/自动标签，
 // 供 HomeView 智能层执行面板调用；各能力与 HomeView 中 wb:ai-switches 开关联动（调用前由视图判断开关）。
 import { tasksRepo, notesRepo, pitfallsRepo, snippetsRepo, projectsRepo, habitsRepo, habitLogsRepo, ledgerRepo, deadlinesRepo, agentsRepo } from '@/db'
+import { llmConfigured, llmChat } from './llmClient'
 
 export interface AiEngineResult {
   ok: boolean
@@ -223,7 +224,7 @@ export async function aiGenerate(kind: string, goal = ''): Promise<AiEngineResul
   return { ok: true, kind: 'generate', items: [{ title: '任务拆解草稿', meta: lines.join('\n'), score: 5 }], summary: '已生成标准任务拆解草稿' }
 }
 
-// F-AI-08 智能问答：在笔记/踩坑中检索与问题最相关片段作为答案
+// F-AI-08 智能问答：优先使用已配置 LLM 服务回答；未配置或调用失败时降级本地检索
 export async function aiQa(question: string): Promise<AiEngineResult> {
   const toks = tokenize(question)
   if (!toks.length) return { ok: false, kind: 'qa', items: [], summary: '请输入问题' }
@@ -237,7 +238,29 @@ export async function aiQa(question: string): Promise<AiEngineResult> {
   pitfalls.forEach((p) => push(`踩坑：${p.title}`, `${p.problem || ''} ${p.solution || ''}`, '踩坑'))
   snippets.forEach((s) => push(`片段：${s.title}`, `${s.code || ''} ${s.description || ''}`, '片段'))
   rows.sort((a, b) => b.score - a.score)
-  if (!rows.length) return { ok: false, kind: 'qa', items: [], summary: '本地台账中未找到相关答案，建议补充笔记' }
+
+  // 已配置 LLM：以本地检索结果为上下文，优先由 LLM 生成回答
+  if (llmConfigured()) {
+    try {
+      const ctx = rows.slice(0, 4).map((r) => `- ${r.title}\n  ${r.meta}`).join('\n')
+      const answer = await llmChat(
+        '你是 WORKBENCH 个人工作台智能助手。请基于给定的本地台账上下文，用简洁中文回答用户问题；上下文不足时如实说明，不要编造事实。',
+        `问题：${question}\n\n本地台账上下文：\n${ctx || '（本地台账无匹配记录）'}`,
+      )
+      if (answer.trim()) {
+        return {
+          ok: true,
+          kind: 'qa',
+          items: [{ title: 'AI 回答', meta: answer.trim().slice(0, 2000), score: 5 }],
+          summary: rows.length ? `已结合 ${rows.length} 条本地记录，由 LLM 服务生成回答` : '由 LLM 服务直接回答（本地台账无匹配记录）',
+        }
+      }
+    } catch {
+      // LLM 调用失败，降级本地检索
+    }
+  }
+
+  if (!rows.length) return { ok: false, kind: 'qa', items: [], summary: '本地台账中未找到相关答案，建议补充笔记或配置 LLM 服务' }
   return { ok: true, kind: 'qa', items: rows.slice(0, 4), summary: `找到 ${rows.length} 条相关记录，最相关：${rows[0].title}` }
 }
 

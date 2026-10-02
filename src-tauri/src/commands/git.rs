@@ -111,7 +111,7 @@ pub fn git_gh_upload(repo_path: String, repo_name: String, is_private: bool) -> 
         .args(["auth", "status"])
         .output()
         .map_err(|e| format!("gh CLI 调用失败: {e}"))?;
-    let auth_text = String::from_utf8_lossy(&auth.stdout) + &String::from_utf8_lossy(&auth.stderr);
+    let auth_text = format!("{}{}", String::from_utf8_lossy(&auth.stdout), String::from_utf8_lossy(&auth.stderr));
     if !auth.status.success() {
         return Err(format!("gh 未登录，请先执行 gh auth login：{}", auth_text.trim()));
     }
@@ -120,7 +120,7 @@ pub fn git_gh_upload(repo_path: String, repo_name: String, is_private: bool) -> 
         .args(["repo", "create", &name, "--source", &repo_path, "--push", vis])
         .output()
         .map_err(|e| format!("gh repo create 调用失败: {e}"))?;
-    let text = String::from_utf8_lossy(&out.stdout) + &String::from_utf8_lossy(&out.stderr);
+    let text = format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
     if !out.status.success() {
         return Err(format!("gh 上传失败：{}", text.trim()));
     }
