@@ -195,7 +195,7 @@ onMounted(() => {
   width: 196px;
   flex: none;
   background: var(--wb-card);
-  border-right: 1px solid var(--wb-border);
+  border-right: var(--wb-border-w) solid var(--wb-border);
   display: flex;
   flex-direction: column;
   align-items: stretch;
@@ -226,7 +226,7 @@ onMounted(() => {
 .logo-mark {
   width: 30px;
   height: 30px;
-  border-radius: 8px;
+  border-radius: var(--wb-radius-md);
   background: var(--wb-accent);
   color: #fff;
   display: flex;
@@ -236,8 +236,9 @@ onMounted(() => {
   font-size: 15px;
   letter-spacing: 0.5px;
 }
-html.dark .logo-mark {
-  color: #0f0f10;
+html.theme-tech .logo-mark,
+html.theme-brutal .logo-mark {
+  color: var(--wb-bg);
 }
 .logo-text {
   font-weight: 700;
@@ -256,7 +257,7 @@ html.dark .logo-mark {
 .nav-item {
   width: 100%;
   height: 36px;
-  border-radius: 8px;
+  border-radius: var(--wb-radius-md);
   display: flex;
   align-items: center;
   gap: 10px;
@@ -309,7 +310,7 @@ html.dark .logo-mark {
   align-items: center;
   justify-content: space-between;
   padding: 0 20px;
-  border-bottom: 1px solid var(--wb-border);
+  border-bottom: var(--wb-border-w) solid var(--wb-border);
   background: var(--wb-bg);
 }
 .crumb {
@@ -341,7 +342,7 @@ html.dark .logo-mark {
   font-size: 12px;
   color: var(--wb-text-2);
   padding: 2px 8px;
-  border: 1px solid var(--wb-border);
+  border: var(--wb-border-w) solid var(--wb-border);
   border-radius: 20px;
   cursor: pointer;
   user-select: none;
@@ -353,17 +354,17 @@ html.dark .logo-mark {
   width: 7px;
   height: 7px;
   border-radius: 50%;
-  background: #10b981;
-  box-shadow: 0 0 0 2px color-mix(in srgb, #10b981 20%, transparent);
+  background: var(--wb-success);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--wb-success) 20%, transparent);
 }
 .sync-chip.busy .sync-dot {
-  background: #f59e0b;
+  background: var(--wb-warning);
   animation: wb-spin 1s linear infinite;
   border-radius: 50% 2px 50% 50%;
 }
 .sync-chip.err .sync-dot {
-  background: #ef4444;
-  box-shadow: 0 0 0 2px color-mix(in srgb, #ef4444 20%, transparent);
+  background: var(--wb-danger);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--wb-danger) 20%, transparent);
 }
 .kbd {
   font-family: var(--wb-font-mono);
@@ -374,6 +375,7 @@ html.dark .logo-mark {
   padding: 0 5px;
   margin-left: 4px;
 }
+
 .content {
   flex: 1;
   overflow-y: auto;
@@ -387,8 +389,8 @@ html.dark .logo-mark {
   color: var(--wb-text-2);
   cursor: default;
   padding: 2px 6px;
-  border: 1px solid var(--wb-border);
-  border-radius: 6px;
+  border: var(--wb-border-w) solid var(--wb-border);
+  border-radius: var(--wb-radius-sm);
   background: var(--wb-card);
 }
 .sys-status .spin {
