@@ -27,10 +27,21 @@
   --wb-radius-sm: 6px;
   --wb-radius-md: 8px;
   --wb-radius-lg: 12px;
+  --wb-border-w: 1px;
   --wb-font: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC',
     'Hiragino Sans GB', 'Microsoft YaHei', 'Helvetica Neue', Arial, sans-serif;
   --wb-font-mono: 'JetBrains Mono', 'Cascadia Code', Consolas, 'Courier New',
     monospace;
+  /* 历史别名：以下变量被各视图引用过但从未定义，这里对齐到标准 token，
+     使新增主题只需覆盖上方标准变量即可带动这些引用点 */
+  --wb-primary: var(--wb-accent);
+  --wb-error: var(--wb-danger);
+  --wb-dim: var(--wb-text-3);
+  --wb-card-bg: var(--wb-card);
+  --wb-mono: var(--wb-font-mono);
+  --wb-accent-dev: var(--wb-module-dev);
+  --wb-accent-life: var(--wb-module-life);
+  --wb-card-hover-border: var(--wb-text-3);
 }
 
 html.dark {
@@ -54,6 +65,71 @@ html.dark {
   --wb-module-study: #a78bfa;
   --wb-module-knowledge: #60a5fa;
   --wb-shadow-hover: 0 4px 16px rgba(0, 0, 0, 0.35);
+}
+
+/* 圆角新粗野风：米白纸底 + 墨黑厚描边 + 硬偏移投影 + 大圆角 */
+html.theme-brutal {
+  --wb-bg: #fff8e7;
+  --wb-card: #ffffff;
+  --wb-card-alt: #fff1c9;
+  --wb-border: #141414;
+  --wb-text-1: #141414;
+  --wb-text-2: #4a4a4a;
+  --wb-text-3: #6e6e6e;
+  --wb-accent: #2b44ff;
+  --wb-success: #0b8a4b;
+  --wb-warning: #c2410c;
+  --wb-danger: #e1000f;
+  --wb-info: #0066cc;
+  --wb-module-home: #2b44ff;
+  --wb-module-workspace: #0b6e4f;
+  --wb-module-dev: #0b8a4b;
+  --wb-module-ops: #c2410c;
+  --wb-module-life: #b3005c;
+  --wb-module-study: #5b2d8e;
+  --wb-module-knowledge: #14509e;
+  --wb-shadow-hover: 4px 4px 0 #141414;
+  --wb-radius-sm: 8px;
+  --wb-radius-md: 14px;
+  --wb-radius-lg: 20px;
+  --wb-border-w: 3px;
+  --wb-card-hover-border: #141414;
+}
+
+/* 科技风：近黑深蓝底 + 霓虹青 + 细描边 + 青色辉光 */
+html.theme-tech {
+  --wb-bg: #05070d;
+  --wb-card: #0c1220;
+  --wb-card-alt: #111a2e;
+  --wb-border: #1b2740;
+  --wb-text-1: #e6f1ff;
+  --wb-text-2: #8fa3c0;
+  --wb-text-3: #5a6b85;
+  --wb-accent: #00e5ff;
+  --wb-success: #2be08a;
+  --wb-warning: #ffb020;
+  --wb-danger: #ff4d6a;
+  --wb-info: #4da3ff;
+  --wb-module-home: #00e5ff;
+  --wb-module-workspace: #2be08a;
+  --wb-module-dev: #2be08a;
+  --wb-module-ops: #ffb020;
+  --wb-module-life: #ff6fb5;
+  --wb-module-study: #a78bfa;
+  --wb-module-knowledge: #4da3ff;
+  --wb-shadow-hover: 0 0 20px rgba(0, 229, 255, 0.22);
+  --wb-radius-sm: 6px;
+  --wb-radius-md: 8px;
+  --wb-radius-lg: 10px;
+  --wb-border-w: 1px;
+  --wb-card-hover-border: #00e5ff;
+}
+
+/* 科技风：数字 / 代码类元素切等宽字体，是本主题的识别点 */
+html.theme-tech .mono,
+html.theme-tech .stat-value {
+  font-family: var(--wb-font-mono);
+  font-variant-numeric: tabular-nums;
 }
 
 * {
@@ -116,7 +192,7 @@ body {
 /* 卡片基调：白底 1px 边框 12px 圆角，hover 轻微上浮 */
 .wb-card {
   background: var(--wb-card);
-  border: 1px solid var(--wb-border);
+  border: var(--wb-border-w) solid var(--wb-border);
   border-radius: var(--wb-radius-lg);
   transition: box-shadow 150ms ease-out, transform 150ms ease-out,
     border-color 150ms ease-out;
@@ -124,7 +200,7 @@ body {
 .wb-card.hoverable:hover {
   transform: translateY(-2px);
   box-shadow: var(--wb-shadow-hover);
-  border-color: var(--wb-text-3);
+  border-color: var(--wb-card-hover-border);
 }
 
 /* 强调色左条（模块标题用） */
@@ -152,7 +228,7 @@ body {
   background: var(--wb-card);
   border: 1px solid var(--wb-border);
   border-radius: var(--wb-radius-lg);
-  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.18);
+  box-shadow: var(--wb-shadow-hover);
   display: flex;
   flex-direction: column;
   overflow: hidden;
