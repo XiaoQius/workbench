@@ -6,15 +6,24 @@ import { modules, type ModuleKey } from '@/theme/tokens'
  * - 字号可调 / 减少动效（F-SYS-11 无障碍）
  * - 快捷键开关（F-SYS-02 键盘驱动自定义）
  * - Git 同步目录（F-SYS-07）
- * - 更新检查地址（升级检测）
+ * - 更新检查地址（升级检测，自动指向 GitHub 仓库，无需手动填写）
  * - 自定义卡片（F-SYS-06 卡片插件机制，简化版：文本/键值模板，不支持任意 JS 执行）
- * - 板块显示开关 / LLM 服务开关 / 侧栏折叠 / 启动自动检查更新 / GitHub 仓库（工作台升级）
+ * - 板块显示开关 / 侧栏折叠 / 启动自动检查更新 / GitHub 仓库（工作台升级）
+ * - LLM 服务：开关 + 自定义服务配置（provider / baseUrl / apiKey / model，工作台升级）
  */
 export interface CustomCard {
   id: string
   name: string
   content: string
   color?: string
+}
+
+/** 自定义 LLM 服务配置（设置 → AI 与 LLM） */
+export interface LlmConfig {
+  provider: string // openai | anthropic | deepseek | ollama | custom
+  baseUrl: string
+  apiKey: string
+  model: string
 }
 
 export interface KeymapSwitches {
@@ -31,14 +40,15 @@ function defaults() {
     fontScale: 1,
     reducedMotion: false,
     gitSyncDir: '',
-    updateUrl: '',
+    updateUrl: 'XiaoQius/workbench',
     keymap: { ctrlNum: true, gSeq: true, theme: true, newShortcut: true } as KeymapSwitches,
     cards: [] as CustomCard[],
     sections: Object.fromEntries(modules.map((m) => [m.key, true])) as Record<ModuleKey, boolean>,
     llmEnabled: true,
     sidebarCollapsed: false,
     autoCheckUpdate: true,
-    githubRepo: '',
+    githubRepo: 'XiaoQius/workbench',
+    llm: { provider: 'custom', baseUrl: '', apiKey: '', model: '' } as LlmConfig,
   }
 }
 
@@ -54,6 +64,7 @@ export interface WbSettings {
   sidebarCollapsed: boolean
   autoCheckUpdate: boolean
   githubRepo: string
+  llm: LlmConfig
 }
 
 function load(): WbSettings {
@@ -66,14 +77,15 @@ function load(): WbSettings {
       fontScale: typeof p.fontScale === 'number' ? p.fontScale : d.fontScale,
       reducedMotion: !!p.reducedMotion,
       gitSyncDir: typeof p.gitSyncDir === 'string' ? p.gitSyncDir : '',
-      updateUrl: typeof p.updateUrl === 'string' ? p.updateUrl : '',
+      updateUrl: typeof p.updateUrl === 'string' && p.updateUrl ? p.updateUrl : d.updateUrl,
       keymap: { ...d.keymap, ...(p.keymap || {}) },
       cards: Array.isArray(p.cards) ? p.cards : [],
       sections: { ...d.sections, ...(p.sections || {}) },
       llmEnabled: p.llmEnabled !== false,
       sidebarCollapsed: !!p.sidebarCollapsed,
       autoCheckUpdate: p.autoCheckUpdate !== false,
-      githubRepo: typeof p.githubRepo === 'string' ? p.githubRepo : '',
+      githubRepo: typeof p.githubRepo === 'string' && p.githubRepo ? p.githubRepo : d.githubRepo,
+      llm: { ...d.llm, ...(p.llm || {}) },
     }
   } catch {
     return d

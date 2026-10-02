@@ -1,11 +1,12 @@
 <script setup lang="ts">
 import { ref, computed } from 'vue'
 import {
-  NModal, NInput, NSlider, NSwitch, NButton, NTag, NText, NList, NListItem, NThing,
+  NModal, NInput, NSlider, NSwitch, NButton, NTag, NText, NList, NListItem, NThing, NSelect, NTabs, NTabPane,
 } from 'naive-ui'
 import { useSettings, type CustomCard } from '@/composables/useSettings'
 import { modules } from '@/theme/tokens'
 import { exportBackupTo, checkUpdate, gitRemoteInfo, gitInitRepo, gitCommitAll, gitGhUpload, llmStatus } from '@/composables/useTauri'
+import { llmConfigured, llmConfigLabel, llmChat } from '@/composables/llmClient'
 import {
   tasksRepo, deadlinesRepo, projectsRepo, snippetsRepo, habitsRepo, ledgerRepo,
   coursesRepo, assignmentsRepo, notesRepo, pitfallsRepo, serversRepo, domainsRepo,
@@ -20,6 +21,18 @@ const s = useSettings()
 const APP_VERSION = '0.1.0'
 // workbench 项目自身目录（Git 版本管理 / 上传 GitHub 的根目录）
 const WORKBENCH_DIR = 'E:\\CODEX\\workbench'
+// GitHub 仓库自动配置（上传后更新检查地址自动指向该仓库，无需手动填写）
+const GITHUB_REPO = 'XiaoQius/workbench'
+
+// ---- 设置面板二级分类（工作台升级：单页过长过乱，按类别分组） ----
+const activeTab = ref('general')
+const LLM_PROVIDERS = [
+  { label: 'OpenAI 兼容（自定义端点）', value: 'custom' },
+  { label: 'OpenAI', value: 'openai' },
+  { label: 'DeepSeek', value: 'deepseek' },
+  { label: 'Anthropic', value: 'anthropic' },
+  { label: 'Ollama（本地）', value: 'ollama' },
+]
 
 // ---- 升级检测（Rust 命令 check_update：支持 GitHub owner/repo 或自定义 JSON 端点） ----
 const checking = ref(false)
@@ -30,7 +43,7 @@ async function checkUpdateNow() {
   try {
     const url = s.updateUrl.trim()
     if (!url) {
-      updateMsg.value = '未配置更新检查地址（可填 GitHub 仓库 owner/repo，或返回 { "version": "x.y.z" } 的 JSON 地址）'
+      updateMsg.value = '未配置更新检查地址（应指向 GitHub 仓库 owner/repo）'
       return
     }
     const res = await checkUpdate(url, APP_VERSION)
@@ -46,15 +59,32 @@ async function checkUpdateNow() {
   }
 }
 
-// ---- LLM 服务开关（关闭后隐藏 AI 能力入口） ----
+// ---- LLM 服务：开关 + 自定义配置（工作台升级：非仅开关） ----
 const llmMsg = ref('')
+const llmTesting = ref(false)
 async function refreshLlmStatus() {
   llmMsg.value = ''
+  if (llmConfigured()) {
+    llmMsg.value = `已配置：${llmConfigLabel()}`
+    return
+  }
   try {
     const st = await llmStatus()
-    llmMsg.value = st.configured ? `已配置：${st.provider}` : '未配置（未检测到 API Key 环境变量）'
+    llmMsg.value = st.configured ? `已配置（环境变量）：${st.provider}` : '未配置（可在下方填写自定义服务地址与密钥，或使用环境变量）'
   } catch {
     llmMsg.value = '探测失败（需 Tauri 环境）'
+  }
+}
+async function testLlm() {
+  llmTesting.value = true
+  llmMsg.value = ''
+  try {
+    const reply = await llmChat('你是 WORKBENCH 智能助手，只回复 OK 两个字母。', '连接测试')
+    llmMsg.value = `连接成功：${(reply || '').slice(0, 120)}`
+  } catch (e) {
+    llmMsg.value = '连接失败：' + String(e)
+  } finally {
+    llmTesting.value = false
   }
 }
 
@@ -101,7 +131,7 @@ async function initAndUpload() {
     }
     const name = s.githubRepo.trim()
     if (!name) {
-      ghMsg.value += '请填写 GitHub 仓库名后再上传'
+      ghMsg.value += 'GitHub 仓库未配置，请先完成上传配置'
       return
     }
     const repoName = name.includes('/') ? name.split('/').pop()! : name
@@ -175,117 +205,143 @@ const hintColor = '#999'
 </script>
 
 <template>
-  <NModal :show="props.show" @update:show="(v: boolean) => emit('update:show', v)" preset="card" style="width: 640px; max-width: 92vw">
+  <NModal :show="props.show" @update:show="(v: boolean) => emit('update:show', v)" preset="card" style="width: 680px; max-width: 94vw">
     <div class="sp-title">系统设置</div>
 
-    <!-- 无障碍：字号可调 + 减少动效（F-SYS-11） -->
-    <div class="sp-sec">
-      <div class="sp-label">无障碍 · 字号可调（F-SYS-11）</div>
-      <div class="sp-row">
-        <span class="sp-dim">85%</span>
-        <NSlider v-model:value="s.fontScale" :min="0.85" :max="1.3" :step="0.05" style="flex: 1" />
-        <span class="sp-dim">130%</span>
-      </div>
-      <div class="sp-row">
-        <span>减少动效（prefers-reduced-motion）</span>
-        <NSwitch v-model:value="s.reducedMotion" />
-      </div>
-    </div>
-
-    <!-- 板块显示开关（工作台升级：设置中可开关板块） -->
-    <div class="sp-sec">
-      <div class="sp-label">板块显示（关闭后在左侧菜单隐藏对应板块）</div>
-      <div class="sp-grid">
-        <div v-for="m in modules" :key="m.key" class="sp-row">
-          <span>{{ m.label }}</span>
-          <NSwitch v-model:value="s.sections[m.key]" size="small" />
+    <NTabs v-model:value="activeTab" type="line" animated class="sp-tabs">
+      <!-- 通用：无障碍 / 快捷键 / 自定义卡片 -->
+      <NTabPane name="general" tab="通用">
+        <div class="sp-sec">
+          <div class="sp-label">无障碍 · 字号可调（F-SYS-11）</div>
+          <div class="sp-row">
+            <span class="sp-dim">85%</span>
+            <NSlider v-model:value="s.fontScale" :min="0.85" :max="1.3" :step="0.05" style="flex: 1" />
+            <span class="sp-dim">130%</span>
+          </div>
+          <div class="sp-row">
+            <span>减少动效（prefers-reduced-motion）</span>
+            <NSwitch v-model:value="s.reducedMotion" />
+          </div>
         </div>
-      </div>
-      <div class="sp-dim">当前激活板块不受影响；关闭全部板块时仍保留总览入口。</div>
-    </div>
 
-    <!-- LLM 服务开关（工作台升级） -->
-    <div class="sp-sec">
-      <div class="sp-label">LLM 服务</div>
-      <div class="sp-row">
-        <span>启用智能层 / LLM 能力</span>
-        <NSwitch v-model:value="s.llmEnabled" />
-        <NButton size="tiny" quaternary @click="refreshLlmStatus">探测状态</NButton>
-      </div>
-      <div class="sp-dim" v-if="llmMsg">{{ llmMsg }}</div>
-      <div class="sp-dim">关闭后隐藏 AI 相关入口，仅保留本地数据能力。</div>
-    </div>
+        <div class="sp-sec">
+          <div class="sp-label">快捷键自定义（F-SYS-02）</div>
+          <div class="sp-row"><span>Ctrl+1..7 模块切换</span><NSwitch v-model:value="s.keymap.ctrlNum" /></div>
+          <div class="sp-row"><span>g 序列跳转（g d / g l / g s / g o / g k / g w / g h）</span><NSwitch v-model:value="s.keymap.gSeq" /></div>
+          <div class="sp-row"><span>Ctrl+Shift+D 主题切换</span><NSwitch v-model:value="s.keymap.theme" /></div>
+          <div class="sp-row"><span>n 快速新建（编辑区外）</span><NSwitch v-model:value="s.keymap.newShortcut" /></div>
+          <div class="sp-dim">关闭某项可避免与系统或应用快捷键冲突；Ctrl+K 命令面板固定保留。</div>
+        </div>
 
-    <!-- Git 版本管理 / 上传 GitHub（工作台升级） -->
-    <div class="sp-sec">
-      <div class="sp-label">Git 版本管理 · GitHub（项目：{{ WORKBENCH_DIR }}）</div>
-      <div class="sp-row">
-        <NInput v-model:value="s.githubRepo" placeholder="GitHub 仓库名，如 user/workbench（可留空）" style="flex: 1" />
-        <span class="sp-dim">私有</span>
-        <NSwitch v-model:value="ghPrivate" size="small" />
-      </div>
-      <div class="sp-row">
-        <NButton size="small" type="primary" ghost :loading="ghBusy" @click="initAndUpload">初始化并上传 GitHub</NButton>
-        <NButton size="small" ghost :loading="ghBusy" @click="commitChanges">提交改动</NButton>
-        <NButton size="small" quaternary @click="gitOverview">查看状态</NButton>
-      </div>
-      <div class="sp-dim" v-if="ghMsg" style="white-space: pre-line; color: #16a34a">{{ ghMsg }}</div>
-      <div class="sp-dim">上传后自动配置更新检查地址（owner/repo 形式），启动时检测 GitHub Releases 新版本。</div>
-    </div>
+        <div class="sp-sec">
+          <div class="sp-label">自定义卡片（F-SYS-06 简化版）</div>
+          <div class="sp-row">
+            <NInput v-model:value="cardName" placeholder="卡片名称" style="flex: 0 0 160px" />
+            <NInput v-model:value="cardContent" placeholder="内容（文本 / 键值行）" style="flex: 1" />
+            <NButton size="small" type="primary" ghost @click="addCard">添加</NButton>
+          </div>
+          <NList v-if="s.cards.length" size="small" style="margin-top: 8px">
+            <NListItem v-for="c in s.cards" :key="c.id">
+              <NThing :title="c.name" :description="c.content">
+                <template #header-extra>
+                  <NButton size="tiny" text type="error" @click="removeCard(c.id)">删除</NButton>
+                </template>
+              </NThing>
+            </NListItem>
+          </NList>
+          <div class="sp-dim">简化实现：注册文本卡片展示在首页，不执行任意 JS（安全考虑）。</div>
+        </div>
+      </NTabPane>
 
-    <!-- 快捷键自定义（F-SYS-02 扩展） -->
-    <div class="sp-sec">
-      <div class="sp-label">快捷键自定义（F-SYS-02）</div>
-      <div class="sp-row"><span>Ctrl+1..7 模块切换</span><NSwitch v-model:value="s.keymap.ctrlNum" /></div>
-      <div class="sp-row"><span>g 序列跳转（g d / g l / g s / g o / g k / g w / g h）</span><NSwitch v-model:value="s.keymap.gSeq" /></div>
-      <div class="sp-row"><span>Ctrl+Shift+D 主题切换</span><NSwitch v-model:value="s.keymap.theme" /></div>
-      <div class="sp-row"><span>n 快速新建（编辑区外）</span><NSwitch v-model:value="s.keymap.newShortcut" /></div>
-      <div class="sp-dim">关闭某项可避免与系统或应用快捷键冲突；Ctrl+K 命令面板固定保留。</div>
-    </div>
+      <!-- 显示：板块显示开关 -->
+      <NTabPane name="display" tab="显示">
+        <div class="sp-sec">
+          <div class="sp-label">板块显示（关闭后在左侧菜单隐藏对应板块）</div>
+          <div class="sp-grid">
+            <div v-for="m in modules" :key="m.key" class="sp-row">
+              <span>{{ m.label }}</span>
+              <NSwitch v-model:value="s.sections[m.key]" size="small" />
+            </div>
+          </div>
+          <div class="sp-dim">当前激活板块不受影响；关闭全部板块时仍保留总览入口。</div>
+        </div>
+      </NTabPane>
 
-    <!-- Git 数据同步（F-SYS-07） -->
-    <div class="sp-sec">
-      <div class="sp-label">Git 数据同步（F-SYS-07）</div>
-      <div class="sp-row">
-        <NInput v-model:value="s.gitSyncDir" placeholder="私有仓库本地目录，如 D:\sync\workbench" style="flex: 1" />
-        <NButton size="small" type="primary" ghost :loading="syncing" @click="syncToGitDir">导出并同步</NButton>
-      </div>
-      <div class="sp-dim" v-if="syncMsg" style="white-space: pre-line; color: #16a34a">{{ syncMsg }}</div>
-    </div>
+      <!-- AI 与 LLM：自定义 LLM 服务配置 -->
+      <NTabPane name="ai" tab="AI 与 LLM">
+        <div class="sp-sec">
+          <div class="sp-label">LLM 服务（自定义配置）</div>
+          <div class="sp-row">
+            <span>启用智能层 / LLM 能力</span>
+            <NSwitch v-model:value="s.llmEnabled" />
+            <NButton size="tiny" quaternary @click="refreshLlmStatus">探测状态</NButton>
+            <NButton size="tiny" type="primary" ghost :loading="llmTesting" @click="testLlm">测试连接</NButton>
+          </div>
+          <div class="sp-row">
+            <span class="sp-dim sp-k">服务类型</span>
+            <NSelect v-model:value="s.llm.provider" :options="LLM_PROVIDERS" style="flex: 1" />
+          </div>
+          <div class="sp-row">
+            <span class="sp-dim sp-k">Base URL</span>
+            <NInput v-model:value="s.llm.baseUrl" placeholder="如 https://api.openai.com/v1 或 http://localhost:11434/v1（留空按服务类型取默认）" style="flex: 1" />
+          </div>
+          <div class="sp-row">
+            <span class="sp-dim sp-k">API Key</span>
+            <NInput v-model:value="s.llm.apiKey" type="password" show-password-on="click" placeholder="留空则使用系统环境变量" style="flex: 1" />
+          </div>
+          <div class="sp-row">
+            <span class="sp-dim sp-k">模型</span>
+            <NInput v-model:value="s.llm.model" placeholder="如 gpt-4o-mini / deepseek-chat / llama3" style="flex: 1" />
+          </div>
+          <div class="sp-dim" v-if="llmMsg">{{ llmMsg }}</div>
+          <div class="sp-dim">配置后智能问答将优先调用该服务回答；关闭开关仅隐藏 AI 入口，不影响本地数据能力。API Key 仅保存在本机，不上传。</div>
+        </div>
+      </NTabPane>
 
-    <!-- 升级检测 -->
-    <div class="sp-sec">
-      <div class="sp-label">升级检测 · 当前 v{{ APP_VERSION }}</div>
-      <div class="sp-row">
-        <NInput v-model:value="s.updateUrl" placeholder="GitHub 仓库 owner/repo，或返回 { version } 的 JSON 地址" style="flex: 1" />
-        <NButton size="small" type="primary" ghost :loading="checking" @click="checkUpdateNow">检查更新</NButton>
-      </div>
-      <div class="sp-row">
-        <span>启动时自动检查更新</span>
-        <NSwitch v-model:value="s.autoCheckUpdate" size="small" />
-      </div>
-      <div class="sp-dim" v-if="updateMsg" style="white-space: pre-line">{{ updateMsg }}</div>
-    </div>
+      <!-- 版本与同步：Git 上传 / 升级检测 / 数据同步 -->
+      <NTabPane name="version" tab="版本与同步">
+        <div class="sp-sec">
+          <div class="sp-label">Git 版本管理 · GitHub（项目：{{ WORKBENCH_DIR }}）</div>
+          <div class="sp-row">
+            <span class="sp-dim sp-k">目标仓库</span>
+            <NInput :value="s.githubRepo || GITHUB_REPO" readonly style="flex: 1" />
+            <span class="sp-dim">私有</span>
+            <NSwitch v-model:value="ghPrivate" size="small" />
+          </div>
+          <div class="sp-row">
+            <NButton size="small" type="primary" ghost :loading="ghBusy" @click="initAndUpload">初始化并上传 GitHub</NButton>
+            <NButton size="small" ghost :loading="ghBusy" @click="commitChanges">提交改动</NButton>
+            <NButton size="small" quaternary @click="gitOverview">查看状态</NButton>
+          </div>
+          <div class="sp-dim" v-if="ghMsg" style="white-space: pre-line; color: #16a34a">{{ ghMsg }}</div>
+          <div class="sp-dim">仓库已自动配置为 {{ GITHUB_REPO }}，无需手动填写；上传后更新检查地址自动指向该仓库。</div>
+        </div>
 
-    <!-- 自定义卡片（F-SYS-06） -->
-    <div class="sp-sec">
-      <div class="sp-label">自定义卡片（F-SYS-06 简化版）</div>
-      <div class="sp-row">
-        <NInput v-model:value="cardName" placeholder="卡片名称" style="flex: 0 0 160px" />
-        <NInput v-model:value="cardContent" placeholder="内容（文本 / 键值行）" style="flex: 1" />
-        <NButton size="small" type="primary" ghost @click="addCard">添加</NButton>
-      </div>
-      <NList v-if="s.cards.length" size="small" style="margin-top: 8px">
-        <NListItem v-for="c in s.cards" :key="c.id">
-          <NThing :title="c.name" :description="c.content">
-            <template #header-extra>
-              <NButton size="tiny" text type="error" @click="removeCard(c.id)">删除</NButton>
-            </template>
-          </NThing>
-        </NListItem>
-      </NList>
-      <div class="sp-dim">简化实现：注册文本卡片展示在首页，不执行任意 JS（安全考虑）。</div>
-    </div>
+        <div class="sp-sec">
+          <div class="sp-label">升级检测 · 当前 v{{ APP_VERSION }}</div>
+          <div class="sp-row">
+            <span class="sp-dim sp-k">更新源</span>
+            <NInput :value="s.updateUrl || GITHUB_REPO" readonly style="flex: 1" />
+            <NButton size="small" type="primary" ghost :loading="checking" @click="checkUpdateNow">检查更新</NButton>
+          </div>
+          <div class="sp-row">
+            <span>启动时自动检查更新</span>
+            <NSwitch v-model:value="s.autoCheckUpdate" size="small" />
+          </div>
+          <div class="sp-dim" v-if="updateMsg" style="white-space: pre-line">{{ updateMsg }}</div>
+          <div class="sp-dim">更新源已随 GitHub 仓库自动配置（{{ GITHUB_REPO }}），启动时检测 GitHub Releases 新版本。</div>
+        </div>
+
+        <div class="sp-sec">
+          <div class="sp-label">Git 数据同步（F-SYS-07）</div>
+          <div class="sp-row">
+            <NInput v-model:value="s.gitSyncDir" placeholder="私有仓库本地目录，如 D:\sync\workbench" style="flex: 1" />
+            <NButton size="small" type="primary" ghost :loading="syncing" @click="syncToGitDir">导出并同步</NButton>
+          </div>
+          <div class="sp-dim" v-if="syncMsg" style="white-space: pre-line; color: #16a34a">{{ syncMsg }}</div>
+        </div>
+      </NTabPane>
+    </NTabs>
 
     <template #footer>
       <NButton type="primary" size="small" @click="emit('update:show', false)">完成</NButton>
@@ -295,9 +351,11 @@ const hintColor = '#999'
 
 <style scoped>
 .sp-title { font-size: 16px; font-weight: 650; margin-bottom: 12px; }
+.sp-tabs { margin-top: 4px; }
 .sp-sec { margin-bottom: 18px; }
 .sp-label { font-size: 13px; font-weight: 600; margin-bottom: 8px; }
 .sp-row { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; font-size: 13px; }
 .sp-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 0 16px; }
 .sp-dim { font-size: 12px; color: #999; margin-top: 4px; }
+.sp-k { width: 110px; flex: none; margin-top: 0; }
 </style>

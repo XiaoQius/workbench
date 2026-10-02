@@ -7,6 +7,7 @@ import { modules, moduleColor } from '@/theme/tokens'
 import { useThemeStore } from '@/stores/theme'
 import { usePaletteStore } from '@/stores/palette'
 import { useSettings } from '@/composables/useSettings'
+import { llmConfigured } from '@/composables/llmClient'
 import { diskSpace, llmStatus, proxyDetect, checkUpdate, type DiskInfo, type LlmStatus, type ProxyInfo } from '@/composables/useTauri'
 import CommandPalette from './CommandPalette.vue'
 
@@ -52,7 +53,9 @@ async function refreshSysStatus() {
     } else {
       sysStatus.value.diskUsed = '--'
     }
-    sysStatus.value.llm = llm.status === 'fulfilled' ? llm.value : null
+    sysStatus.value.llm = llmConfigured()
+      ? { configured: true, provider: '自定义配置' }
+      : (llm.status === 'fulfilled' ? llm.value : null)
     sysStatus.value.proxy = proxy.status === 'fulfilled' ? proxy.value : null
   } finally {
     sysStatus.value.loading = false
@@ -280,18 +283,21 @@ html.dark .logo-mark {
 .topbar {
   height: 48px;
   flex: none;
+  position: relative;
+  z-index: 20;
   display: flex;
   align-items: center;
   justify-content: space-between;
   padding: 0 20px;
   border-bottom: 1px solid var(--wb-border);
-  background: color-mix(in srgb, var(--wb-bg) 82%, transparent);
-  backdrop-filter: blur(8px);
+  background: var(--wb-bg);
 }
 .crumb {
   display: flex;
   align-items: center;
   gap: 8px;
+  min-width: 0;
+  white-space: nowrap;
 }
 .crumb-module {
   font-weight: 600;
@@ -308,6 +314,7 @@ html.dark .logo-mark {
   display: flex;
   align-items: center;
   gap: 10px;
+  flex: none;
 }
 .env-tag {
   color: var(--wb-text-2);
