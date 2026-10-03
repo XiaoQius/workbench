@@ -25,31 +25,37 @@ fn drive_type(path: &str) -> u32 {
 /// 磁盘空间命令：原生枚举固定磁盘（C/D/E 等）容量，不再调用系统命令行工具。
 /// 返回 { mount, total, free, used, used_percent } 列表。
 #[tauri::command]
-pub fn disk_space() -> Result<Vec<DiskInfo>, String> {
-    let mut result = Vec::new();
-    for c in b'A'..=b'Z' {
-        let mount = format!("{}:", c as char);
-        let path = format!("{}\\", mount);
-        if drive_type(&path) != DRIVE_FIXED {
-            continue;
+pub async fn disk_space() -> Result<Vec<DiskInfo>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+
+        let mut result = Vec::new();
+        for c in b'A'..=b'Z' {
+            let mount = format!("{}:", c as char);
+            let path = format!("{}\\", mount);
+            if drive_type(&path) != DRIVE_FIXED {
+                continue;
+            }
+            let w = wide(&path);
+            let mut total: u64 = 0;
+            let mut free: u64 = 0;
+            // 参数 2（可用字节）传 null 是允许的
+            let ok = unsafe { GetDiskFreeSpaceExW(w.as_ptr(), std::ptr::null_mut(), &mut total, &mut free) };
+            if ok == 0 || total == 0 {
+                continue;
+            }
+            let used = total.saturating_sub(free);
+            let used_percent = used as f64 / total as f64 * 100.0;
+            result.push(DiskInfo {
+                mount,
+                total,
+                free,
+                used,
+                used_percent,
+            });
         }
-        let w = wide(&path);
-        let mut total: u64 = 0;
-        let mut free: u64 = 0;
-        // 参数 2（可用字节）传 null 是允许的
-        let ok = unsafe { GetDiskFreeSpaceExW(w.as_ptr(), std::ptr::null_mut(), &mut total, &mut free) };
-        if ok == 0 || total == 0 {
-            continue;
-        }
-        let used = total.saturating_sub(free);
-        let used_percent = used as f64 / total as f64 * 100.0;
-        result.push(DiskInfo {
-            mount,
-            total,
-            free,
-            used,
-            used_percent,
-        });
-    }
-    Ok(result)
+        Ok(result)
+
+    })
+    .await
+    .map_err(|e| format!("{e}"))?
 }
