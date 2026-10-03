@@ -570,7 +570,7 @@ onMounted(() => {
     <div v-if="firstRun" class="onboard-card" style="margin-bottom: 16px">
       <div class="onboard-title">欢迎使用 WORKBENCH</div>
       <div class="onboard-body">
-        <span>按 <span class="mono">Ctrl/Cmd + 1..7</span> 切换模块，<span class="mono">Ctrl/Cmd + K</span> 打开命令面板，<span class="mono">g</span> 后按 <span class="mono">d/l/s/o/k/w/h</span> 快速跳转，<span class="mono">n</span> 快速新建。首次进入请先在各模块录入台账，智能层将自动提供规则预警与洞察。</span>
+        <span>按 <span class="mono">Ctrl/Cmd + 1..8</span> 切换模块，<span class="mono">Ctrl/Cmd + K</span> 打开命令面板，<span class="mono">g</span> 后按 <span class="mono">d/l/s/o/k/w/h/i</span> 快速跳转，<span class="mono">n</span> 快速新建。首次进入请先在各模块录入台账，智能层将自动提供规则预警与洞察。</span>
       </div>
       <NButton size="tiny" type="primary" ghost @click="dismissFirstRun()">我知道了</NButton>
     </div>
