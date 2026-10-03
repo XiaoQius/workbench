@@ -9,7 +9,7 @@ import { useThemeStore } from '@/stores/theme'
 import { usePaletteStore } from '@/stores/palette'
 import { useSettings, UPDATE_SOURCE, APP_VERSION } from '@/composables/useSettings'
 import { llmConfigured } from '@/composables/llmClient'
-import { diskSpace, llmStatus, proxyDetect, checkUpdate, openPath, type DiskInfo, type LlmStatus, type ProxyInfo } from '@/composables/useTauri'
+import { diskSpace, llmStatus, proxyDetect, checkUpdate, type DiskInfo, type LlmStatus, type ProxyInfo } from '@/composables/useTauri'
 import { inspirationsRepo } from '@/db'
 import CommandPalette from './CommandPalette.vue'
 import SettingsPanel from '@/components/SettingsPanel.vue'
@@ -117,11 +117,14 @@ async function refreshSysStatus() {
 }
 
 const syncStatus = ref<SyncStatus>({ state: 'idle', message: '', lastSyncAt: null, pending: 0 })
+const settingsTab = ref<string | undefined>(undefined)
+function openSettings(tab?: string) {
+  settingsTab.value = tab
+  settingsOpen.value = true
+}
 function openDownload() {
-  const u = sysStatus.value.update?.url
-  if (!u) return
-  // Tauri WebView2 里 window.open 无效，走系统默认浏览器
-  openPath(u).catch(() => window.open(u, '_blank'))
+  // 应用内下载/安装统一在设置页「更新与备份」完成，避免两处重复实现
+  openSettings('version')
 }
 onSyncStatus((st) => { syncStatus.value = st })
 const syncLabel = computed(() => {
@@ -205,8 +208,8 @@ onMounted(() => {
                   type="primary"
                   ghost
                   @click="openDownload()"
-                >前往下载</NButton>
-                <NButton v-else size="tiny" text type="primary" @click="settingsOpen = true">查看</NButton>
+                >下载并安装</NButton>
+                <NButton v-else size="tiny" text type="primary" @click="openSettings()">查看</NButton>
               </div>
               <div class="sys-checked">检查于 {{ sysStatus.checkedAt || '--' }}</div>
             </div>
@@ -234,13 +237,13 @@ onMounted(() => {
             </div>
           </NPopover>
           <div v-if="syncLabel" class="sync-chip" :class="{ err: syncStatus.state === 'error', busy: syncStatus.state === 'syncing' }"
-              title="云同步状态，点击管理" @click="settingsOpen = true">
+              title="云同步状态，点击管理" @click="openSettings()">
             <span class="sync-dot"></span>{{ syncLabel }}
           </div>
           <NButton size="small" quaternary circle title="刷新当前页" @click="requestRefresh()">
             <template #icon><NIcon :component="Refresh" /></template>
           </NButton>
-          <NButton size="small" quaternary circle title="系统设置" @click="settingsOpen = true">
+          <NButton size="small" quaternary circle title="系统设置" @click="openSettings()">
             <template #icon><NIcon :component="Settings" /></template>
           </NButton>
           <NButton size="small" quaternary circle title="命令面板 (Ctrl K)" @click="paletteStore.openPanel()">
@@ -254,7 +257,7 @@ onMounted(() => {
     </div>
 
     <CommandPalette />
-    <SettingsPanel v-model:show="settingsOpen" />
+    <SettingsPanel v-model:show="settingsOpen" :initial-tab="settingsTab" />
   </div>
 </template>
 

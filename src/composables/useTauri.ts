@@ -311,6 +311,16 @@ export function checkUpdate(updateUrl: string, currentVersion: string): Promise<
   return invoke<UpdateInfo>('check_update', { updateUrl, currentVersion })
 }
 
+/** 应用内更新：下载 MSI 安装包到本地临时目录，返回文件路径（仅 Tauri 环境可用） */
+export function downloadUpdate(url: string, version: string): Promise<string> {
+  return invoke<string>('download_update', { url, version })
+}
+
+/** 拉起 msiexec 安装已下载的安装包（passive 进度条，无需交互） */
+export function installUpdate(filePath: string): Promise<string> {
+  return invoke<string>('install_update', { filePath })
+}
+
 export interface GitRemoteInfo {
   repo: string
   is_repo: boolean

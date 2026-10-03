@@ -33,6 +33,8 @@ pub fn run() {
             commands::installed::list_installed_apps,
             commands::installed::resolve_shortcut,
             commands::update::check_update,
+            commands::update::download_update,
+            commands::update::install_update,
             commands::git::git_remote_info,
             commands::git::git_init_repo,
             commands::git::git_commit_all,

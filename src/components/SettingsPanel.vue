@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed } from 'vue'
+import { ref, computed, watch } from 'vue'
 import {
   NModal, NInput, NSlider, NSwitch, NButton, NTag, NText, NList, NListItem, NThing, NSelect, NTabs, NTabPane,
 } from 'naive-ui'
@@ -7,7 +7,7 @@ import { useSettings, UPDATE_SOURCE, type CustomCard } from '@/composables/useSe
 import { modules, tokens, COLOR_MODES, STYLE_MODES, comboKey, type ColorMode, type StyleMode } from '@/theme/tokens'
 import { AVATAR_PALETTE, avatarColor, avatarChar, avatarName, avatarSeed } from '@/composables/avatar'
 import { useThemeStore } from '@/stores/theme'
-import { exportBackupTo, checkUpdate, llmStatus, openPath } from '@/composables/useTauri'
+import { exportBackupTo, checkUpdate, downloadUpdate, installUpdate, llmStatus, openPath } from '@/composables/useTauri'
 import { APP_VERSION } from '@/composables/useSettings'
 import { llmConfigured, llmConfigLabel, llmChat } from '@/composables/llmClient'
 import { cloudRegister, cloudLogin, cloudLogout, syncNow, onSyncStatus, type SyncStatus } from '@/db/sync'
@@ -17,7 +17,7 @@ import {
   toolsRepo, agentsRepo,
 } from '@/db'
 
-const props = defineProps<{ show: boolean }>()
+const props = defineProps<{ show: boolean; initialTab?: string }>()
 const emit = defineEmits<{ (e: 'update:show', v: boolean): void }>()
 
 const s = useSettings()
@@ -32,6 +32,10 @@ function comboPreview(color: ColorMode, style: StyleMode) {
 
 // ---- 设置面板二级分类（工作台升级：单页过长过乱，按类别分组） ----
 const activeTab = ref('general')
+// 外部指定初始标签（如顶栏「下载并安装」直达更新页）
+watch(() => [props.show, props.initialTab] as const, ([show, tab]) => {
+  if (show && tab) activeTab.value = tab
+}, { immediate: true })
 const LLM_PROVIDERS = [
   { label: 'OpenAI 兼容（自定义端点）', value: 'custom' },
   { label: 'OpenAI', value: 'openai' },
@@ -44,15 +48,18 @@ const LLM_PROVIDERS = [
 const checking = ref(false)
 const updateMsg = ref('')
 const updateUrl = ref('')
+const updateLatest = ref('')
 async function checkUpdateNow() {
   updateMsg.value = ''
   updateUrl.value = ''
+  updateLatest.value = ''
   checking.value = true
   try {
     const res = await checkUpdate(UPDATE_SOURCE, APP_VERSION)
     if (res.has_update) {
       updateMsg.value = `发现新版本 v${res.latest}（当前 v${APP_VERSION}）`
       updateUrl.value = res.release_url || ''
+      updateLatest.value = res.latest || ''
     } else {
       updateMsg.value = `当前已是最新版本 v${APP_VERSION}`
     }
@@ -65,6 +72,27 @@ async function checkUpdateNow() {
 function openReleasePage() {
   if (!updateUrl.value) return
   openPath(updateUrl.value).catch(() => window.open(updateUrl.value, '_blank'))
+}
+
+// ---- 应用内更新：下载 MSI + 拉起 msiexec（仅 Tauri 环境） ----
+const installing = ref(false)
+const installPhase = ref<'download' | 'install'>('download')
+async function downloadAndInstall() {
+  if (!updateUrl.value || installing.value) return
+  installing.value = true
+  installPhase.value = 'download'
+  updateMsg.value = '下载中…（安装包约 4 MB）'
+  try {
+    const path = await downloadUpdate(updateUrl.value, updateLatest.value)
+    installPhase.value = 'install'
+    updateMsg.value = '已下载，正在启动安装…'
+    await installUpdate(path)
+    updateMsg.value = `已启动 v${updateLatest.value} 安装程序，请按进度条提示完成更新（完成后重新打开应用即可）`
+  } catch (e) {
+    updateMsg.value = `应用内更新失败：${String(e)}\n可点「在浏览器打开」手动下载安装`
+  } finally {
+    installing.value = false
+  }
 }
 
 // ---- LLM 服务：开关 + 自定义配置（工作台升级：非仅开关） ----
@@ -363,7 +391,10 @@ function commitFontScale(v: number) {
           </div>
           <div class="sp-dim" v-if="updateMsg" style="white-space: pre-line">{{ updateMsg }}</div>
           <div class="sp-row" v-if="updateUrl">
-            <NButton size="small" type="primary" @click="openReleasePage()">前往下载新版本</NButton>
+            <NButton size="small" type="primary" :loading="installing" @click="downloadAndInstall()">
+              {{ installing ? (installPhase === 'download' ? '下载中…' : '启动安装…') : '下载并安装' }}
+            </NButton>
+            <NButton size="small" quaternary @click="openReleasePage()">在浏览器打开</NButton>
           </div>
         </div>
 
