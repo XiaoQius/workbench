@@ -1,220 +1,103 @@
 <script setup lang="ts">
-import { watch, ref, onMounted, computed } from 'vue'
+import { onMounted, ref, computed, watch } from 'vue'
 import { useRouter } from 'vue-router'
-import { NButton, NTag, NIcon, NSwitch, NSelect, NInput } from 'naive-ui'
-import { ArrowRight } from '@vicons/tabler'
-import StatCard from '@/components/StatCard.vue'
+import { NButton, NIcon, NTag, NInput, useMessage } from 'naive-ui'
+import { ArrowRight, Bulb } from '@vicons/tabler'
 import EmptyState from '@/components/EmptyState.vue'
-import { refreshTick } from '@/stores/ui'
-import { useSettings } from '@/composables/useSettings'
+import { refreshTick, settingsOpen, settingsTab } from '@/stores/ui'
 import { useThemeStore } from '@/stores/theme'
-import { moduleColor, modules, type ModuleKey } from '@/theme/tokens'
+import { moduleColor } from '@/theme/tokens'
 import {
-  tasksRepo, deadlinesRepo, projectsRepo, snippetsRepo, habitsRepo,
-  ledgerRepo, coursesRepo, assignmentsRepo, notesRepo, pitfallsRepo,
-  serversRepo, domainsRepo, toolsRepo, agentsRepo, habitLogsRepo,
+  tasksRepo, deadlinesRepo, habitsRepo, habitLogsRepo, ledgerRepo,
+  coursesRepo, assignmentsRepo, pomodorosRepo, notesRepo, pitfallsRepo, snippetsRepo,
   inspirationsRepo,
 } from '@/db'
-import { diskSpace, exportBackup, listBackups, readBackup, llmStatus, type DiskInfo, type BackupInfo, type LlmStatus } from '@/composables/useTauri'
-import { aiSemanticSearch, aiAutoClassify, aiDedupe, aiSuggest, aiSummarize, aiGenerate, aiQa, aiAutoTag, type AiEngineResult } from '@/composables/aiEngine'
+import {
+  aiQa, aiSemanticSearch, aiAutoClassify, aiDedupe, aiAutoTag, aiSuggest, type AiEngineResult,
+} from '@/composables/aiEngine'
 import { llmConfigured, llmConfigLabel } from '@/composables/llmClient'
-import type { Repo } from '@/db/repo'
-import type { Task, Deadline, Domain, Assignment, HabitLog } from '../../drizzle/schema'
+import { parseInspiration } from '@/composables/inspiration'
+import type {
+  Task, Deadline, Habit, HabitLog, LedgerEntry, Course, Assignment, Pomodoro,
+  Note, Pitfall, Snippet,
+} from '../../drizzle/schema'
 
 const router = useRouter()
 const themeStore = useThemeStore()
+const message = useMessage()
 
-const settings = useSettings()
+// ============================================================
+// 日期工具（本地时区，避免 toISOString 的 UTC 偏移）
+// ============================================================
+function dayKey(d: Date): string {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+}
+function monthKey(d: Date): string {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`
+}
+function shiftDay(base: Date, delta: number): Date {
+  const d = new Date(base)
+  d.setDate(d.getDate() + delta)
+  return d
+}
+const today = new Date()
+const todayStr = dayKey(today)
+const WEEKDAYS = ['周日', '周一', '周二', '周三', '周四', '周五', '周六']
+const todayLabel = `${todayStr} ${WEEKDAYS[today.getDay()]}`
+// 本周一 / 上周一 ~ 上周日（周一为一周起点）
+const mondayDow = today.getDay() === 0 ? 7 : today.getDay()
+const thisMonday = dayKey(shiftDay(today, -(mondayDow - 1)))
+const lastMonday = dayKey(shiftDay(today, -(mondayDow - 1 + 7)))
+const lastSunday = dayKey(shiftDay(today, -mondayDow))
+const thisMonthKey = monthKey(today)
+const lastMonthDate = new Date(today.getFullYear(), today.getMonth() - 1, 1)
+const lastMonthKey = monthKey(lastMonthDate)
 
+function toEpoch(dateStr: string | null | undefined): number | null {
+  if (!dateStr) return null
+  const t = new Date(`${dateStr}T00:00:00`).getTime()
+  return Number.isNaN(t) ? null : t
+}
+
+// ============================================================
+// 数据装载（全部走现有 repo；浏览器 dev 无 Tauri 时 invoke 抛错 → 静默降级为空数据）
+// ============================================================
 const loading = ref(false)
-const counts = ref<Record<string, number>>({})
-const focusTasks = ref<Task[]>([])
-const deadlineAlerts = ref<Deadline[]>([])
-const disks = ref<DiskInfo[]>([])
-const backups = ref<BackupInfo[]>([])
-const llm = ref<LlmStatus | null>(null)
-
-// 智能层就绪状态：优先取「设置 → AI 与 LLM」里的自定义服务配置，
-// 其次回退到 Rust 侧的环境变量探测（llm_status）。
-const llmState = computed<LlmStatus | null>(() => {
-  if (llmConfigured()) return { configured: true, provider: llmConfigLabel() }
-  return llm.value
-})
-const exporting = ref(false)
-const restoring = ref(false)
 const allTasks = ref<Task[]>([])
 const allDeadlines = ref<Deadline[]>([])
-const allDomains = ref<Domain[]>([])
-const allAssignments = ref<Assignment[]>([])
+const allHabits = ref<Habit[]>([])
 const allHabitLogs = ref<HabitLog[]>([])
-const allLedger = ref<Array<{ type: string; amount: number; category: string | null; note: string | null; date: string | null }>>([])
-const firstRun = ref(false)
-const weeklyReport = ref('')
-const weeklyReportVisible = ref(false)
-const today = new Date()
-const todayStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`
-
-// ---- 智能层能力开关（F-AI-01~10）：localStorage 持久化，全部可开关 ----
-const AI_FEATURES = [
-  { key: 'semantic_search', label: '语义搜索', desc: '按语义检索文档与图片（F-AI-01）' },
-  { key: 'auto_classify', label: '自动分类', desc: '文件 / 笔记自动归类（F-AI-02）' },
-  { key: 'dedupe', label: '去重检测', desc: '识别重复文件与重复内容（F-AI-03）' },
-  { key: 'smart_suggest', label: '智能建议', desc: '基于使用习惯给出建议（F-AI-04）' },
-  { key: 'insight', label: '数据洞察', desc: '从台账数据生成洞察（F-AI-05）' },
-  { key: 'summarize', label: '内容摘要', desc: '长文档一键摘要（F-AI-06）' },
-  { key: 'generate', label: '内容生成', desc: '草稿与文案生成（F-AI-07）' },
-  { key: 'qa', label: '智能问答', desc: '知识库问答（F-AI-08）' },
-  { key: 'rules', label: '规则引擎', desc: '自动化规则执行（F-AI-09）' },
-  { key: 'auto_tag', label: '自动标签', desc: '内容自动打标签（F-AI-10）' },
-]
-const aiSwitches = ref<Record<string, boolean>>(Object.fromEntries(AI_FEATURES.map((f) => [f.key, true])))
-function loadAiSwitches() {
-  try {
-    const raw = localStorage.getItem('wb:ai-switches')
-    if (raw) aiSwitches.value = { ...aiSwitches.value, ...JSON.parse(raw) }
-  } catch { /* 忽略损坏数据 */ }
-}
-function toggleAi(key: string) {
-  aiSwitches.value[key] = !aiSwitches.value[key]
-  try { localStorage.setItem('wb:ai-switches', JSON.stringify(aiSwitches.value)) } catch { /* ignore */ }
-}
-loadAiSwitches()
-
-// ---- 数据备份护栏（F-SYS-03）：上次备份超过 7 天提醒 ----
-const lastBackupDays = computed(() => {
-  if (!backups.value.length) return null
-  const latest = Math.max(...backups.value.map((b) => b.modified))
-  return Math.floor((Date.now() / 1000 - latest) / 86400)
-})
-
-async function loadBackups() {
-  try {
-    backups.value = await listBackups()
-  } catch {
-    backups.value = []
-  }
-}
-
-async function loadLlm() {
-  try {
-    llm.value = await llmStatus()
-  } catch {
-    llm.value = null
-  }
-}
-
-async function doExport() {
-  if (exporting.value) return
-  exporting.value = true
-  try {
-    const [tasks, deadlines, projects, snippets, habits, ledger, courses, assignments, notes, pitfalls, servers, domains, tools, agents] =
-      await Promise.all([
-        tasksRepo.listAll(), deadlinesRepo.listAll(), projectsRepo.listAll(),
-        snippetsRepo.listAll(), habitsRepo.listAll(), ledgerRepo.listAll(),
-        coursesRepo.listAll(), assignmentsRepo.listAll(), notesRepo.listAll(),
-        pitfallsRepo.listAll(), serversRepo.listAll(), domainsRepo.listAll(),
-        toolsRepo.listAll(), agentsRepo.listAll(),
-      ])
-    const payload = {
-      app: 'workbench',
-      version: 1,
-      exportedAt: new Date().toISOString(),
-      tables: {
-        tasks, deadlines, projects, snippets, habits, ledger,
-        courses, assignments, notes, pitfalls, servers, domains, tools, agents,
-      },
-    }
-    const name = await exportBackup(JSON.stringify(payload))
-    backups.value = await listBackups()
-    window.alert(`已导出备份：${name}`)
-  } catch (e) {
-    console.warn('[Home] 导出失败', e)
-    window.alert('导出失败：' + String(e))
-  } finally {
-    exporting.value = false
-  }
-}
-
-async function doRestore(name: string) {
-  if (restoring.value) return
-  if (!window.confirm(`确认从备份 ${name} 恢复数据？现有数据将被覆盖。`)) return
-  restoring.value = true
-  try {
-    const json = await readBackup(name)
-    const payload = JSON.parse(json)
-    const tables = payload.tables ?? {}
-    const all: Array<{ rows: unknown[]; repo: Repo<{ id: number }> }> = [
-      { rows: tables.tasks ?? [], repo: tasksRepo },
-      { rows: tables.deadlines ?? [], repo: deadlinesRepo },
-      { rows: tables.projects ?? [], repo: projectsRepo },
-      { rows: tables.snippets ?? [], repo: snippetsRepo },
-      { rows: tables.habits ?? [], repo: habitsRepo },
-      { rows: tables.ledger ?? [], repo: ledgerRepo },
-      { rows: tables.courses ?? [], repo: coursesRepo },
-      { rows: tables.assignments ?? [], repo: assignmentsRepo },
-      { rows: tables.notes ?? [], repo: notesRepo },
-      { rows: tables.pitfalls ?? [], repo: pitfallsRepo },
-      { rows: tables.servers ?? [], repo: serversRepo },
-      { rows: tables.domains ?? [], repo: domainsRepo },
-      { rows: tables.tools ?? [], repo: toolsRepo },
-      { rows: tables.agents ?? [], repo: agentsRepo },
-    ]
-    // 批量恢复：原先逐行 await remove + insert，N 行 = 2N 次 IPC 往返，
-    // 数据量大时会长时间卡死界面。改为整表清空 + 批量插入。
-    for (const { rows, repo } of all) {
-      await repo.clear()
-      for (const row of rows) await repo.insert(row as never)
-    }
-    window.alert(`已从 ${name} 恢复数据`)
-    await load()
-  } catch (e) {
-    console.warn('[Home] 恢复失败', e)
-    window.alert('恢复失败：' + String(e))
-  } finally {
-    restoring.value = false
-  }
-}
+const allLedger = ref<LedgerEntry[]>([])
+const allCourses = ref<Course[]>([])
+const allAssignments = ref<Assignment[]>([])
+const allPomodoros = ref<Pomodoro[]>([])
+const allNotes = ref<Note[]>([])
+const allPitfalls = ref<Pitfall[]>([])
+const allSnippets = ref<Snippet[]>([])
 
 async function load() {
   loading.value = true
   try {
-    const [tasks, deadlines, projects, snippets, habits, ledger, courses, assignments, notes, pitfalls, servers, domains, tools, agents, habitLogs, inspirations] =
+    const [tasks, deadlines, habits, habitLogs, ledger, courses, assignments, pomodoros, notes, pitfalls, snippets] =
       await Promise.all([
-        tasksRepo.listAll(), deadlinesRepo.listAll(), projectsRepo.listAll(),
-        snippetsRepo.listAll(), habitsRepo.listAll(), ledgerRepo.listAll(),
-        coursesRepo.listAll(), assignmentsRepo.listAll(), notesRepo.listAll(),
-        pitfallsRepo.listAll(), serversRepo.listAll(), domainsRepo.listAll(),
-        toolsRepo.listAll(), agentsRepo.listAll(), habitLogsRepo.listAll(),
-        inspirationsRepo.listAll().catch(() => []),
+        tasksRepo.listAll(), deadlinesRepo.listAll(), habitsRepo.listAll(),
+        habitLogsRepo.listAll(), ledgerRepo.listAll(), coursesRepo.listAll(),
+        assignmentsRepo.listAll(), pomodorosRepo.listAll(), notesRepo.listAll(),
+        pitfallsRepo.listAll(), snippetsRepo.listAll(),
       ])
     allTasks.value = tasks
     allDeadlines.value = deadlines
-    allDomains.value = domains
-    allAssignments.value = assignments
+    allHabits.value = habits
     allHabitLogs.value = habitLogs
     allLedger.value = ledger
-    counts.value = {
-      tasks: tasks.length, deadlines: deadlines.length, projects: projects.length,
-      snippets: snippets.length, habits: habits.length, ledger: ledger.length,
-      courses: courses.length, assignments: assignments.length, notes: notes.length,
-      pitfalls: pitfalls.length, servers: servers.length, domains: domains.length,
-      tools: tools.length, agents: agents.length, inspirations: inspirations.length,
-    }
-    focusTasks.value = tasks
-      .filter((t) => t.focusDate === todayStr && t.status !== 'done')
-      .sort((a, b) => (a.priority === 'high' || a.priority === 'urgent' ? -1 : 1))
-      .slice(0, 6)
-    deadlineAlerts.value = deadlines
-      .filter((d) => d.status === 'open' && d.dueDate >= todayStr)
-      .sort((a, b) => a.dueDate.localeCompare(b.dueDate))
-      .slice(0, 4)
+    allCourses.value = courses
+    allAssignments.value = assignments
+    allPomodoros.value = pomodoros
+    allNotes.value = notes
+    allPitfalls.value = pitfalls
+    allSnippets.value = snippets
   } catch (e) {
     console.warn('[Home] 数据加载失败（浏览器降级）', e)
-  }
-  try {
-    disks.value = await diskSpace()
-  } catch {
-    disks.value = []
   }
   loading.value = false
 }
@@ -222,39 +105,285 @@ async function load() {
 watch(refreshTick, () => { load() })
 onMounted(() => {
   load()
-  loadBackups()
-  loadLlm()
   initFirstRun()
 })
 
-const diskAlert = computed(() => {
-  const d = disks.value.find((x) => x.used_percent >= 90)
-  return d ? `${d.mount} 盘已用 ${d.used_percent.toFixed(1)}%` : ''
+function go(path: string) {
+  router.push(path)
+}
+
+// ============================================================
+// ① 今日焦点：逾期任务 + 今日到期（任务/截止）+ 今日应做（focusDate=今天）
+// ============================================================
+const PRIORITY_RANK: Record<string, number> = { urgent: 0, high: 1, medium: 2, low: 3 }
+
+const openTasks = computed(() => allTasks.value.filter((t) => t.status !== 'done'))
+const overdueTasks = computed(() =>
+  openTasks.value.filter((t) => t.dueDate && t.dueDate < todayStr)
+    .sort((a, b) => (a.dueDate || '').localeCompare(b.dueDate || '')))
+const todayDueTasks = computed(() =>
+  openTasks.value.filter((t) => t.dueDate === todayStr))
+const focusTasks = computed(() =>
+  openTasks.value.filter((t) => t.focusDate === todayStr))
+const todayDeadlines = computed(() =>
+  allDeadlines.value.filter((d) => d.status === 'open' && d.dueDate === todayStr))
+
+type FocusRow =
+  | { uid: string; kind: 'task'; ref: Task; tag: string; title: string; note?: string; jump: string }
+  | { uid: string; kind: 'deadline'; ref: Deadline; tag: string; title: string; jump: string }
+
+const focusRows = computed<FocusRow[]>(() => {
+  const seen = new Set<string>()
+  const rows: FocusRow[] = []
+  const pushTask = (t: Task, note?: string) => {
+    const uid = `task-${t.id}`
+    if (seen.has(uid)) return
+    seen.add(uid)
+    rows.push({ uid, kind: 'task', ref: t, tag: t.scope || 'dev', title: t.title, note, jump: scopePath(t.scope) })
+  }
+  for (const t of overdueTasks.value) pushTask(t, `逾期 ${t.dueDate}`)
+  for (const t of todayDueTasks.value) pushTask(t, '今日到期')
+  for (const t of focusTasks.value) pushTask(t)
+  for (const d of todayDeadlines.value) {
+    rows.push({ uid: `deadline-${d.id}`, kind: 'deadline', ref: d, tag: d.source || '截止', title: d.title, jump: deadlinePath(d.source) })
+  }
+  // 逾期组保持按逾期时长排前；其余按优先级排
+  const over = rows.filter((r) => r.kind === 'task' && r.note && r.note.startsWith('逾期'))
+  const rest = rows.filter((r) => !over.includes(r))
+  rest.sort((a, b) => {
+    const pa = a.kind === 'task' ? (PRIORITY_RANK[a.ref.priority] ?? 2) : 1
+    const pb = b.kind === 'task' ? (PRIORITY_RANK[b.ref.priority] ?? 2) : 1
+    return pa - pb
+  })
+  return [...over, ...rest]
 })
 
-const deadlineAlert = computed(() => {
-  if (!deadlineAlerts.value.length) return ''
-  const d = deadlineAlerts.value[0]
-  return `最近截止：${d.title}（${d.dueDate}）`
+function scopePath(scope?: string | null): string {
+  return scope === 'study' ? '/study' : scope === 'life' ? '/life' : '/dev'
+}
+function deadlinePath(source?: string | null): string {
+  if (source === 'assignment' || source === 'course') return '/study'
+  if (source === 'server' || source === 'domain' || source === 'ssl') return '/ops'
+  return '/life'
+}
+
+async function completeTask(t: Task) {
+  try {
+    await tasksRepo.update(t.id, { status: 'done' })
+    t.status = 'done'
+    message.success('已完成')
+  } catch {
+    message.error('更新失败：数据层不可用')
+  }
+}
+async function closeDeadline(d: Deadline) {
+  try {
+    await deadlinesRepo.update(d.id, { status: 'closed' })
+    await load()
+    message.success('截止事项已关闭')
+  } catch {
+    message.error('操作失败：数据层不可用')
+  }
+}
+
+// ============================================================
+// ② 截止预警：未来 7 天（任务 dueDate / 截止表 / 作业）按天分组倒计时
+// ============================================================
+type WatchKind = 'task' | 'deadline' | 'assignment'
+interface WatchItem { uid: string; kind: WatchKind; title: string; tag: string; jump: string }
+
+const watchGroups = computed(() => {
+  const map = new Map<string, WatchItem[]>()
+  const add = (date: string, item: WatchItem) => {
+    if (!map.has(date)) map.set(date, [])
+    map.get(date)!.push(item)
+  }
+  const d7 = dayKey(shiftDay(today, 7))
+  for (const t of openTasks.value) {
+    if (t.dueDate && t.dueDate > todayStr && t.dueDate <= d7)
+      add(t.dueDate, { uid: `t-${t.id}`, kind: 'task', title: t.title, tag: t.scope || 'dev', jump: scopePath(t.scope) })
+  }
+  for (const d of allDeadlines.value) {
+    if (d.status === 'open' && d.dueDate > todayStr && d.dueDate <= d7)
+      add(d.dueDate, { uid: `d-${d.id}`, kind: 'deadline', title: d.title, tag: d.source || '截止', jump: deadlinePath(d.source) })
+  }
+  for (const a of allAssignments.value) {
+    if (a.status !== 'submitted' && a.dueDate && a.dueDate > todayStr && a.dueDate <= d7)
+      add(a.dueDate, { uid: `a-${a.id}`, kind: 'assignment', title: a.title, tag: '作业', jump: '/study' })
+  }
+  const out: { date: string; label: string; countdown: string; days: number; items: WatchItem[] }[] = []
+  for (const [date, items] of [...map.entries()].sort((a, b) => a[0].localeCompare(b[0]))) {
+    const diff = Math.round(((toEpoch(date) ?? 0) - (toEpoch(todayStr) ?? 0)) / 86400000)
+    const md = date.slice(5)
+    const label = diff === 1 ? `明天 · ${md}` : diff === 2 ? `后天 · ${md}` : `${md}（${WEEKDAYS[new Date(date + 'T00:00:00').getDay()]}）`
+    out.push({ date, label, countdown: `${diff} 天后`, days: diff, items })
+  }
+  return out
 })
 
-const overdueTasks = computed(() => {
-  const n = deadlineAlerts.value.length
-  return n ? `${n} 项近期截止` : ''
+// ============================================================
+// ③ 进度卡：习惯 / 记账 / 学习 / 任务
+// ============================================================
+const habitToday = computed(() => {
+  const total = allHabits.value.length
+  const loggedToday = new Set(allHabitLogs.value.filter((l) => l.date === todayStr).map((l) => l.habitId))
+  return { total, done: total ? allHabits.value.filter((h) => loggedToday.has(h.id)).length : 0 }
+})
+const habitWeekStreak = computed(() => {
+  // 本周内连续打卡天数（按全体习惯的打卡日期去重计，截至今天/昨天起算）
+  const days = new Set(allHabitLogs.value.map((l) => l.date))
+  let streak = 0
+  let cursor = days.has(todayStr) ? today : shiftDay(today, -1)
+  const monday = new Date(`${thisMonday}T00:00:00`)
+  while (cursor >= monday && days.has(dayKey(cursor))) {
+    streak += 1
+    cursor = shiftDay(cursor, -1)
+  }
+  return streak
 })
 
-const stats = computed(() => [
-  { key: 'dev', label: '任务', value: counts.value.tasks ?? 0, sub: `截止 ${counts.value.deadlines ?? 0}` },
-  { key: 'dev', label: '项目', value: counts.value.projects ?? 0, sub: `片段 ${counts.value.snippets ?? 0}` },
-  { key: 'ops', label: '服务器', value: counts.value.servers ?? 0, sub: `域名 ${counts.value.domains ?? 0}` },
-  { key: 'life', label: '习惯', value: counts.value.habits ?? 0, sub: `记账 ${counts.value.ledger ?? 0} 笔` },
-  { key: 'study', label: '课程', value: counts.value.courses ?? 0, sub: `作业 ${counts.value.assignments ?? 0}` },
-  { key: 'knowledge', label: '笔记', value: counts.value.notes ?? 0, sub: `踩坑 ${counts.value.pitfalls ?? 0}` },
-  { key: 'workspace', label: '工具', value: counts.value.tools ?? 0, sub: `Agent ${counts.value.agents ?? 0}` },
-  { key: 'inspiration', label: '灵感', value: counts.value.inspirations ?? 0, sub: '稍纵即逝的想法' },
-])
+const ledgerThisMonth = computed(() => {
+  let spend = 0
+  let income = 0
+  for (const l of allLedger.value) {
+    const d = (l.date || '').slice(0, 7)
+    if (d === thisMonthKey) {
+      if (l.type === 'expense') spend += Number(l.amount) || 0
+      else income += Number(l.amount) || 0
+    }
+  }
+  return { spend, income }
+})
+const ledgerDelta = computed(() => {
+  let prev = 0
+  for (const l of allLedger.value) {
+    if ((l.date || '').slice(0, 7) === lastMonthKey && l.type === 'expense') prev += Number(l.amount) || 0
+  }
+  if (prev <= 0) return null
+  return ((ledgerThisMonth.value.spend - prev) / prev) * 100
+})
 
-// ---- 首次引导（F-SYS-11）：localStorage 标记，仅首次展示 ----
+const studyProgress = computed(() => ({
+  pendingAssignments: allAssignments.value.filter((a) => a.status !== 'submitted').length,
+  activeCourses: allCourses.value.length,
+}))
+
+const taskWeek = computed(() => {
+  const doneAt = (t: Task) => {
+    const stamp = t.updatedAt || t.createdAt || ''
+    return stamp.slice(0, 10)
+  }
+  let thisWeek = 0
+  let lastWeek = 0
+  for (const t of allTasks.value) {
+    if (t.status !== 'done') continue
+    const d = doneAt(t)
+    if (d >= thisMonday && d <= todayStr) thisWeek += 1
+    else if (d >= lastMonday && d <= lastSunday) lastWeek += 1
+  }
+  return { thisWeek, lastWeek }
+})
+
+// ============================================================
+// ④ 趋势小图（纯 SVG）
+//   近 14 天：习惯打卡（habitLogs.date）+ 完成番茄（pomodoros.startedAt 前 10 位）
+//   注：tasks 表没有可靠的完成时间字段（updatedAt 会被任意编辑污染），不作数据源
+//   近 6 月支出：ledger.date 按 yyyy-MM 汇总
+// ============================================================
+const trend14 = computed(() => {
+  const days: { date: string; habits: number; pomos: number }[] = []
+  for (let i = 13; i >= 0; i--) {
+    const d = shiftDay(today, -i)
+    const key = dayKey(d)
+    days.push({
+      date: key,
+      habits: allHabitLogs.value.filter((l) => l.date === key).length,
+      pomos: allPomodoros.value.filter((p) => p.completed === 1 && (p.startedAt || '').slice(0, 10) === key).length,
+    })
+  }
+  return days
+})
+const trend14Max = computed(() => Math.max(1, ...trend14.value.map((d) => Math.max(d.habits, d.pomos))))
+const trend14Empty = computed(() => trend14.value.every((d) => d.habits === 0 && d.pomos === 0))
+const TREND_H = 72
+
+const spend6m = computed(() => {
+  const keys: string[] = []
+  for (let i = 5; i >= 0; i--) keys.push(monthKey(new Date(today.getFullYear(), today.getMonth() - i, 1)))
+  const sums = keys.map(() => 0)
+  for (const l of allLedger.value) {
+    if (l.type !== 'expense') continue
+    const idx = keys.indexOf((l.date || '').slice(0, 7))
+    if (idx >= 0) sums[idx] += Number(l.amount) || 0
+  }
+  return keys.map((k, i) => ({ key: k, value: sums[i] }))
+})
+const spend6mMax = computed(() => Math.max(1, ...spend6m.value.map((m) => m.value)))
+const spend6mEmpty = computed(() => spend6m.value.every((m) => m.value === 0))
+const SPARK_W = 260
+const SPARK_H = 56
+const sparkPoints = computed(() =>
+  spend6m.value
+    .map((m, i) => `${((i / 5) * SPARK_W).toFixed(1)},${(SPARK_H - 4 - (m.value / spend6mMax.value) * (SPARK_H - 8)).toFixed(1)}`)
+    .join(' '),
+)
+
+// ============================================================
+// ⑤ AI 智能问答（常驻）+ 更多 AI 能力折叠区
+// ============================================================
+const qaQuestion = ref('')
+const qaLoading = ref(false)
+const qaResult = ref<AiEngineResult | null>(null)
+
+async function askAi(raw?: string) {
+  const q = (raw ?? qaQuestion.value).trim()
+  if (!q || qaLoading.value) return
+  qaQuestion.value = q
+  qaLoading.value = true
+  qaResult.value = null
+  try {
+    qaResult.value = await aiQa(q)
+  } catch (e) {
+    qaResult.value = { ok: false, kind: 'qa', items: [], summary: '问答执行失败：' + String(e) }
+  } finally {
+    qaLoading.value = false
+  }
+}
+function askChip(q: string) { askAi(q) }
+
+const AI_MORE: Array<{ label: string; hint: string; run: () => Promise<AiEngineResult> }> = [
+  { label: '语义搜索', hint: '跨任务/笔记/踩坑/片段/项目，支持 #tag 与 type: 语法', run: () => aiSemanticSearch(qaQuestion.value) },
+  { label: '智能建议', hint: '基于习惯、积压、截止与台账生成建议', run: () => aiSuggest() },
+  { label: '去重检测', hint: '识别标题相似的重复条目', run: () => aiDedupe() },
+  { label: '自动分类', hint: '为输入文本建议归属模块', run: () => Promise.resolve(aiAutoClassify(qaQuestion.value)) },
+  { label: '自动标签', hint: '为输入内容推荐标签', run: () => Promise.resolve(aiAutoTag(qaQuestion.value)) },
+]
+
+const moreAiOpen = ref(false)
+const moreAiLoading = ref(false)
+const moreAiResult = ref<AiEngineResult | null>(null)
+async function runMoreAi(item: (typeof AI_MORE)[number]) {
+  if (moreAiLoading.value) return
+  moreAiLoading.value = true
+  moreAiResult.value = null
+  try {
+    moreAiResult.value = await item.run()
+  } catch (e) {
+    moreAiResult.value = { ok: false, kind: 'more', items: [], summary: '执行失败：' + String(e) }
+  } finally {
+    moreAiLoading.value = false
+  }
+}
+
+function openAiSettings() {
+  settingsTab.value = 'ai'
+  settingsOpen.value = true
+}
+
+// ============================================================
+// ⑥ 保留区：首次引导 / 全局搜索 / 灵感快速捕获
+// ============================================================
+const firstRun = ref(false)
 function initFirstRun() {
   try {
     if (!localStorage.getItem('wb:first-run')) {
@@ -265,242 +394,15 @@ function initFirstRun() {
 }
 function dismissFirstRun() { firstRun.value = false }
 
-// ---- 规则引擎执行（F-AI-09 rules 开关联动）：基于台账求值，命中可一键生成任务 ----
-interface RuleHit {
-  id: string
-  name: string
-  detail: string
-  scope: 'ops' | 'dev' | 'study' | 'life'
-  taskTitle: string
-}
-function daysUntil(dateStr?: string | null): number | null {
-  if (!dateStr) return null
-  const d = new Date(`${dateStr}T00:00:00`)
-  if (Number.isNaN(d.getTime())) return null
-  return Math.ceil((d.getTime() - Date.now()) / 86400000)
-}
-const ruleHits = computed<RuleHit[]>(() => {
-  if (!aiSwitches.value.rules) return []
-  const hits: RuleHit[] = []
-  const fullDisk = disks.value.find((x) => x.used_percent >= 90)
-  if (fullDisk) hits.push({ id: 'disk', name: '磁盘空间预警', detail: `${fullDisk.mount} 盘已用 ${fullDisk.used_percent.toFixed(1)}%，建议清理`, scope: 'ops', taskTitle: `清理磁盘空间：${fullDisk.mount} 盘已用 ${fullDisk.used_percent.toFixed(1)}%` })
-  for (const dom of allDomains.value) {
-    const dd = daysUntil(dom.expireDate)
-    if (dd !== null && dd >= 0 && dd <= 30) hits.push({ id: `domain-${dom.id}`, name: '域名到期', detail: `${dom.name} 将于 ${dom.expireDate} 到期（剩余 ${dd} 天）`, scope: 'ops', taskTitle: `续费域名 ${dom.name}（${dom.expireDate} 到期）` })
-    const sd = daysUntil(dom.sslExpireDate)
-    if (sd !== null && sd >= 0 && sd <= 30) hits.push({ id: `ssl-${dom.id}`, name: 'SSL 证书到期', detail: `${dom.name} 的 SSL 证书将于 ${dom.sslExpireDate} 到期（剩余 ${sd} 天）`, scope: 'ops', taskTitle: `更新 SSL 证书 ${dom.name}（${dom.sslExpireDate} 到期）` })
-  }
-  for (const a of allAssignments.value) {
-    if (a.status === 'done') continue
-    const ad = daysUntil(a.dueDate)
-    if (ad !== null && ad >= 0 && ad <= 3) hits.push({ id: `hw-${a.id}`, name: '作业临近截止', detail: `${a.title} 将于 ${a.dueDate} 截止（剩余 ${ad} 天）`, scope: 'study', taskTitle: `完成作业：${a.title}（${a.dueDate} 截止）` })
-  }
-  const overdue = allTasks.value.filter((t) => t.status !== 'done' && t.dueDate && daysUntil(t.dueDate) !== null && daysUntil(t.dueDate)! < 0)
-  if (overdue.length) hits.push({ id: 'overdue', name: '任务逾期', detail: `${overdue.length} 项任务已逾期未完成`, scope: 'dev', taskTitle: `处理逾期任务：${overdue.slice(0, 3).map((t) => t.title).join('、')}${overdue.length > 3 ? ' 等' : ''}` })
-  if (lastBackupDays.value !== null && lastBackupDays.value > 7) hits.push({ id: 'backup', name: '备份护栏', detail: `距上次备份已 ${lastBackupDays.value} 天，建议立即导出`, scope: 'ops', taskTitle: '导出数据备份（已超过 7 天未备份）' })
-  return hits
-})
-async function applyRuleTask(r: RuleHit) {
-  try {
-    await tasksRepo.insert({
-      title: r.taskTitle, scope: r.scope, type: 'task', priority: 'high',
-      dueDate: todayStr, note: `由规则引擎自动生成（${r.name}）`,
-    })
-    window.alert(`已生成任务：${r.taskTitle}`)
-    await load()
-  } catch (e) {
-    window.alert('生成任务失败：' + String(e))
-  }
-}
-
-// ---- 数据洞察（F-AI-05 insight 开关联动）：基于台账统计 ----
-const insights = computed(() => {
-  if (!aiSwitches.value.insight) return []
-  const out: string[] = []
-  const doneToday = allTasks.value.filter((t) => t.status === 'done' && t.focusDate === todayStr).length
-  const pending = allTasks.value.filter((t) => t.status !== 'done').length
-  const monthKey = todayStr.slice(0, 7)
-  const spend = allLedger.value.filter((l) => l.type === 'expense' && (l.date ?? '').startsWith(monthKey)).reduce((s, l) => s + (Number(l.amount) || 0), 0)
-  const doneLogs = allHabitLogs.value.filter((h) => h.date === todayStr).length
-  const habitTotal = counts.value.habits ?? 0
-  const rate = habitTotal ? Math.round((doneLogs / habitTotal) * 100) : 0
-  const overdueAll = allTasks.value.filter((t) => t.status !== 'done' && t.dueDate && daysUntil(t.dueDate) !== null && daysUntil(t.dueDate)! < 0).length
-  if (doneToday) out.push(`今日已完成 ${doneToday} 项任务，继续保持节奏`)
-  if (pending) out.push(`当前有 ${pending} 项待办任务，积压压力${pending > 10 ? '较大' : '适中'}`)
-  if (spend) out.push(`本月支出合计 ¥${spend.toFixed(2)}，建议月底复盘`)
-  if (habitTotal) out.push(`习惯今日完成率 ${rate}%（${doneLogs}/${habitTotal}）`)
-  if (overdueAll) out.push(`有 ${overdueAll} 项逾期任务待处理，建议优先清空`)
-  if (!out.length) out.push('暂无足够数据生成洞察，先去各模块录入台账吧')
-  return out
-})
-
-// ---- 每周总结 / 报表生成（F-AI-06 summarize / F-AI-09 报表导出联动）----
-function buildWeeklyReport() {
-  const now = new Date()
-  const day = now.getDay() === 0 ? 7 : now.getDay()
-  const mon = new Date(now)
-  mon.setDate(now.getDate() - day + 1)
-  const fmt = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
-  const monStr = fmt(mon)
-  const doneThisWeek = allTasks.value.filter((t) => t.status === 'done' && t.focusDate && t.focusDate >= monStr && t.focusDate <= todayStr).length
-  const newThisWeek = allTasks.value.filter((t) => t.dueDate && t.dueDate >= monStr && t.dueDate <= todayStr && t.status !== 'done').length
-  const monthKey = todayStr.slice(0, 7)
-  const spend = allLedger.value.filter((l) => l.type === 'expense' && (l.date ?? '').startsWith(monthKey)).reduce((s, l) => s + (Number(l.amount) || 0), 0)
-  const doneLogs = allHabitLogs.value.filter((h) => h.date === todayStr).length
-  const habitTotal = counts.value.habits ?? 0
-  const rate = habitTotal ? Math.round((doneLogs / habitTotal) * 100) : 0
-  const lines: string[] = []
-  lines.push(`# WORKBENCH 周报（${monStr} ~ ${todayStr}）`)
-  lines.push('')
-  lines.push('## 本周概览')
-  lines.push(`- 完成任务：${doneThisWeek}`)
-  lines.push(`- 进行中任务：${newThisWeek}`)
-  lines.push(`- 本月支出：¥${spend.toFixed(2)}`)
-  lines.push(`- 习惯今日完成率：${rate}%`)
-  lines.push('')
-  lines.push('## 规则引擎命中')
-  if (ruleHits.value.length) {
-    for (const r of ruleHits.value) lines.push(`- [${r.scope}] ${r.name}：${r.detail}`)
-  } else {
-    lines.push('- 无命中，全部指标正常')
-  }
-  lines.push('')
-  lines.push(`> 由 WORKBENCH 智能层自动生成于 ${todayStr}`)
-  weeklyReport.value = lines.join('\n')
-  weeklyReportVisible.value = true
-}
-function downloadWeeklyReport() {
-  if (!weeklyReport.value) return
-  const blob = new Blob([weeklyReport.value], { type: 'text/markdown;charset=utf-8' })
-  const url = URL.createObjectURL(blob)
-  const a = document.createElement('a')
-  a.href = url
-  a.download = `workbench-weekly-${todayStr}.md`
-  document.body.appendChild(a)
-  a.click()
-  a.remove()
-  URL.revokeObjectURL(url)
-}
-
-function go(path: string) {
-  router.push(path)
-}
-
-// 统计卡跳转目标：stats.key 即模块 key（两个 dev 卡路径相同）
-function statPath(key: string): string {
-  return modules.find((m) => m.key === key)?.path ?? '/'
-}
-
-// ---- 智能层执行面板（F-AI-01/02/03/04/06/07/08/10 实际后端执行，开关联动）----
-const aiExecMode = ref<'semantic_search' | 'auto_classify' | 'smart_suggest' | 'summarize' | 'generate' | 'qa' | 'auto_tag' | 'dedupe'>('semantic_search')
-const aiExecInput = ref('')
-const aiExecResult = ref<AiEngineResult | null>(null)
-const aiExecLoading = ref(false)
-const AI_MODE_OPTIONS = [
-  { value: 'semantic_search', label: '语义搜索', feature: 'semantic_search' },
-  { value: 'auto_classify', label: '自动分类', feature: 'auto_classify' },
-  { value: 'dedupe', label: '去重检测', feature: 'dedupe' },
-  { value: 'smart_suggest', label: '智能建议', feature: 'smart_suggest' },
-  { value: 'summarize', label: '内容摘要', feature: 'summarize' },
-  { value: 'generate', label: '内容生成', feature: 'generate' },
-  { value: 'qa', label: '智能问答', feature: 'qa' },
-  { value: 'auto_tag', label: '自动标签', feature: 'auto_tag' },
-]
-function aiModeFeature(mode: string): string {
-  return AI_MODE_OPTIONS.find((m) => m.value === mode)?.feature ?? 'semantic_search'
-}
-async function runAiExec() {
-  const feature = aiModeFeature(aiExecMode.value)
-  if (!aiSwitches.value[feature]) {
-    window.alert(`「${AI_FEATURES.find((f) => f.key === feature)?.label}」开关已关闭，请先在智能层状态中开启`)
-    return
-  }
-  aiExecLoading.value = true
-  aiExecResult.value = null
-  try {
-    const m = aiExecMode.value
-    if (m === 'semantic_search') aiExecResult.value = await aiSemanticSearch(aiExecInput.value)
-    else if (m === 'auto_classify') aiExecResult.value = aiAutoClassify(aiExecInput.value)
-    else if (m === 'dedupe') aiExecResult.value = await aiDedupe()
-    else if (m === 'smart_suggest') aiExecResult.value = await aiSuggest()
-    else if (m === 'summarize') aiExecResult.value = aiSummarize(aiExecInput.value)
-    else if (m === 'generate') aiExecResult.value = await aiGenerate('report', aiExecInput.value)
-    else if (m === 'qa') aiExecResult.value = await aiQa(aiExecInput.value)
-    else if (m === 'auto_tag') aiExecResult.value = aiAutoTag(aiExecInput.value)
-    if (aiExecResult.value?.ok) recordActivity(`智能层执行：${aiExecMode.value}`)
-  } catch (e) {
-    aiExecResult.value = { ok: false, kind: aiExecMode.value, items: [], summary: '执行失败：' + String(e) }
-  } finally {
-    aiExecLoading.value = false
-  }
-}
-
-// ---- F-OVW-03 动态流：记录最近操作，展示最近 8 条 ----
-interface ActivityItem { at: string; text: string }
-const activityFeed = ref<ActivityItem[]>([])
-function loadActivity() {
-  try {
-    const raw = localStorage.getItem('wb:activity')
-    activityFeed.value = raw ? (JSON.parse(raw) as ActivityItem[]).slice(0, 8) : []
-  } catch { activityFeed.value = [] }
-}
-function recordActivity(text: string) {
-  try {
-    const now = new Date()
-    const at = `${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')} ${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`
-    const arr = [{ at, text }, ...activityFeed.value].slice(0, 30)
-    activityFeed.value = arr.slice(0, 8)
-    localStorage.setItem('wb:activity', JSON.stringify(arr))
-  } catch { /* ignore */ }
-}
-loadActivity()
-
-// ---- F-OVW-04 每日快照 + 7 日趋势：基于任务完成/记账/习惯统计，简单柱状图 ----
-const trendData = computed(() => {
-  const out: { date: string; done: number; spend: number; habits: number }[] = []
-  for (let i = 6; i >= 0; i--) {
-    const d = new Date()
-    d.setDate(d.getDate() - i)
-    const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
-    const done = allTasks.value.filter((t) => t.status === 'done' && t.focusDate === key).length
-    const spend = allLedger.value.filter((l) => l.type === 'expense' && (l.date ?? '') === key).reduce((s, l) => s + (Number(l.amount) || 0), 0)
-    const habits = allHabitLogs.value.filter((h) => h.date === key).length
-    out.push({ date: key.slice(5), done, spend, habits })
-  }
-  return out
-})
-const trendMax = computed(() => Math.max(1, ...trendData.value.map((d) => Math.max(d.done, d.habits))))
-
-// ---- F-OVW-06 卡片隐藏：模块统计卡支持隐藏/恢复（localStorage）----
-const hiddenStats = ref<string[]>([])
-function loadHiddenStats() {
-  try {
-    const raw = localStorage.getItem('wb:hidden-stats')
-    hiddenStats.value = raw ? (JSON.parse(raw) as string[]) : []
-  } catch { hiddenStats.value = [] }
-}
-function toggleStatHidden(key: string) {
-  const i = hiddenStats.value.indexOf(key)
-  if (i >= 0) hiddenStats.value.splice(i, 1)
-  else hiddenStats.value.push(key)
-  try { localStorage.setItem('wb:hidden-stats', JSON.stringify(hiddenStats.value)) } catch { /* ignore */ }
-}
-loadHiddenStats()
-// 板块开关（设置→显示）关闭的模块,其统计卡不再出现在概览
-const visibleStats = computed(() => stats.value.filter((s) => !hiddenStats.value.includes(s.key) && settings.sections[s.key as ModuleKey] !== false))
-const visibleModules = computed(() => modules.filter((m) => settings.sections[m.key] !== false))
-
-// ---- F-SYS-05 全局搜索（语法过滤）：支持 type:/tag:/date: 前缀 ----
 const searchQuery = ref('')
-// 防抖副本：输入框绑 searchQuery 保持输入流畅，实际检索用 debouncedQuery，
-// 避免每次按键都对任务/笔记/踩坑/片段/截止五个全表数组做 filter。
 const debouncedQuery = ref('')
 let searchTimer: number | undefined
 watch(searchQuery, (v) => {
   if (searchTimer !== undefined) clearTimeout(searchTimer)
   searchTimer = setTimeout(() => { debouncedQuery.value = v }, 250) as unknown as number
 })
-const searchResults = computed(() => {
+interface SearchHit { type: string; title: string; meta: string; jump: string }
+const searchResults = computed<SearchHit[]>(() => {
   const q = debouncedQuery.value.trim()
   if (!q) return []
   let typeFilter = ''
@@ -515,761 +417,539 @@ const searchResults = computed(() => {
   if (dateMatch) { dateFilter = dateMatch[1]; kw = kw.replace(dateMatch[0], '') }
   kw = kw.trim().toLowerCase()
   const hit = (s: string) => !kw || s.toLowerCase().includes(kw)
-  const out: { type: string; title: string; meta: string }[] = []
-  if (!typeFilter || typeFilter === 'task') allTasks.value.filter((t) => hit(`${t.title} ${t.note || ''}`) && (!dateFilter || (t.focusDate ?? '') === dateFilter || (t.dueDate ?? '') === dateFilter)).slice(0, 6).forEach((t) => out.push({ type: '任务', title: t.title, meta: `${t.scope || ''} ${t.dueDate || ''}` }))
-  if (!typeFilter || typeFilter === 'note') allNotes.value.filter((n) => hit(`${n.title} ${n.content || ''}`) && (!tagFilter || (n.tags ?? '').includes(tagFilter))).slice(0, 6).forEach((n) => out.push({ type: '笔记', title: n.title, meta: `${n.tags || '未分类'} ${n.updatedAt || ''}` }))
-  if (!typeFilter || typeFilter === 'pitfall') allPitfalls.value.filter((p) => hit(`${p.title} ${p.problem || ''} ${p.solution || ''}`) && (!tagFilter || (p.tags ?? '').includes(tagFilter))).slice(0, 6).forEach((p) => out.push({ type: '踩坑', title: p.title, meta: `${p.category || ''}` }))
-  if (!typeFilter || typeFilter === 'snippet') allSnippets.value.filter((s) => hit(`${s.title} ${s.code || ''}`) && (!tagFilter || (s.tags ?? '').includes(tagFilter))).slice(0, 6).forEach((s) => out.push({ type: '片段', title: s.title, meta: `${s.language || ''}` }))
-  if (!typeFilter || typeFilter === 'deadline') allDeadlines.value.filter((d) => hit(d.title) && (!dateFilter || (d.dueDate ?? '') === dateFilter)).slice(0, 6).forEach((d) => out.push({ type: '截止', title: d.title, meta: `${d.dueDate || ''} ${d.status || ''}` }))
-  return out.slice(0, 12)
+  const out: SearchHit[] = []
+  if (!typeFilter || typeFilter === 'task') allTasks.value.filter((t) => hit(`${t.title} ${t.note || ''}`) && (!dateFilter || (t.focusDate ?? '') === dateFilter || (t.dueDate ?? '') === dateFilter)).slice(0, 4).forEach((t) => out.push({ type: '任务', title: t.title, meta: `${t.scope || ''} ${t.status || ''} ${t.dueDate || ''}`, jump: scopePath(t.scope) }))
+  if (!typeFilter || typeFilter === 'note') allNotes.value.filter((n) => hit(`${n.title} ${n.content || ''}`) && (!tagFilter || (n.tags ?? '').includes(tagFilter))).slice(0, 3).forEach((n) => out.push({ type: '笔记', title: n.title, meta: n.tags || '未分类', jump: '/knowledge' }))
+  if (!typeFilter || typeFilter === 'pitfall') allPitfalls.value.filter((p) => hit(`${p.title} ${p.problem || ''} ${p.solution || ''}`) && (!tagFilter || (p.tags ?? '').includes(tagFilter))).slice(0, 3).forEach((p) => out.push({ type: '踩坑', title: p.title, meta: p.category || '', jump: '/knowledge' }))
+  if (!typeFilter || typeFilter === 'snippet') allSnippets.value.filter((s) => hit(`${s.title} ${s.code || ''}`) && (!tagFilter || (s.tags ?? '').includes(tagFilter))).slice(0, 3).forEach((s) => out.push({ type: '片段', title: s.title, meta: s.language || '', jump: '/dev' }))
+  if (!typeFilter || typeFilter === 'deadline') allDeadlines.value.filter((d) => hit(d.title) && (!dateFilter || (d.dueDate ?? '') === dateFilter)).slice(0, 3).forEach((d) => out.push({ type: '截止', title: d.title, meta: `${d.dueDate || ''} ${d.status || ''}`, jump: deadlinePath(d.source) }))
+  return out.slice(0, 8)
 })
-function recordSearch() {
-  if (searchQuery.value.trim()) recordActivity(`全局搜索：${searchQuery.value.trim()}`)
-}
 
-// ---- 加载补充数据源（供全局搜索与 aiEngine 使用）----
-const allNotes = ref<Array<{ id: number; title: string; content: string | null; tags: string | null; updatedAt: string | null }>>([])
-const allPitfalls = ref<Array<{ id: number; title: string; problem: string | null; solution: string | null; category: string | null; tags: string | null }>>([])
-const allSnippets = ref<Array<{ id: number; title: string; code: string | null; language: string | null; tags: string | null }>>([])
-async function loadSearchSources() {
+const inspInput = ref('')
+async function saveInspiration() {
+  const raw = inspInput.value.trim()
+  if (!raw) return
+  const { content, tags } = parseInspiration(raw)
+  if (!content && !tags) return
   try {
-    const [notes, pitfalls, snippets] = await Promise.all([notesRepo.listAll(), pitfallsRepo.listAll(), snippetsRepo.listAll()])
-    allNotes.value = notes
-    allPitfalls.value = pitfalls
-    allSnippets.value = snippets
-  } catch { /* 浏览器降级忽略 */ }
+    await inspirationsRepo.insert({ content: content || raw, tags: tags || null })
+    inspInput.value = ''
+    message.success('灵感已捕获')
+  } catch {
+    message.error('记录失败：数据层不可用')
+  }
 }
-onMounted(() => {
-  loadSearchSources()
-  loadActivity()
-})
 </script>
 
 <template>
-  <div>
+  <div class="dash">
 
-    <!-- 自定义卡片（F-SYS-06 简化版：设置面板注册的文本卡片） -->
-    <div v-if="settings.cards.length" class="plugin-cards" style="margin-bottom: 16px">
-      <section v-for="c in settings.cards" :key="c.id" class="wb-card plugin-card">
-        <header class="card-head">
-          <span class="accent-bar" :style="{ background: c.color || moduleColor('home', themeStore.dark) }"></span>
-          <h2>{{ c.name }}</h2>
-        </header>
-        <pre class="plugin-content">{{ c.content }}</pre>
-      </section>
-    </div>
-
-    <!-- 越界告警条 -->
-    <div v-if="diskAlert || deadlineAlert" class="alerts" style="margin-bottom: 16px">
-      <div v-if="diskAlert" class="alert-strip danger">◉ {{ diskAlert }}，请及时清理磁盘空间</div>
-      <div v-if="deadlineAlert" class="alert-strip warn">◉ {{ deadlineAlert }}，请及时处理</div>
-      <div v-if="overdueTasks" class="alert-strip warn">◉ {{ overdueTasks }}</div>
-    </div>
-
-    <!-- 首次引导（F-SYS-11） -->
-    <div v-if="firstRun" class="onboard-card" style="margin-bottom: 16px">
-      <div class="onboard-title">欢迎使用 WORKBENCH</div>
-      <div class="onboard-body">
-        <span>按 <span class="mono">Ctrl/Cmd + 1..8</span> 切换模块，<span class="mono">Ctrl/Cmd + K</span> 打开命令面板，<span class="mono">g</span> 后按 <span class="mono">d/l/s/o/k/w/h/i</span> 快速跳转，<span class="mono">n</span> 快速新建。首次进入请先在各模块录入台账，智能层将自动提供规则预警与洞察。</span>
-      </div>
+    <!-- 首次引导（保留 wb:first-run 逻辑） -->
+    <div v-if="firstRun" class="onboard">
+      <span class="ob-title">欢迎使用 WORKBENCH</span>
+      <span class="ob-body">
+        <span class="mono">Ctrl/Cmd + K</span> 命令面板 ·<span class="mono"> Ctrl/Cmd + 1..8</span> 切换模块 ·
+        顶栏灯泡可快速记灵感。先在任务板 / 习惯 / 记账里录入数据，本页即为你的驾驶舱。
+      </span>
       <NButton size="tiny" type="primary" ghost @click="dismissFirstRun()">我知道了</NButton>
     </div>
 
-    <!-- ===== 上半区 · 数据区 ===== -->
-    <div class="zone-title">数据</div>
+    <!-- 快速条：全局搜索 + 灵感捕获 -->
+    <div class="quick-strip">
+      <div class="qs-search">
+        <NInput
+          v-model:value="searchQuery"
+          size="small"
+          placeholder="全局搜索：任务 / 笔记 / 踩坑 / 片段 / 截止，支持 type: · tag: · date: 语法"
+          clearable
+        />
+        <div v-if="searchResults.length" class="qs-results">
+          <div v-for="(r, i) in searchResults" :key="i" class="qs-item clickable" @click="go(r.jump)">
+            <span class="qs-type mono">{{ r.type }}</span>
+            <span class="qs-title">{{ r.title }}</span>
+            <span class="qs-meta mono">{{ r.meta }}</span>
+          </div>
+        </div>
+      </div>
+      <div class="qs-insp">
+        <NInput
+          v-model:value="inspInput"
+          size="small"
+          placeholder="灵感速记… 支持 #标签"
+          @keyup.enter="saveInspiration()"
+        >
+          <template #prefix><NIcon :component="Bulb" /></template>
+        </NInput>
+        <NButton size="small" quaternary @click="go('/inspiration')" title="灵感列表">
+          <template #icon><NIcon :component="ArrowRight" /></template>
+        </NButton>
+      </div>
+    </div>
 
-    <!-- 今日焦点 -->
-    <div class="section-grid">
+    <!-- 第一屏：今日焦点（左，最大权重）｜ 右侧：AI 问答 + 截止预警 -->
+    <div class="top-grid">
       <section class="wb-card focus-card">
         <header class="card-head">
           <span class="accent-bar" :style="{ background: moduleColor('home', themeStore.dark) }"></span>
           <h2>今日焦点</h2>
-          <NTag size="small" :bordered="false" class="mono">{{ todayStr }}</NTag>
-        </header>
-        <div v-if="focusTasks.length" class="focus-list">
-          <div v-for="t in focusTasks" :key="t.id" class="focus-item clickable" @click="go('/dev')">
-            <NTag size="small" :bordered="false" :color="{ color: 'transparent', textColor: moduleColor(t.scope === 'study' ? 'study' : t.scope === 'life' ? 'life' : 'dev', themeStore.dark) }">
-              {{ t.scope }}
-            </NTag>
-            <span class="focus-title">{{ t.title }}</span>
-            <span class="mono" style="color: var(--wb-text-3); font-size: 11.5px">{{ t.dueDate || '—' }}</span>
-          </div>
-        </div>
-        <EmptyState v-else text="今天还没有焦点任务" />
-        <div class="card-foot">
-          <NButton size="tiny" text type="primary" @click="go('/dev')">去任务列表 <template #icon><NIcon :component="ArrowRight" /></template></NButton>
-        </div>
-      </section>
-
-      <section class="wb-card stats-card">
-        <header class="card-head">
-          <span class="accent-bar" :style="{ background: moduleColor('home', themeStore.dark) }"></span>
-          <h2>模块统计</h2>
+          <span class="mono head-meta">{{ todayLabel }}</span>
         </header>
         <div v-if="loading" class="load-strip">数据加载中…</div>
-        <div class="stats-grid">
-          <StatCard
-            v-for="s in visibleStats"
-            :key="s.key"
-            :label="s.label"
-            :value="s.value"
-            :sub="s.sub"
-            :color="moduleColor(s.key, themeStore.dark)"
-            clickable
-            @click="go(statPath(s.key))"
-          />
+        <div v-else-if="focusRows.length" class="focus-list">
+          <div v-for="row in focusRows" :key="row.uid" class="focus-item">
+            <button
+              v-if="row.kind === 'task'"
+              class="chk"
+              title="勾选完成"
+              @click.stop="completeTask(row.ref)"
+            >✓</button>
+            <button
+              v-else
+              class="chk"
+              title="标记已处理并关闭"
+              @click.stop="closeDeadline(row.ref)"
+            >✓</button>
+            <span class="clickable focus-main" @click="go(row.jump)">
+              <span class="f-tag mono" :style="{ color: moduleColor(row.kind === 'task' ? (row.ref.scope === 'study' ? 'study' : row.ref.scope === 'life' ? 'life' : 'dev') : 'ops', themeStore.dark) }">{{ row.tag }}</span>
+              <span class="f-title">{{ row.title }}</span>
+              <span v-if="row.kind === 'task' && row.note" class="f-due mono" :class="{ danger: row.note.startsWith('逾期') }">{{ row.note }}</span>
+            </span>
+          </div>
         </div>
-        <div class="stats-tools">
-          <span class="stats-hint">点击隐藏 / 恢复统计卡片（F-OVW-06）</span>
-          <span v-for="s in stats" :key="s.key" class="stat-toggle mono" :class="{ off: hiddenStats.includes(s.key) }" @click="toggleStatHidden(s.key)">{{ s.key }}</span>
+        <div v-else class="focus-empty">
+          <EmptyState text="今天没有到期事项" />
+          <NButton size="tiny" text type="primary" @click="go('/dev')">去任务板看看 <template #icon><NIcon :component="ArrowRight" /></template></NButton>
         </div>
       </section>
+
+      <div class="top-right">
+        <!-- AI 智能问答（常驻） -->
+        <section class="wb-card qa-card">
+          <header class="card-head">
+            <span class="accent-bar" :style="{ background: moduleColor('knowledge', themeStore.dark) }"></span>
+            <h2>AI 问答</h2>
+            <span v-if="llmConfigured()" class="ai-chip mono">{{ llmConfigLabel() }}</span>
+            <span v-else class="ai-chip fallback">本地检索</span>
+          </header>
+          <div class="qa-body">
+            <div class="qa-bar">
+              <NInput
+                v-model:value="qaQuestion"
+                size="small"
+                :placeholder="llmConfigured() ? '向工作台提问，回车发送' : '未配置 AI：问题将检索本地笔记 / 踩坑 / 片段'"
+                @keyup.enter="askAi()"
+              />
+              <NButton size="small" type="primary" :loading="qaLoading" @click="askAi()">发送</NButton>
+            </div>
+            <div class="qa-chips">
+              <button v-for="c in ['今天做什么', '帮我总结本周', '有什么可以归档']" :key="c" class="chip" :disabled="qaLoading" @click="askChip(c)">{{ c }}</button>
+              <NButton v-if="!llmConfigured()" size="tiny" type="primary" ghost class="cfg-btn" @click="openAiSettings()">配置 AI 服务</NButton>
+            </div>
+            <div v-if="qaResult" class="ai-result">
+              <div class="ai-summary">{{ qaResult.summary }}</div>
+              <div v-for="(it, i) in qaResult.items.slice(0, 4)" :key="i" class="ai-item">
+                <div class="ai-item-title">{{ it.title }}</div>
+                <div class="ai-item-meta">{{ it.meta }}</div>
+              </div>
+            </div>
+            <div class="qa-more">
+              <button class="more-toggle mono" @click="moreAiOpen = !moreAiOpen">{{ moreAiOpen ? '▾' : '▸' }} 更多 AI 能力</button>
+              <div v-if="moreAiOpen" class="more-panel">
+                <button v-for="item in AI_MORE" :key="item.label" class="more-btn" :disabled="moreAiLoading" :title="item.hint" @click="runMoreAi(item)">{{ item.label }}</button>
+                <div v-if="moreAiResult" class="ai-result">
+                  <div class="ai-summary">{{ moreAiResult.summary }}</div>
+                  <div v-for="(it, i) in moreAiResult.items.slice(0, 4)" :key="i" class="ai-item">
+                    <div class="ai-item-title">{{ it.title }}</div>
+                    <div class="ai-item-meta">{{ it.meta }}</div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- 截止预警 -->
+        <section class="wb-card watch-card">
+          <header class="card-head">
+            <span class="accent-bar" :style="{ background: moduleColor('ops', themeStore.dark) }"></span>
+            <h2>截止预警 · 未来 7 天</h2>
+            <span class="mono head-meta">{{ watchGroups.length }} 天</span>
+          </header>
+          <div v-if="watchGroups.length" class="watch-list">
+            <div v-for="g in watchGroups" :key="g.date" class="watch-group">
+              <div class="wg-head clickable" @click="go('/dev')">
+                <span class="wg-label">{{ g.label }}</span>
+                <span class="wg-count mono">{{ g.countdown }} · {{ g.items.length }} 项</span>
+              </div>
+              <div v-for="it in g.items" :key="it.uid" class="wg-item clickable" @click="go(it.jump)">
+                <span class="f-tag mono">{{ it.kind === 'assignment' ? '作业' : it.tag }}</span>
+                <span class="f-title">{{ it.title }}</span>
+              </div>
+            </div>
+          </div>
+          <EmptyState v-else text="未来 7 天没有到期事项" />
+        </section>
+      </div>
     </div>
 
-    <!-- 截止提醒 + 7 日趋势 + 动态流（数据区） -->
-    <div class="data-grid" style="margin-bottom: 16px">
+    <!-- 进度条区：一行四卡，均可点击跳转 -->
+    <div class="prog-grid">
+      <div class="wb-card hoverable prog-card clickable" @click="go('/life')">
+        <div class="pg-label">习惯 · 今日</div>
+        <div class="pg-value mono" :style="{ color: moduleColor('life', themeStore.dark) }">
+          {{ habitToday.done }}<span class="pg-suffix">/{{ habitToday.total }}</span>
+        </div>
+        <div class="pg-sub">已打卡 · 本周连续 {{ habitWeekStreak }} 天</div>
+        <div class="pg-bar"><div class="pg-bar-fill" :style="{ width: (habitToday.total ? habitToday.done / habitToday.total * 100 : 0) + '%', background: 'var(--wb-module-life)' }"></div></div>
+      </div>
+
+      <div class="wb-card hoverable prog-card clickable" @click="go('/life')">
+        <div class="pg-label">记账 · 本月</div>
+        <div class="pg-value mono" :style="{ color: moduleColor('ops', themeStore.dark) }">¥{{ ledgerThisMonth.spend.toFixed(0) }}</div>
+        <div class="pg-sub">
+          支出 / 收入 ¥{{ ledgerThisMonth.income.toFixed(0) }}
+          <span v-if="ledgerDelta !== null" :class="ledgerDelta > 0 ? 'delta up' : 'delta down'">{{ ledgerDelta > 0 ? '↑' : '↓' }}{{ Math.abs(ledgerDelta).toFixed(0) }}%</span>
+          <span v-else class="delta flat">— 上月无数据</span>
+        </div>
+      </div>
+
+      <div class="wb-card hoverable prog-card clickable" @click="go('/study')">
+        <div class="pg-label">学习</div>
+        <div class="pg-value mono" :style="{ color: moduleColor('study', themeStore.dark) }">
+          {{ studyProgress.pendingAssignments }}<span class="pg-suffix"> 待完成</span>
+        </div>
+        <div class="pg-sub">作业 · 课程进行中 {{ studyProgress.activeCourses }} 门</div>
+      </div>
+
+      <div class="wb-card hoverable prog-card clickable" @click="go('/dev')">
+        <div class="pg-label">任务 · 本周完成</div>
+        <div class="pg-value mono" :style="{ color: moduleColor('dev', themeStore.dark) }">{{ taskWeek.thisWeek }}</div>
+        <div class="pg-sub">
+          上周 {{ taskWeek.lastWeek }}
+          <span v-if="taskWeek.thisWeek > taskWeek.lastWeek" class="delta up">↑</span>
+          <span v-else-if="taskWeek.thisWeek < taskWeek.lastWeek" class="delta down">↓</span>
+          <span v-else class="delta flat">=</span>
+          <span class="pending">待办 {{ openTasks.length }}</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- 趋势小图（纯 SVG，无新依赖） -->
+    <div class="trend-grid">
       <section class="wb-card">
         <header class="card-head">
           <span class="accent-bar" :style="{ background: moduleColor('life', themeStore.dark) }"></span>
-          <h2>截止提醒</h2>
-          <NTag size="small" :bordered="false" class="mono">点击查看任务</NTag>
+          <h2>近 14 天节奏</h2>
+          <span class="legend">
+            <i class="lg-swatch bar-a"></i>打卡
+            <i class="lg-swatch bar-b"></i>番茄
+          </span>
         </header>
-        <div class="cap-body" style="min-height: 0">
-          <div v-if="deadlineAlerts.length" class="deadline-list">
-            <div v-for="d in deadlineAlerts" :key="d.id" class="deadline-item clickable" @click="go('/dev')">
-              <span class="deadline-title">{{ d.title }}</span>
-              <span class="mono" style="color: var(--wb-text-3); font-size: 11.5px">{{ d.dueDate }}</span>
-            </div>
-          </div>
-          <EmptyState v-else text="近期没有开放的截止项" />
+        <div class="chart-body">
+          <svg :viewBox="`0 0 322 ${TREND_H + 16}`" preserveAspectRatio="none" class="chart">
+            <template v-for="(d, i) in trend14" :key="d.date">
+              <rect
+                :x="i * 23 + 5" :width="7" rx="2"
+                :y="TREND_H - Math.max(2, d.habits / trend14Max * TREND_H)"
+                :height="Math.max(2, d.habits / trend14Max * TREND_H)"
+                class="bar-a"><title>{{ d.date }} 打卡 {{ d.habits }}</title></rect>
+              <rect
+                :x="i * 23 + 13" :width="7" rx="2"
+                :y="TREND_H - Math.max(2, d.pomos / trend14Max * TREND_H)"
+                :height="Math.max(2, d.pomos / trend14Max * TREND_H)"
+                class="bar-b"><title>{{ d.date }} 番茄 {{ d.pomos }}</title></rect>
+              <text v-if="i % 3 === 2 || i === 13" :x="i * 23 + 8" :y="TREND_H + 12" class="tick" text-anchor="middle">{{ d.date.slice(8) }}</text>
+            </template>
+          </svg>
+          <div v-if="trend14Empty" class="chart-empty">近 14 天暂无打卡 / 番茄记录</div>
         </div>
       </section>
-      <section class="wb-card">
-        <header class="card-head">
-          <span class="accent-bar" :style="{ background: moduleColor('dev', themeStore.dark) }"></span>
-          <h2>7 日趋势</h2>
-          <NTag size="small" :bordered="false" class="mono">任务完成 / 习惯打卡</NTag>
-        </header>
-        <div class="cap-body">
-          <div v-if="trendData.length" class="trend-bars">
-            <div v-for="d in trendData" :key="d.date" class="trend-col">
-              <div class="trend-bar-wrap">
-                <div class="trend-bar" :style="{ height: Math.max(4, (d.done / trendMax) * 80) + 'px' }" :title="`完成 ${d.done}`"></div>
-                <div class="trend-bar second" :style="{ height: Math.max(4, (d.habits / trendMax) * 80) + 'px' }" :title="`打卡 ${d.habits}`"></div>
-              </div>
-              <span class="trend-label mono">{{ d.date }}</span>
-            </div>
-          </div>
-          <EmptyState v-else text="暂无趋势数据" />
-        </div>
-      </section>
-      <section class="wb-card">
-        <header class="card-head">
-          <span class="accent-bar" :style="{ background: moduleColor('home', themeStore.dark) }"></span>
-          <h2>动态流</h2>
-          <NTag size="small" :bordered="false" class="mono">最近操作</NTag>
-        </header>
-        <div class="cap-body" style="min-height: 0">
-          <div v-if="activityFeed.length" class="activity-list">
-            <div v-for="(a, i) in activityFeed" :key="i" class="activity-item">
-              <span class="mono activity-at">{{ a.at }}</span>
-              <span>{{ a.text }}</span>
-            </div>
-          </div>
-          <EmptyState v-else text="暂无动态，执行智能层操作后自动记录" />
-        </div>
-      </section>
-    </div>
 
-    <!-- 模块入口（数据区尾部，随板块开关联动） -->
-    <section class="wb-card modules-card">
-      <header class="card-head">
-        <span class="accent-bar" :style="{ background: moduleColor('home', themeStore.dark) }"></span>
-        <h2>模块导航</h2>
-      </header>
-      <div class="module-grid">
-        <button v-for="m in visibleModules" :key="m.key" class="module-entry" @click="go(m.path)">
-          <span class="module-dot" :style="{ background: moduleColor(m.key, themeStore.dark) }"></span>
-          <span class="me-name">{{ m.label }}</span>
-          <span class="me-code mono">{{ m.name }}</span>
-        </button>
-      </div>
-    </section>
-
-    <!-- ===== 下半区 · 操作区 ===== -->
-    <div class="zone-title" style="margin-top: 20px">操作</div>
-    <div class="section-grid cap-grid" style="margin-top: 16px; margin-bottom: 16px">
       <section class="wb-card">
         <header class="card-head">
           <span class="accent-bar" :style="{ background: moduleColor('ops', themeStore.dark) }"></span>
-          <h2>系统底座 · 数据备份</h2>
-          <NButton size="tiny" type="primary" :loading="exporting" @click="doExport()">导出备份</NButton>
+          <h2>近 6 月支出</h2>
+          <span class="mono head-meta">峰值 ¥{{ spend6mMax.toFixed(0) }}</span>
         </header>
-        <div class="cap-body">
-          <div v-if="lastBackupDays !== null && lastBackupDays > 7" class="backup-guard">
-            <span class="bg-dot"></span>
-            距上次备份已 {{ lastBackupDays }} 天（超过 7 天建议立即导出）
+        <div class="chart-body">
+          <svg :viewBox="`0 0 ${SPARK_W} ${SPARK_H}`" preserveAspectRatio="none" class="chart spark">
+            <polyline :points="sparkPoints" class="spark-line" />
+            <circle
+              v-for="(m, i) in spend6m" :key="m.key"
+              :cx="(i / 5) * SPARK_W"
+              :cy="SPARK_H - 4 - (m.value / spend6mMax) * (SPARK_H - 8)"
+              r="2.5" class="spark-dot"
+            ><title>{{ m.key }} ¥{{ m.value.toFixed(2) }}</title></circle>
+          </svg>
+          <div class="spark-axis mono">
+            <span v-for="m in spend6m" :key="m.key">{{ m.key.slice(5) }}</span>
           </div>
-          <div v-if="backups.length" class="backup-list">
-            <div v-for="b in backups" :key="b.name" class="backup-item">
-              <span class="mono backup-name">{{ b.name }}</span>
-              <span class="mono backup-meta">{{ (b.size / 1024).toFixed(1) }} KB</span>
-              <NButton size="tiny" text type="primary" :loading="restoring" @click="doRestore(b.name)">恢复</NButton>
-            </div>
-          </div>
-          <EmptyState v-else text="暂无备份，点击「导出备份」生成一份" />
-        </div>
-      </section>
-
-      <section class="wb-card" v-if="settings.llmEnabled">
-        <header class="card-head">
-          <span class="accent-bar" :style="{ background: moduleColor('knowledge', themeStore.dark) }"></span>
-          <h2>智能层 · 状态检测</h2>
-        </header>
-        <div class="cap-body">
-          <template v-if="llmState">
-            <div class="llm-row">
-              <NTag size="small" :bordered="false" :type="llmState.configured ? 'success' : 'warning'">
-                {{ llmState.configured ? '已启用' : '未配置' }}
-              </NTag>
-              <span class="llm-provider">{{ llmState.provider }}</span>
-            </div>
-            <p class="llm-tip">
-              {{ llmState.configured ? '智能层已就绪，智能问答会优先调用该服务生成回答。' : '未检测到 LLM 服务：请在「系统设置 → AI 与 LLM」填写服务地址与 API Key，或使用环境变量。下方各能力仍可本地运行。' }}
-            </p>
-          </template>
-          <EmptyState v-else text="智能层状态不可用（浏览器降级）" />
-          <div class="ai-switches">
-            <div v-for="f in AI_FEATURES" :key="f.key" class="ai-switch">
-              <div class="ai-meta">
-                <div class="ai-name">{{ f.label }}</div>
-                <div class="ai-desc">{{ f.desc }}</div>
-              </div>
-              <NSwitch size="small" :value="!!aiSwitches[f.key]" @update:value="toggleAi(f.key)" />
-            </div>
-          </div>
+          <div v-if="spend6mEmpty" class="chart-empty">近 6 个月暂无支出记录</div>
         </div>
       </section>
     </div>
-
-    <!-- 智能层执行：规则引擎 / 数据洞察 / 每周总结 -->
-    <div class="ai-exec-grid" style="margin-bottom: 16px" v-if="settings.llmEnabled">
-      <section class="wb-card">
-        <header class="card-head">
-          <span class="accent-bar" :style="{ background: moduleColor('ops', themeStore.dark) }"></span>
-          <h2>规则引擎 · 执行结果</h2>
-          <NTag v-if="!aiSwitches.rules" size="small" :bordered="false" type="warning">已关闭</NTag>
-          <NTag v-else size="small" :bordered="false" :type="ruleHits.length ? 'warning' : 'success'">{{ ruleHits.length }} 条命中</NTag>
-        </header>
-        <div class="cap-body">
-          <div v-if="aiSwitches.rules && ruleHits.length" class="rule-list">
-            <div v-for="r in ruleHits" :key="r.id" class="rule-item">
-              <span class="rule-tag mono">{{ r.scope }}</span>
-              <div class="rule-meta">
-                <div class="rule-name">{{ r.name }}</div>
-                <div class="rule-detail">{{ r.detail }}</div>
-              </div>
-              <NButton size="tiny" type="primary" @click="applyRuleTask(r)">生成任务</NButton>
-            </div>
-          </div>
-          <div v-else class="rule-empty">
-            {{ aiSwitches.rules ? '当前无规则命中，所有指标正常。' : '规则引擎已关闭，在下方开关中开启后自动求值。' }}
-          </div>
-          <div v-if="insights.length" class="insight-list">
-            <div class="insight-title">数据洞察</div>
-            <div v-for="(ins, i) in insights" :key="i" class="insight-item">◉ {{ ins }}</div>
-          </div>
-        </div>
-      </section>
-
-      <section class="wb-card">
-        <header class="card-head">
-          <span class="accent-bar" :style="{ background: moduleColor('knowledge', themeStore.dark) }"></span>
-          <h2>每周总结 · 报表导出</h2>
-        </header>
-        <div class="cap-body">
-          <p class="llm-tip">基于本周任务、记账与习惯数据自动汇总，可生成 Markdown 报表导出。</p>
-          <div class="report-actions">
-            <NButton size="small" type="primary" @click="buildWeeklyReport()">生成周报</NButton>
-            <NButton size="small" :disabled="!weeklyReport" @click="downloadWeeklyReport()">下载 .md</NButton>
-          </div>
-          <pre v-if="weeklyReportVisible && weeklyReport" class="report-preview">{{ weeklyReport }}</pre>
-        </div>
-      </section>
-    </div>
-
-    <!-- 智能层执行面板（F-AI-01/02/03/04/06/07/08/10：本地引擎执行 + 开关联动） -->
-    <section class="wb-card ai-panel" style="margin-bottom: 16px">
-      <header class="card-head">
-        <span class="accent-bar" :style="{ background: moduleColor('knowledge', themeStore.dark) }"></span>
-        <h2>智能层 · 执行面板</h2>
-        <NTag size="small" :bordered="false" type="info">本地引擎</NTag>
-      </header>
-      <div class="cap-body">
-        <div class="ai-exec-bar">
-          <NSelect v-model:value="aiExecMode" :options="AI_MODE_OPTIONS" size="small" style="width: 170px" />
-          <NInput v-model:value="aiExecInput" size="small" placeholder="输入内容 / 关键词 / 问题（搜索、分类、摘要、问答、标签、生成用）" @keyup.enter="runAiExec" clearable />
-          <NButton size="small" type="primary" :loading="aiExecLoading" @click="runAiExec()">执行</NButton>
-        </div>
-        <div v-if="aiExecResult" class="ai-exec-result">
-          <div class="insight-title">{{ aiExecResult.summary }}</div>
-          <div v-if="aiExecResult.kind === 'generate'" class="gen-preview"><pre>{{ aiExecResult.items[0]?.meta }}</pre></div>
-          <div v-else-if="aiExecResult.items.length" class="ai-result-list">
-            <div v-for="(it, i) in aiExecResult.items" :key="i" class="ai-result-item">
-              <span class="rule-tag mono">#{{ i + 1 }}</span>
-              <div class="rule-meta">
-                <div class="rule-name">{{ it.title }}</div>
-                <div class="rule-detail">{{ it.meta }}</div>
-              </div>
-            </div>
-          </div>
-          <EmptyState v-else-if="aiExecResult.ok" text="暂无结果" />
-        </div>
-        <div v-if="aiSwitches.dedupe || aiSwitches.smart_suggest" class="ai-proactive">
-          <div v-if="aiSwitches.smart_suggest && !aiExecLoading && !aiExecResult" class="proactive-row">
-            <NButton size="tiny" text type="primary" @click="aiExecMode = 'smart_suggest'; runAiExec()">生成智能建议</NButton>
-            <span class="proactive-hint">基于习惯 / 任务 / 记账 / Agent 状态</span>
-          </div>
-          <div v-if="aiSwitches.dedupe" class="proactive-row">
-            <NButton size="tiny" text type="primary" @click="aiExecMode = 'dedupe'; runAiExec()">扫描重复条目</NButton>
-            <span class="proactive-hint">任务 / 笔记 / 片段 相似标题检测</span>
-          </div>
-        </div>
-      </div>
-    </section>
-
-    <!-- F-SYS-05 全局搜索（支持 type:/tag:/date: 语法） -->
-    <section class="wb-card global-search-card" style="margin-bottom: 16px">
-      <header class="card-head">
-        <span class="accent-bar" :style="{ background: moduleColor('knowledge', themeStore.dark) }"></span>
-        <h2>全局搜索</h2>
-        <NTag size="small" :bordered="false" type="info" class="mono">type:task · tag:vue · date:2026-09-01</NTag>
-      </header>
-      <div class="cap-body">
-        <div class="search-bar">
-          <NInput v-model:value="searchQuery" size="small" placeholder="跨任务 / 笔记 / 踩坑 / 片段 / 截止检索，支持 type: / tag: / date: 语法" @keyup.enter="recordSearch" clearable />
-        </div>
-        <div v-if="searchResults.length" class="search-results">
-          <div v-for="(r, i) in searchResults" :key="i" class="ai-result-item">
-            <span class="rule-tag mono">{{ r.type }}</span>
-            <div class="rule-meta">
-              <div class="rule-name">{{ r.title }}</div>
-              <div class="rule-detail">{{ r.meta }}</div>
-            </div>
-          </div>
-        </div>
-        <EmptyState v-else-if="searchQuery.trim()" text="无匹配结果" />
-      </div>
-    </section>
 
   </div>
 </template>
 
 <style scoped>
-/* 分区标题：数据区 / 操作区 */
-.zone-title {
-  font-size: 12px;
-  font-weight: 650;
-  letter-spacing: 0.12em;
-  color: var(--wb-text-3);
-  margin: 0 0 10px;
-  padding-left: 2px;
-}
-.zone-title:not(:first-child) {
-  border-top: 1px dashed var(--wb-border);
-  padding-top: 14px;
-}
-/* 可点击数据条目 */
-.clickable {
-  cursor: pointer;
-  transition: background-color 120ms ease-out;
-}
-.clickable:hover {
-  background: var(--wb-card-alt);
-}
-/* 截止提醒列表 */
-.deadline-list {
+.dash {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 12px;
+  max-width: 1280px;
 }
-/* 数据区三列网格 */
-.data-grid {
+
+/* ---- 首次引导 ---- */
+.onboard {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 14px;
+  border: var(--wb-border-w) solid color-mix(in srgb, var(--wb-accent) 45%, transparent);
+  background: color-mix(in srgb, var(--wb-accent) 8%, transparent);
+  border-radius: var(--wb-radius-md);
+}
+.ob-title { font-weight: 650; font-size: 13px; color: var(--wb-accent); white-space: nowrap; }
+.ob-body { flex: 1; font-size: 12px; line-height: 1.6; color: var(--wb-text-2); }
+
+/* ---- 快速条 ---- */
+.quick-strip {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: 16px;
+  grid-template-columns: 1fr 300px;
+  gap: 12px;
 }
-@media (max-width: 1100px) {
-  .data-grid {
-    grid-template-columns: 1fr;
-  }
+@media (max-width: 960px) { .quick-strip { grid-template-columns: 1fr; } }
+.qs-search { position: relative; }
+.qs-results {
+  position: absolute;
+  z-index: 10;
+  top: calc(100% + 4px);
+  left: 0;
+  right: 0;
+  background: var(--wb-card);
+  border: var(--wb-border-w) solid var(--wb-border);
+  border-radius: var(--wb-radius-md);
+  box-shadow: var(--wb-shadow-hover);
+  overflow: hidden;
 }
-.deadline-item {
+.qs-item {
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 7px 8px;
+  padding: 7px 12px;
   border-bottom: 1px dashed var(--wb-border);
+}
+.qs-item:last-child { border-bottom: none; }
+.qs-type {
+  flex: none;
+  font-size: 10.5px;
+  padding: 1px 7px;
   border-radius: var(--wb-radius-sm);
+  background: var(--wb-card-alt);
+  color: var(--wb-text-2);
 }
-.deadline-item:last-child {
-  border-bottom: none;
-}
-.deadline-title {
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-size: 12.5px;
-}
-.plugin-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 16px; }
-.plugin-card pre.plugin-content { white-space: pre-wrap; font-family: var(--wb-mono, monospace); font-size: 12.5px; color: var(--wb-text-2); margin: 0; }
-.section-grid {
+.qs-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12.5px; }
+.qs-meta { font-size: 11px; color: var(--wb-text-3); flex: none; }
+.qs-insp { display: flex; gap: 6px; align-items: center; }
+
+.clickable { cursor: pointer; }
+.clickable:hover { background: var(--wb-card-alt); }
+
+/* ---- 第一屏 ---- */
+.top-grid {
   display: grid;
-  grid-template-columns: 1fr 1.4fr;
-  gap: 16px;
-  margin-bottom: 16px;
+  grid-template-columns: 1.15fr 1fr;
+  gap: 12px;
+  align-items: stretch;
 }
+@media (max-width: 1100px) { .top-grid { grid-template-columns: 1fr; } }
+.top-right { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+
 .card-head {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 14px 16px;
+  padding: 11px 14px;
   border-bottom: 1px solid var(--wb-border);
 }
-.card-head h2 {
-  margin: 0;
-  font-size: 14px;
-  font-weight: 600;
-  flex: 1;
-}
-.focus-list {
-  padding: 6px 12px 12px;
-}
+.card-head h2 { margin: 0; font-size: 13.5px; font-weight: 620; flex: 1; }
+.head-meta { font-size: 11px; color: var(--wb-text-3); }
+
+/* 今日焦点 */
+.focus-list { padding: 4px 10px 8px; }
 .focus-item {
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 7px 4px;
+  padding: 6px 4px;
   border-bottom: 1px dashed var(--wb-border);
 }
-.focus-item:last-child {
-  border-bottom: none;
+.focus-item:last-child { border-bottom: none; }
+.focus-main { flex: 1; min-width: 0; display: flex; align-items: center; gap: 10px; border-radius: var(--wb-radius-sm); padding: 2px 4px; }
+.chk {
+  flex: none;
+  width: 20px;
+  height: 20px;
+  border-radius: var(--wb-radius-sm);
+  border: var(--wb-border-w) solid var(--wb-border);
+  background: transparent;
+  color: transparent;
+  cursor: pointer;
+  font-size: 12px;
+  line-height: 1;
+  transition: border-color 120ms ease-out, color 120ms ease-out;
 }
-.focus-title {
-  flex: 1;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.card-foot {
-  padding: 0 14px 12px;
-}
-.stats-card {
-  min-height: 260px;
-}
+.chk:hover { border-color: var(--wb-success); color: var(--wb-success); }
+.f-tag { flex: none; font-size: 10.5px; opacity: 0.85; }
+.f-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12.5px; }
+.f-due { flex: none; font-size: 11px; color: var(--wb-text-3); }
+.f-due.danger { color: var(--wb-danger); }
+.focus-empty { display: flex; flex-direction: column; align-items: center; gap: 2px; padding: 8px 0 14px; }
 .load-strip {
-  margin: 12px 14px 0;
+  margin: 12px 14px;
   padding: 10px 12px;
   border-radius: var(--wb-radius-md);
   background: var(--wb-card-alt);
   color: var(--wb-text-2);
   font-size: 12.5px;
-  display: flex;
-  align-items: center;
-  gap: 8px;
 }
-.load-strip::before {
-  content: '';
-  width: 10px;
-  height: 10px;
-  border-radius: 50%;
-  border: 2px solid var(--wb-border);
-  border-top-color: var(--wb-accent);
-  animation: wb-spin 0.8s linear infinite;
-  flex: none;
-}
-@keyframes wb-spin {
-  to { transform: rotate(360deg); }
-}
-.stats-grid {
-  display: grid;
-  grid-template-columns: repeat(4, 1fr);
-  gap: 10px;
-  padding: 14px;
-}
-@media (max-width: 1100px) {
-  .section-grid {
-    grid-template-columns: 1fr;
-  }
-  .stats-grid {
-    grid-template-columns: repeat(2, 1fr);
-  }
-}
-.modules-card {
-  margin-bottom: 4px;
-}
-.module-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
-  gap: 10px;
-  padding: 14px;
-}
-.module-entry {
-  display: flex;
-  align-items: center;
-  gap: 9px;
-  padding: 11px 12px;
-  border: 1px solid var(--wb-border);
-  border-radius: var(--wb-radius-md);
+
+/* ---- AI 问答 ---- */
+.qa-body { padding: 12px 14px; display: flex; flex-direction: column; gap: 8px; }
+.qa-bar { display: flex; gap: 8px; }
+.qa-chips { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.chip {
+  border: var(--wb-border-w) solid var(--wb-border);
   background: transparent;
+  color: var(--wb-text-2);
+  border-radius: var(--wb-radius-lg);
+  padding: 2px 10px;
+  font-size: 11.5px;
   cursor: pointer;
   font-family: var(--wb-font);
-  color: var(--wb-text-1);
-  transition: border-color 120ms ease-out, background-color 120ms ease-out;
-  text-align: left;
+  transition: border-color 120ms ease-out, color 120ms ease-out;
 }
-.module-entry:hover {
-  border-color: var(--wb-text-3);
-  background: var(--wb-card-alt);
-}
-.me-name {
-  font-size: 13px;
-  font-weight: 550;
-  flex: 1;
-}
-.me-code {
-  font-size: 10.5px;
-  color: var(--wb-text-3);
-  letter-spacing: 0.05em;
-}
-.alerts {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-.onboard-card {
-  display: flex;
-  align-items: center;
-  gap: 14px;
-  padding: 12px 16px;
-  border: 1px solid color-mix(in srgb, var(--wb-primary) 45%, transparent);
-  background: color-mix(in srgb, var(--wb-primary) 10%, transparent);
-  border-radius: var(--wb-radius-md);
-}
-.onboard-title {
-  font-weight: 650;
-  font-size: 13px;
-  color: var(--wb-primary);
-  white-space: nowrap;
-}
-.onboard-body {
-  flex: 1;
-  font-size: 12px;
-  line-height: 1.6;
-  color: var(--wb-text-2);
-}
-.ai-exec-grid {
-  display: grid;
-  grid-template-columns: 1.4fr 1fr;
-  gap: 16px;
-}
-@media (max-width: 1100px) {
-  .ai-exec-grid { grid-template-columns: 1fr; }
-}
-.rule-list {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-.rule-item {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 8px 10px;
-  border: 1px solid var(--wb-border);
-  border-radius: var(--wb-radius-sm);
-  background: var(--wb-card-alt);
-}
-.rule-tag {
+.chip:hover { border-color: var(--wb-accent); color: var(--wb-accent); }
+.chip:disabled { opacity: 0.5; cursor: default; }
+.ai-chip {
   flex: none;
   font-size: 10.5px;
-  padding: 2px 7px;
-  border-radius: var(--wb-radius-sm);
-  background: color-mix(in srgb, var(--wb-primary) 16%, transparent);
-  color: var(--wb-primary);
+  padding: 1px 8px;
+  border-radius: var(--wb-radius-lg);
+  background: color-mix(in srgb, var(--wb-accent) 14%, transparent);
+  color: var(--wb-accent);
 }
-.rule-meta {
-  flex: 1;
-  min-width: 0;
-}
-.rule-name {
-  font-size: 12.5px;
-  font-weight: 600;
-}
-.rule-detail {
-  font-size: 11px;
-  color: var(--wb-text-3);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.rule-empty {
-  font-size: 12px;
-  color: var(--wb-text-3);
-  padding: 6px 2px;
-}
-.insight-list {
-  margin-top: 12px;
+.ai-chip.fallback { background: var(--wb-card-alt); color: var(--wb-text-3); }
+.cfg-btn { margin-left: auto; }
+.ai-result {
   border-top: 1px dashed var(--wb-border);
-  padding-top: 10px;
-}
-.insight-title {
-  font-size: 12px;
-  font-weight: 650;
-  color: var(--wb-text-2);
-  margin-bottom: 6px;
-}
-.insight-item {
-  font-size: 12px;
-  line-height: 1.7;
-  color: var(--wb-text-2);
-}
-.report-actions {
-  display: flex;
-  gap: 8px;
-  margin-top: 10px;
-}
-.report-preview {
-  margin-top: 12px;
-  max-height: 220px;
-  overflow: auto;
-  font-size: 11.5px;
-  line-height: 1.6;
-  padding: 10px 12px;
-  background: var(--wb-card-alt);
-  border: 1px solid var(--wb-border);
-  border-radius: var(--wb-radius-sm);
-  white-space: pre-wrap;
-  word-break: break-all;
-  color: var(--wb-text-2);
-}
-.cap-grid {
-  grid-template-columns: 1.4fr 1fr;
-}
-.cap-body {
-  padding: 12px 14px;
-  min-height: 120px;
-}
-.backup-list {
+  padding-top: 8px;
   display: flex;
   flex-direction: column;
   gap: 6px;
 }
-.backup-guard {
-  display: flex; align-items: center; gap: 8px;
-  background: color-mix(in srgb, var(--wb-warning) 14%, transparent);
-  border: 1px solid color-mix(in srgb, var(--wb-warning) 60%, transparent);
-  color: var(--wb-warning);
-  border-radius: var(--wb-radius-md);
-  padding: 8px 12px;
-  margin-bottom: 10px;
-  font-size: 12px;
-}
-.bg-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--wb-warning); flex: none; }
-.backup-item {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 7px 8px;
-  border: 1px solid var(--wb-border);
-  border-radius: var(--wb-radius-md);
-}
-.backup-name {
-  flex: 1;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-size: 12px;
-}
-.backup-meta {
+.ai-summary { font-size: 12px; font-weight: 600; color: var(--wb-text-2); }
+.ai-item { padding: 6px 9px; background: var(--wb-card-alt); border-radius: var(--wb-radius-sm); }
+.ai-item-title { font-size: 12px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ai-item-meta { font-size: 11px; color: var(--wb-text-3); line-height: 1.5; max-height: 48px; overflow: hidden; }
+.qa-more { display: flex; flex-direction: column; }
+.more-toggle {
+  align-self: flex-start;
+  background: transparent;
+  border: none;
   color: var(--wb-text-3);
   font-size: 11px;
+  cursor: pointer;
+  padding: 2px 0;
+  font-family: var(--wb-font-mono);
 }
-.llm-row {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  margin-bottom: 8px;
+.more-toggle:hover { color: var(--wb-accent); }
+.more-panel { display: flex; flex-wrap: wrap; gap: 6px; padding: 8px 0 2px; }
+.more-btn {
+  border: var(--wb-border-w) solid var(--wb-border);
+  background: transparent;
+  color: var(--wb-text-2);
+  border-radius: var(--wb-radius-sm);
+  padding: 3px 10px;
+  font-size: 11.5px;
+  cursor: pointer;
+  font-family: var(--wb-font);
 }
-.llm-provider {
-  font-size: 13px;
-  color: var(--wb-text-1);
-}
-.llm-tip {
-  margin: 0;
-  font-size: 12px;
-  line-height: 1.6;
-  color: var(--wb-text-3);
-}
-.ai-switches {
-  margin-top: 14px;
-  border-top: 1px dashed var(--wb-border);
-  padding-top: 12px;
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 6px 16px;
-}
-@media (max-width: 900px) {
-  .ai-switches { grid-template-columns: 1fr; }
-}
-.ai-switch {
+.more-btn:hover { border-color: var(--wb-accent); color: var(--wb-accent); }
+.more-btn:disabled { opacity: 0.5; cursor: default; }
+.more-panel .ai-result { width: 100%; }
+
+/* ---- 截止预警 ---- */
+.watch-list { padding: 6px 12px 10px; display: flex; flex-direction: column; gap: 4px; }
+.wg-head {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 10px;
-  padding: 7px 10px;
+  padding: 4px 6px;
   border-radius: var(--wb-radius-sm);
-  background: var(--wb-card-alt);
 }
-.ai-name { font-size: 12.5px; font-weight: 600; }
-.ai-desc { font-size: 11px; color: var(--wb-text-3); }
-@media (max-width: 1100px) {
-  .cap-grid {
-    grid-template-columns: 1fr;
-  }
+.wg-label { font-size: 12px; font-weight: 620; }
+.wg-count { font-size: 10.5px; color: var(--wb-text-3); }
+.wg-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 4px 6px 4px 14px;
+  border-radius: var(--wb-radius-sm);
 }
-/* 智能层执行面板 */
-.ai-panel .cap-body { display: flex; flex-direction: column; gap: 10px; }
-.ai-exec-bar { display: flex; gap: 8px; }
-.ai-exec-bar .n-input { flex: 1; }
-.ai-exec-result { padding: 10px; border-radius: var(--wb-radius-sm); background: var(--wb-card-alt); }
-.gen-preview pre { white-space: pre-wrap; font-family: var(--wb-mono, monospace); font-size: 12px; color: var(--wb-text-2); margin: 0; }
-.ai-result-list { display: flex; flex-direction: column; gap: 6px; margin-top: 6px; }
-.ai-result-item { display: flex; align-items: flex-start; gap: 8px; padding: 6px 8px; border-radius: var(--wb-radius-sm); background: var(--wb-card); }
-.ai-result-item .rule-tag { flex-shrink: 0; margin-top: 2px; }
-.ai-result-item .rule-meta { flex: 1; min-width: 0; }
-.ai-proactive { display: flex; flex-wrap: wrap; gap: 8px 18px; }
-.proactive-row { display: flex; align-items: center; gap: 8px; font-size: 12px; }
-.proactive-hint { color: var(--wb-text-3); font-size: 11.5px; }
-/* 7 日趋势 */
-.trend-bars { display: flex; align-items: flex-end; gap: 10px; height: 110px; padding-top: 6px; }
-.trend-col { flex: 1; display: flex; flex-direction: column; align-items: center; gap: 6px; }
-.trend-bar-wrap { display: flex; align-items: flex-end; gap: 3px; height: 88px; }
-.trend-bar { width: 12px; border-radius: 4px 4px 0 0; background: var(--wb-accent-dev, #3b82f6); min-height: 4px; }
-.trend-bar.second { background: var(--wb-accent-life, #22c55e); }
-.trend-label { font-size: 10.5px; color: var(--wb-text-3); }
-/* 动态流 */
-.activity-list { display: flex; flex-direction: column; gap: 5px; }
-.activity-item { display: flex; gap: 10px; font-size: 12.5px; padding: 5px 8px; border-radius: var(--wb-radius-sm); background: var(--wb-card); }
-.activity-at { color: var(--wb-text-3); font-size: 11px; flex-shrink: 0; }
-/* 全局搜索 */
-.search-bar .n-input { width: 100%; }
-.search-results { display: flex; flex-direction: column; gap: 6px; margin-top: 8px; }
-/* 卡片隐藏 */
-.stats-tools { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding: 10px 16px; border-top: 1px solid var(--wb-border); }
-.stats-hint { font-size: 11px; color: var(--wb-text-3); margin-right: 4px; }
-.stat-toggle { font-size: 11px; padding: 2px 8px; border-radius: var(--wb-radius-md); background: var(--wb-card-alt); cursor: pointer; user-select: none; }
-.stat-toggle.off { opacity: 0.45; text-decoration: line-through; }
+
+/* ---- 进度卡 ---- */
+.prog-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 12px;
+}
+@media (max-width: 1100px) { .prog-grid { grid-template-columns: repeat(2, 1fr); } }
+@media (max-width: 640px) { .prog-grid { grid-template-columns: 1fr; } }
+.prog-card { padding: 12px 14px; display: flex; flex-direction: column; gap: 3px; }
+.pg-label { font-size: 11.5px; color: var(--wb-text-3); letter-spacing: 0.04em; }
+.pg-value { font-size: 22px; font-weight: 680; line-height: 1.2; }
+.pg-suffix { font-size: 12px; font-weight: 500; color: var(--wb-text-3); }
+.pg-sub { font-size: 11.5px; color: var(--wb-text-2); display: flex; align-items: center; gap: 6px; }
+.pg-bar { height: 4px; border-radius: 2px; background: var(--wb-card-alt); overflow: hidden; margin-top: 6px; }
+.pg-bar-fill { height: 100%; border-radius: 2px; transition: width 200ms ease-out; }
+.delta { font-size: 11px; font-weight: 650; }
+.delta.up { color: var(--wb-danger); }
+.delta.down { color: var(--wb-success); }
+.delta.flat { color: var(--wb-text-3); }
+.pending { margin-left: auto; font-size: 11px; color: var(--wb-text-3); }
+
+/* ---- 趋势 ---- */
+.trend-grid {
+  display: grid;
+  grid-template-columns: 1.5fr 1fr;
+  gap: 12px;
+}
+@media (max-width: 1100px) { .trend-grid { grid-template-columns: 1fr; } }
+.chart-body { position: relative; padding: 12px 14px; }
+.chart { width: 100%; height: 88px; display: block; }
+.chart.spark { height: 56px; }
+.bar-a { fill: var(--wb-accent); }
+.bar-b { fill: color-mix(in srgb, var(--wb-accent) 32%, transparent); }
+.tick { fill: var(--wb-text-3); font-size: 9px; font-family: var(--wb-font-mono); }
+.spark-line { fill: none; stroke: var(--wb-accent); stroke-width: 1.5; }
+.spark-dot { fill: var(--wb-accent); }
+.spark-axis { display: flex; justify-content: space-between; font-size: 10px; color: var(--wb-text-3); padding-top: 4px; }
+.chart-empty {
+  position: absolute;
+  inset: 12px 14px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+  color: var(--wb-text-3);
+  background: color-mix(in srgb, var(--wb-card) 72%, transparent);
+  border-radius: var(--wb-radius-sm);
+}
+.legend { display: flex; align-items: center; gap: 5px; font-size: 10.5px; color: var(--wb-text-3); margin-right: 6px; }
+.lg-swatch { width: 8px; height: 8px; border-radius: 2px; display: inline-block; }
+.lg-swatch.bar-a { background: var(--wb-accent); }
+.lg-swatch.bar-b { background: color-mix(in srgb, var(--wb-accent) 32%, transparent); }
 </style>
