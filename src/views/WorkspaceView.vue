@@ -44,6 +44,69 @@ async function loadInstalledApps() {
   }
 }
 
+// ---- 工具台「扫描添加」面板：一键把本机程序加入工具列表 ----
+const scanPanelShow = ref(false)
+const scanKeyword = ref('')
+const scanLimit = ref(40)
+const scanAdding = ref<Record<string, boolean>>({})
+const installedTotal = computed(() => installedApps.value.length)
+const scanFiltered = computed(() => {
+  const kw = scanKeyword.value.trim().toLowerCase()
+  const list = kw ? installedApps.value.filter((a) => a.name.toLowerCase().includes(kw)) : installedApps.value
+  return list.slice(0, scanLimit.value)
+})
+const scanRest = computed(() => {
+  const kw = scanKeyword.value.trim().toLowerCase()
+  const list = kw ? installedApps.value.filter((a) => a.name.toLowerCase().includes(kw)) : installedApps.value
+  return Math.max(0, list.length - scanFiltered.value.length)
+})
+const isAppAdded = (a: InstalledApp) => {
+  const n = a.name.toLowerCase()
+  return tools.value.some((t) => t.name.toLowerCase() === n)
+}
+function toggleScanPanel() {
+  scanPanelShow.value = !scanPanelShow.value
+  if (scanPanelShow.value) loadInstalledApps()
+}
+function closeScanPanel() {
+  scanPanelShow.value = false
+}
+function moreScanApps() {
+  scanLimit.value += 40
+}
+async function rescanInstalledApps() {
+  installedApps.value = []
+  await loadInstalledApps()
+}
+async function addInstalledApp(a: InstalledApp) {
+  if (scanAdding.value[a.name] || isAppAdded(a)) return
+  scanAdding.value = { ...scanAdding.value, [a.name]: true }
+  try {
+    let exe = a.exe_path ?? null
+    if (!exe && a.lnk_path) exe = await resolveShortcut(a.lnk_path)
+    if (!exe) {
+      message.warning(`${a.name} 无法解析可执行文件，请用「添加工具」手动填写目标`)
+      return
+    }
+    await toolsRepo.insert({
+      name: a.name,
+      category: 'local',
+      launchType: 'cmd',
+      target: exe,
+      note: `扫描添加自本机程序（${a.source === 'start-menu' ? '开始菜单' : '注册表'}）`,
+      docUrl: '',
+    })
+    message.success(`已添加：${a.name}`)
+    await load()
+  } catch {
+    message.error(`${a.name} 添加失败`)
+  } finally {
+    const next = { ...scanAdding.value }
+    delete next[a.name]
+    scanAdding.value = next
+  }
+}
+
 async function pickInstalled(a: InstalledApp) {
   try {
     let exe = a.exe_path ?? null
@@ -628,12 +691,47 @@ function loadRollbackPoints() {
           <span class="accent-bar" style="background: var(--wb-module-workspace)"></span>
           <h2>工具启动台</h2>
           <span class="count mono">{{ filteredTools.length }}</span>
+          <NButton size="tiny" type="primary" ghost @click="toggleScanPanel()">
+            <template #icon><NIcon :component="Refresh" /></template>
+            扫描添加
+          </NButton>
           <NButton size="tiny" type="primary" ghost @click="toolFormShow = true">
             <template #icon><NIcon :component="Plus" /></template>
             添加工具
           </NButton>
         </header>
         <div class="card-body">
+          <div v-if="scanPanelShow" class="scan-panel">
+            <div class="scan-head">
+              <span class="scan-title">本机程序快速添加</span>
+              <NInput v-model:value="scanKeyword" size="tiny" placeholder="搜索程序…" style="width: 160px" clearable />
+              <span class="scan-count mono">{{ scanFiltered.length }} / {{ installedTotal }}</span>
+              <NButton size="tiny" quaternary :loading="installedLoading" @click="rescanInstalledApps()">重新扫描</NButton>
+              <NButton size="tiny" quaternary @click="closeScanPanel()">收起</NButton>
+            </div>
+            <div v-if="installedLoading" class="installed-tip">正在扫描开始菜单与注册表…</div>
+            <template v-else-if="installedApps.length">
+              <div v-if="scanFiltered.length" class="scan-list">
+                <div v-for="a in scanFiltered" :key="a.name + a.source" class="scan-item">
+                  <span class="scan-name" :title="a.exe_path || a.lnk_path || ''">{{ a.name }}</span>
+                  <NTag size="tiny" :bordered="false" type="default">{{ a.source === 'start-menu' ? '开始菜单' : '注册表' }}</NTag>
+                  <NButton
+                    v-if="isAppAdded(a)" size="tiny" disabled
+                  >已添加</NButton>
+                  <NButton
+                    v-else size="tiny" type="primary" ghost
+                    :loading="scanAdding[a.name] === true"
+                    @click="addInstalledApp(a)"
+                  >添加</NButton>
+                </div>
+              </div>
+              <div v-else class="installed-tip">没有匹配「{{ scanKeyword }}」的程序</div>
+              <div v-if="scanRest > 0" class="installed-more">
+                <NButton size="tiny" text type="primary" @click="moreScanApps()">显示更多（{{ scanRest }}）</NButton>
+              </div>
+            </template>
+            <div v-else class="installed-tip">未扫描到本机程序（需 Tauri 环境），可点击右上角「重新扫描」</div>
+          </div>
           <div class="tool-bar">
             <NInput v-model:value="keyword" size="small" placeholder="搜索工具…" clearable style="flex: 1" />
             <NButton size="tiny" quaternary @click="toggleToolSort()">{{ toolSort === 'hot' ? '按频次' : '按名称' }}</NButton>
@@ -1099,4 +1197,39 @@ function loadRollbackPoints() {
 .installed-item:hover { border-color: var(--wb-accent); color: var(--wb-accent); }
 .installed-tip { font-size: 11.5px; color: var(--wb-text-3); padding: 4px 0; }
 .installed-more { margin-top: 6px; }
+.scan-panel {
+  border: 1px solid var(--wb-border);
+  border-radius: var(--wb-radius-md);
+  background: var(--wb-card-alt);
+  padding: 10px 12px;
+  margin-bottom: 10px;
+}
+.scan-head { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; flex-wrap: wrap; }
+.scan-title { font-size: 12px; font-weight: 650; color: var(--wb-text-2); }
+.scan-count { font-size: 11px; color: var(--wb-text-3); margin-left: auto; }
+.scan-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-height: 240px;
+  overflow-y: auto;
+}
+.scan-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 8px;
+  border: 1px solid var(--wb-border);
+  border-radius: var(--wb-radius-sm);
+  background: var(--wb-card, transparent);
+}
+.scan-name {
+  flex: 1;
+  min-width: 0;
+  font-size: 12px;
+  font-weight: 550;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 </style>
