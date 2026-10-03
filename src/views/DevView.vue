@@ -584,7 +584,7 @@ const healthScore = computed(() => {
         <div v-if="activeSnippet" class="snippet-detail wb-card" style="margin-top: 12px">
           <div class="snippet-head">
             <span class="snippet-title"><NIcon :component="Code" style="margin-right: 6px" />{{ activeSnippet.title }}</span>
-            <NButton size="tiny" type="primary" ghost @click="copySnippetCode">复制片段</NButton>
+            <NButton size="tiny" type="primary" ghost @click="copySnippetCode()">复制片段</NButton>
           </div>
           <pre class="snippet-preview mono">{{ activeSnippet.code }}</pre>
           <div v-if="snippetVars.length" class="snippet-vars mono">
@@ -599,7 +599,7 @@ const healthScore = computed(() => {
       <n-tab-pane name="radar" tab="项目雷达">
         <div class="board-toolbar">
           <NInput v-model:value="radarRoot" size="small" placeholder="扫描根目录…" clearable style="width: 260px; margin-right: 8px" />
-          <NButton size="small" type="primary" ghost :loading="radarLoading" @click="runRadar">
+          <NButton size="small" type="primary" ghost :loading="radarLoading" @click="runRadar()">
             <template #icon><NIcon :component="Refresh" /></template>
             扫描
           </NButton>
@@ -628,7 +628,7 @@ const healthScore = computed(() => {
       <n-tab-pane name="git" tab="Git 清洁度">
         <div class="board-toolbar">
           <NInput v-model:value="gitRepoPath" size="small" placeholder="仓库路径…" clearable style="width: 320px; margin-right: 8px" />
-          <NButton size="small" type="primary" ghost :loading="gitLoading" @click="runGitCheck">
+          <NButton size="small" type="primary" ghost :loading="gitLoading" @click="runGitCheck()">
             <template #icon><NIcon :component="Refresh" /></template>
             检测
           </NButton>
@@ -681,7 +681,7 @@ const healthScore = computed(() => {
       <!-- 环境变量 F-DEV-11 -->
       <n-tab-pane name="envs" tab="环境变量">
         <div class="board-toolbar">
-          <NButton size="small" ghost :loading="false" @click="loadSysEnv">
+          <NButton size="small" ghost :loading="false" @click="loadSysEnv()">
             <template #icon><NIcon :component="Refresh" /></template>
             读取系统变量
           </NButton>
@@ -768,7 +768,7 @@ const healthScore = computed(() => {
       <n-tab-pane name="health" tab="仓库体检">
         <div class="board-toolbar">
           <NInput v-model:value="healthRepoPath" size="small" placeholder="仓库路径…" clearable style="width: 320px; margin-right: 8px" />
-          <NButton size="small" type="primary" ghost :loading="healthLoading" @click="runRepoHealth">
+          <NButton size="small" type="primary" ghost :loading="healthLoading" @click="runRepoHealth()">
             <template #icon><NIcon :component="Refresh" /></template>
             体检
           </NButton>
@@ -828,7 +828,7 @@ const healthScore = computed(() => {
       <!-- 依赖检查 F-DEV-16 -->
       <n-tab-pane name="deps" tab="依赖检查">
         <div class="toolbar">
-          <NButton size="small" type="primary" ghost :loading="depsLoading" @click="runDepsCheck">
+          <NButton size="small" type="primary" ghost :loading="depsLoading" @click="runDepsCheck()">
             <template #icon><NIcon :component="Refresh" /></template>
             检查依赖
           </NButton>

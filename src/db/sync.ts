@@ -383,8 +383,7 @@ export async function syncNow(): Promise<void> {
     setStatus({ state: 'idle', message: '同步完成', lastSyncAt: Date.now(), pending: pend[0]?.n ?? 0 })
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e)
-    const stack = e instanceof Error ? (e.stack || '').split('\n').slice(0, 6).join(' | ') : ''
-    setStatus({ state: 'error', message: msg + (stack ? ' | ' + stack : '') })
+    setStatus({ state: 'error', message: msg })
   } finally {
     syncing = false
   }

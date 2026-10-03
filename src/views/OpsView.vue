@@ -589,7 +589,7 @@ async function removeDns(d: OpsDnsRecord) {
       <n-tab-pane name="health" tab="健康探测">
         <div class="toolbar">
           <NInput v-model:value="healthTarget" size="small" placeholder="host:port 或 http(s)://url" clearable style="width: 300px; margin-right: 8px" />
-          <NButton size="small" type="primary" ghost :loading="healthLoading" @click="runHealth">
+          <NButton size="small" type="primary" ghost :loading="healthLoading" @click="runHealth()">
             <template #icon><NIcon :component="Refresh" /></template>
             探测
           </NButton>
@@ -610,7 +610,7 @@ async function removeDns(d: OpsDnsRecord) {
       <!-- 代理状态 -->
       <n-tab-pane name="proxy" tab="代理状态">
         <div class="toolbar">
-          <NButton size="small" type="primary" ghost :loading="proxyLoading" @click="runProxy">
+          <NButton size="small" type="primary" ghost :loading="proxyLoading" @click="runProxy()">
             <template #icon><NIcon :component="Refresh" /></template>
             检测
           </NButton>
@@ -635,7 +635,7 @@ async function removeDns(d: OpsDnsRecord) {
       <!-- WSL 发行版状态 -->
       <n-tab-pane name="wsl" tab="WSL 状态">
         <div class="toolbar">
-          <NButton size="small" type="primary" ghost :loading="wslLoading" @click="runWsl">
+          <NButton size="small" type="primary" ghost :loading="wslLoading" @click="runWsl()">
             <template #icon><NIcon :component="Refresh" /></template>
             检测
           </NButton>
@@ -661,7 +661,7 @@ async function removeDns(d: OpsDnsRecord) {
           <span class="dim" style="font-size: 12px">系统计划任务台账（schtasks，F-DEV-10）</span>
           <div style="display: flex; gap: 8px">
             <NInput v-model:value="taskFilter" size="small" placeholder="按任务名 / 状态过滤…" clearable style="width: 220px" />
-            <NButton size="small" type="primary" ghost :loading="taskLoading" @click="runTasks">
+            <NButton size="small" type="primary" ghost :loading="taskLoading" @click="runTasks()">
               <template #icon><NIcon :component="Refresh" /></template>
               读取
             </NButton>
@@ -688,7 +688,7 @@ async function removeDns(d: OpsDnsRecord) {
       <n-tab-pane name="backups" tab="备份验证">
         <div class="toolbar" style="justify-content: space-between; align-items: center">
           <span class="dim" style="font-size: 12px">备份健康检查（解析校验 / 表数量 / 记录数，F-OPS-18）</span>
-          <NButton size="small" type="primary" ghost :loading="backupLoading" @click="runBackupVerify">
+          <NButton size="small" type="primary" ghost :loading="backupLoading" @click="runBackupVerify()">
             <template #icon><NIcon :component="Refresh" /></template>
             验证
           </NButton>
