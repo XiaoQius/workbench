@@ -413,8 +413,9 @@ async function removeTool(t: Tool) {
   }
 }
 
-const filteredTools = () =>
-  keyword.value ? tools.value.filter((t) => t.name.includes(keyword.value) || (t.note || '').includes(keyword.value)) : tools.value
+const filteredTools = computed(() =>
+  keyword.value ? tools.value.filter((t) => t.name.includes(keyword.value) || (t.note || '').includes(keyword.value)) : tools.value,
+)
 
 // ---- Agent 手动台账 ----
 const agentFields: FieldDef[] = [
@@ -626,7 +627,7 @@ function loadRollbackPoints() {
         <header class="card-head">
           <span class="accent-bar" style="background: var(--wb-module-workspace)"></span>
           <h2>工具启动台</h2>
-          <span class="count mono">{{ filteredTools().length }}</span>
+          <span class="count mono">{{ filteredTools.length }}</span>
           <NButton size="tiny" type="primary" ghost @click="toolFormShow = true">
             <template #icon><NIcon :component="Plus" /></template>
             添加工具

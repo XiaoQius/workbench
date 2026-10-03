@@ -42,13 +42,19 @@ fn read_proxy_settings() -> (bool, String, String) {
 /// 并探测 127.0.0.1:7890（常见 Clash 端口）是否在线，不再调用系统命令行工具。
 /// 代理挂掉时多 Agent 会集体超时，用于运维页「代理状态检测」。
 #[tauri::command]
-pub fn proxy_detect() -> ProxyInfo {
-    let (enabled, server, auto_config) = read_proxy_settings();
-    let port7890_ok = probe_port("127.0.0.1", 7890) || probe_port("127.0.0.1", 7897);
-    ProxyInfo {
-        enabled,
-        server,
-        auto_config,
-        port7890_ok,
-    }
+pub async fn proxy_detect() -> ProxyInfo {
+    tauri::async_runtime::spawn_blocking(move || {
+
+        let (enabled, server, auto_config) = read_proxy_settings();
+        let port7890_ok = probe_port("127.0.0.1", 7890) || probe_port("127.0.0.1", 7897);
+        ProxyInfo {
+            enabled,
+            server,
+            auto_config,
+            port7890_ok,
+        }
+
+    })
+    .await
+    .unwrap_or_else(|e| panic!("spawn_blocking 失败: {e}"))
 }

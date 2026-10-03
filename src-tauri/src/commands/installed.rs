@@ -119,28 +119,40 @@ fn scan_registry(apps: &mut Vec<InstalledApp>, seen: &mut std::collections::Hash
 /// 2) 注册表 Uninstall 项（DisplayName + DisplayIcon/InstallLocation 推断 exe）
 /// 供「添加工具」弹窗直接选择添加，替代手填路径。
 #[tauri::command]
-pub fn list_installed_apps() -> Result<Vec<InstalledApp>, String> {
-    let mut apps = Vec::new();
-    let mut seen = std::collections::HashSet::new();
-    scan_start_menu(&mut apps, &mut seen);
-    scan_registry(&mut apps, &mut seen);
-    // 按名称排序
-    apps.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
-    Ok(apps)
+pub async fn list_installed_apps() -> Result<Vec<InstalledApp>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+
+        let mut apps = Vec::new();
+        let mut seen = std::collections::HashSet::new();
+        scan_start_menu(&mut apps, &mut seen);
+        scan_registry(&mut apps, &mut seen);
+        // 按名称排序
+        apps.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
+        Ok(apps)
+
+    })
+    .await
+    .map_err(|e| format!("{e}"))?
 }
 
 /// 解析 Windows 快捷方式（.lnk）的目标程序路径，供添加工具时取真实 exe。
 #[tauri::command]
-pub fn resolve_shortcut(lnk_path: String) -> Result<Option<String>, String> {
-    let script = format!(
-        "$s = (New-Object -ComObject WScript.Shell).CreateShortcut('{p}'); if ($s.TargetPath) {{ Write-Output $s.TargetPath }}",
-        p = lnk_path.replace('\'', "''")
-    );
-    let out = ps(&script)?;
-    let target = out.trim().to_string();
-    if target.is_empty() || target.starts_with("ERR") {
-        Ok(None)
-    } else {
-        Ok(Some(target))
-    }
+pub async fn resolve_shortcut(lnk_path: String) -> Result<Option<String>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+
+        let script = format!(
+            "$s = (New-Object -ComObject WScript.Shell).CreateShortcut('{p}'); if ($s.TargetPath) {{ Write-Output $s.TargetPath }}",
+            p = lnk_path.replace('\'', "''")
+        );
+        let out = ps(&script)?;
+        let target = out.trim().to_string();
+        if target.is_empty() || target.starts_with("ERR") {
+            Ok(None)
+        } else {
+            Ok(Some(target))
+        }
+
+    })
+    .await
+    .map_err(|e| format!("{e}"))?
 }

@@ -44,51 +44,57 @@ fn http_get_json(url: &str) -> Result<serde_json::Value, String> {
 /// - 否则直接 GET 该 URL，期望返回 JSON（含 version 或 tag_name 字段）或纯文本版本号
 /// 返回最新版本号与发布页地址，前端据此渲染「发现新版本」提醒。
 #[tauri::command]
-pub fn check_update(update_url: String, current_version: String) -> Result<UpdateInfo, String> {
-    let trimmed = update_url.trim().to_string();
-    if trimmed.is_empty() {
-        return Ok(UpdateInfo {
+pub async fn check_update(update_url: String, current_version: String) -> Result<UpdateInfo, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+
+        let trimmed = update_url.trim().to_string();
+        if trimmed.is_empty() {
+            return Ok(UpdateInfo {
+                current: current_version,
+                latest: None,
+                has_update: false,
+                release_url: None,
+            });
+        }
+
+        let (latest, release_url) = if !trimmed.contains("://") && trimmed.split('/').count() == 2 {
+            // GitHub 仓库形式 owner/repo
+            let api = format!("https://api.github.com/repos/{}/releases/latest", trimmed);
+            let json = http_get_json(&api)?;
+            let tag = json["tag_name"].as_str().unwrap_or("").trim().to_string();
+            let html = json["html_url"].as_str().unwrap_or("").trim().to_string();
+            (Some(tag), Some(html))
+        } else {
+            // 自定义 JSON / 文本端点
+            let json = http_get_json(&trimmed)?;
+            let latest = json["tag_name"]
+                .as_str()
+                .or_else(|| json["version"].as_str())
+                .map(|s| s.trim().to_string())
+                .or_else(|| json.as_str().map(|s| s.trim().to_string()))
+                .unwrap_or_default();
+            // 自定义端点可自带发布页地址（云端 app-release.json 的 url 字段）
+            let url = json["url"]
+                .as_str()
+                .or_else(|| json["html_url"].as_str())
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty());
+            (Some(latest), url)
+        };
+
+        let has_update = latest
+            .as_ref()
+            .map(|l| compare(l, &current_version) == std::cmp::Ordering::Greater)
+            .unwrap_or(false);
+
+        Ok(UpdateInfo {
             current: current_version,
-            latest: None,
-            has_update: false,
-            release_url: None,
-        });
-    }
+            latest,
+            has_update,
+            release_url,
+        })
 
-    let (latest, release_url) = if !trimmed.contains("://") && trimmed.split('/').count() == 2 {
-        // GitHub 仓库形式 owner/repo
-        let api = format!("https://api.github.com/repos/{}/releases/latest", trimmed);
-        let json = http_get_json(&api)?;
-        let tag = json["tag_name"].as_str().unwrap_or("").trim().to_string();
-        let html = json["html_url"].as_str().unwrap_or("").trim().to_string();
-        (Some(tag), Some(html))
-    } else {
-        // 自定义 JSON / 文本端点
-        let json = http_get_json(&trimmed)?;
-        let latest = json["tag_name"]
-            .as_str()
-            .or_else(|| json["version"].as_str())
-            .map(|s| s.trim().to_string())
-            .or_else(|| json.as_str().map(|s| s.trim().to_string()))
-            .unwrap_or_default();
-        // 自定义端点可自带发布页地址（云端 app-release.json 的 url 字段）
-        let url = json["url"]
-            .as_str()
-            .or_else(|| json["html_url"].as_str())
-            .map(|s| s.trim().to_string())
-            .filter(|s| !s.is_empty());
-        (Some(latest), url)
-    };
-
-    let has_update = latest
-        .as_ref()
-        .map(|l| compare(l, &current_version) == std::cmp::Ordering::Greater)
-        .unwrap_or(false);
-
-    Ok(UpdateInfo {
-        current: current_version,
-        latest,
-        has_update,
-        release_url,
     })
+    .await
+    .map_err(|e| format!("{e}"))?
 }
