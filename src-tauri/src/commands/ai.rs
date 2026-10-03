@@ -21,21 +21,27 @@ const PROVIDERS: &[(&str, &str)] = &[
 /// 智能层状态检测：探测环境变量中是否已配置 LLM API Key。
 /// 前端据此显示/隐藏智能能力入口，未配置时不渲染以免报错。
 #[tauri::command]
-pub fn llm_status() -> LlmStatus {
-    for (var, provider) in PROVIDERS {
-        if let Ok(val) = std::env::var(var) {
-            if !val.trim().is_empty() {
-                return LlmStatus {
-                    configured: true,
-                    provider: provider.to_string(),
-                };
+pub async fn llm_status() -> LlmStatus {
+    tauri::async_runtime::spawn_blocking(move || {
+
+        for (var, provider) in PROVIDERS {
+            if let Ok(val) = std::env::var(var) {
+                if !val.trim().is_empty() {
+                    return LlmStatus {
+                        configured: true,
+                        provider: provider.to_string(),
+                    };
+                }
             }
         }
-    }
-    LlmStatus {
-        configured: false,
-        provider: "未配置".to_string(),
-    }
+        LlmStatus {
+            configured: false,
+            provider: "未配置".to_string(),
+        }
+
+    })
+    .await
+    .unwrap_or_else(|e| panic!("spawn_blocking 失败: {e}"))
 }
 
 #[derive(Deserialize)]

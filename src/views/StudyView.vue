@@ -101,8 +101,21 @@ async function removeCourse(c: Course) {
 const maxPeriod = computed(() => Math.max(4, ...courses.value.map((c) => c.endPeriod)))
 const periodCount = computed(() => Math.min(12, maxPeriod.value))
 
-const coursesOn = (day: number) =>
-  courses.value.filter((c) => weekdayMap[c.weekday] === day).sort((a, b) => a.startPeriod - b.startPeriod)
+// 按天预建索引：模板里 7 天 × 12 节共 84 个格子，原先每格都重新
+// filter + sort 一遍全部课程，改为一次分桶后 O(1) 取用。
+const coursesByDay = computed(() => {
+  const m = new Map<number, Course[]>()
+  for (const c of courses.value) {
+    const day = weekdayMap[c.weekday]
+    const arr = m.get(day)
+    if (arr) arr.push(c)
+    else m.set(day, [c])
+  }
+  for (const arr of m.values()) arr.sort((a, b) => a.startPeriod - b.startPeriod)
+  return m
+})
+
+const coursesOn = (day: number) => coursesByDay.value.get(day) ?? []
 
 // F-STU-05 日程冲突检测
 const courseConflicts = computed(() => {

@@ -66,14 +66,31 @@ async function removeHabit(h: Habit) {
   } catch { message.error('删除失败') }
 }
 
-const checkedToday = (habitId: number) =>
-  habitLogs.value.some((l) => l.habitId === habitId && l.date === todayStr)
+// 预计算：habitId -> 已打卡日期集合。
+// 原先每个习惯卡片要各调两次全表 filter/some（模板里 checkedToday 还调了两次），
+// 习惯与日志一多就是 O(习惯数 × 日志数)，改为一次建索引后 O(1) 查询。
+const habitDatesMap = computed(() => {
+  const m = new Map<number, Set<string>>()
+  for (const l of habitLogs.value) {
+    let s = m.get(l.habitId)
+    if (!s) { s = new Set(); m.set(l.habitId, s) }
+    s.add(l.date)
+  }
+  return m
+})
+
+const checkedToday = (habitId: number) => habitDatesMap.value.get(habitId)?.has(todayStr) ?? false
+
+function fmtDate(d: Date): string {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+}
 
 const habitStreak = (habitId: number) => {
-  const dates = new Set(habitLogs.value.filter((l) => l.habitId === habitId).map((l) => l.date))
+  const dates = habitDatesMap.value.get(habitId)
+  if (!dates) return 0
   let streak = 0
   const d = new Date()
-  while (dates.has(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`)) {
+  while (dates.has(fmtDate(d))) {
     streak++
     d.setDate(d.getDate() - 1)
   }
