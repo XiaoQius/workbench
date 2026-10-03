@@ -8,11 +8,12 @@ import EmptyState from '@/components/EmptyState.vue'
 import { refreshTick } from '@/stores/ui'
 import { useSettings } from '@/composables/useSettings'
 import { useThemeStore } from '@/stores/theme'
-import { moduleColor, modules } from '@/theme/tokens'
+import { moduleColor, modules, type ModuleKey } from '@/theme/tokens'
 import {
   tasksRepo, deadlinesRepo, projectsRepo, snippetsRepo, habitsRepo,
   ledgerRepo, coursesRepo, assignmentsRepo, notesRepo, pitfallsRepo,
   serversRepo, domainsRepo, toolsRepo, agentsRepo, habitLogsRepo,
+  inspirationsRepo,
 } from '@/db'
 import { diskSpace, exportBackup, listBackups, readBackup, llmStatus, type DiskInfo, type BackupInfo, type LlmStatus } from '@/composables/useTauri'
 import { aiSemanticSearch, aiAutoClassify, aiDedupe, aiSuggest, aiSummarize, aiGenerate, aiQa, aiAutoTag, type AiEngineResult } from '@/composables/aiEngine'
@@ -177,13 +178,14 @@ async function doRestore(name: string) {
 async function load() {
   loading.value = true
   try {
-    const [tasks, deadlines, projects, snippets, habits, ledger, courses, assignments, notes, pitfalls, servers, domains, tools, agents, habitLogs] =
+    const [tasks, deadlines, projects, snippets, habits, ledger, courses, assignments, notes, pitfalls, servers, domains, tools, agents, habitLogs, inspirations] =
       await Promise.all([
         tasksRepo.listAll(), deadlinesRepo.listAll(), projectsRepo.listAll(),
         snippetsRepo.listAll(), habitsRepo.listAll(), ledgerRepo.listAll(),
         coursesRepo.listAll(), assignmentsRepo.listAll(), notesRepo.listAll(),
         pitfallsRepo.listAll(), serversRepo.listAll(), domainsRepo.listAll(),
         toolsRepo.listAll(), agentsRepo.listAll(), habitLogsRepo.listAll(),
+        inspirationsRepo.listAll().catch(() => []),
       ])
     allTasks.value = tasks
     allDeadlines.value = deadlines
@@ -196,7 +198,7 @@ async function load() {
       snippets: snippets.length, habits: habits.length, ledger: ledger.length,
       courses: courses.length, assignments: assignments.length, notes: notes.length,
       pitfalls: pitfalls.length, servers: servers.length, domains: domains.length,
-      tools: tools.length, agents: agents.length,
+      tools: tools.length, agents: agents.length, inspirations: inspirations.length,
     }
     focusTasks.value = tasks
       .filter((t) => t.focusDate === todayStr && t.status !== 'done')
@@ -249,6 +251,7 @@ const stats = computed(() => [
   { key: 'study', label: '课程', value: counts.value.courses ?? 0, sub: `作业 ${counts.value.assignments ?? 0}` },
   { key: 'knowledge', label: '笔记', value: counts.value.notes ?? 0, sub: `踩坑 ${counts.value.pitfalls ?? 0}` },
   { key: 'workspace', label: '工具', value: counts.value.tools ?? 0, sub: `Agent ${counts.value.agents ?? 0}` },
+  { key: 'inspiration', label: '灵感', value: counts.value.inspirations ?? 0, sub: '稍纵即逝的想法' },
 ])
 
 // ---- 首次引导（F-SYS-11）：localStorage 标记，仅首次展示 ----
@@ -478,7 +481,9 @@ function toggleStatHidden(key: string) {
   try { localStorage.setItem('wb:hidden-stats', JSON.stringify(hiddenStats.value)) } catch { /* ignore */ }
 }
 loadHiddenStats()
-const visibleStats = computed(() => stats.value.filter((s) => !hiddenStats.value.includes(s.key)))
+// 板块开关（设置→显示）关闭的模块,其统计卡不再出现在概览
+const visibleStats = computed(() => stats.value.filter((s) => !hiddenStats.value.includes(s.key) && settings.sections[s.key as ModuleKey] !== false))
+const visibleModules = computed(() => modules.filter((m) => settings.sections[m.key] !== false))
 
 // ---- F-SYS-05 全局搜索（语法过滤）：支持 type:/tag:/date: 前缀 ----
 const searchQuery = ref('')
@@ -562,7 +567,7 @@ onMounted(() => {
       <div class="onboard-body">
         <span>按 <span class="mono">Ctrl/Cmd + 1..7</span> 切换模块，<span class="mono">Ctrl/Cmd + K</span> 打开命令面板，<span class="mono">g</span> 后按 <span class="mono">d/l/s/o/k/w/h</span> 快速跳转，<span class="mono">n</span> 快速新建。首次进入请先在各模块录入台账，智能层将自动提供规则预警与洞察。</span>
       </div>
-      <NButton size="tiny" type="primary" ghost @click="dismissFirstRun">我知道了</NButton>
+      <NButton size="tiny" type="primary" ghost @click="dismissFirstRun()">我知道了</NButton>
     </div>
 
     <!-- 今日焦点 -->
@@ -610,7 +615,7 @@ onMounted(() => {
         <header class="card-head">
           <span class="accent-bar" :style="{ background: moduleColor('ops', themeStore.dark) }"></span>
           <h2>系统底座 · 数据备份</h2>
-          <NButton size="tiny" type="primary" :loading="exporting" @click="doExport">导出备份</NButton>
+          <NButton size="tiny" type="primary" :loading="exporting" @click="doExport()">导出备份</NButton>
         </header>
         <div class="cap-body">
           <div v-if="lastBackupDays !== null && lastBackupDays > 7" class="backup-guard">
@@ -697,8 +702,8 @@ onMounted(() => {
         <div class="cap-body">
           <p class="llm-tip">基于本周任务、记账与习惯数据自动汇总，可生成 Markdown 报表导出。</p>
           <div class="report-actions">
-            <NButton size="small" type="primary" @click="buildWeeklyReport">生成周报</NButton>
-            <NButton size="small" :disabled="!weeklyReport" @click="downloadWeeklyReport">下载 .md</NButton>
+            <NButton size="small" type="primary" @click="buildWeeklyReport()">生成周报</NButton>
+            <NButton size="small" :disabled="!weeklyReport" @click="downloadWeeklyReport()">下载 .md</NButton>
           </div>
           <pre v-if="weeklyReportVisible && weeklyReport" class="report-preview">{{ weeklyReport }}</pre>
         </div>
@@ -716,7 +721,7 @@ onMounted(() => {
         <div class="ai-exec-bar">
           <NSelect v-model:value="aiExecMode" :options="AI_MODE_OPTIONS" size="small" style="width: 170px" />
           <NInput v-model:value="aiExecInput" size="small" placeholder="输入内容 / 关键词 / 问题（搜索、分类、摘要、问答、标签、生成用）" @keyup.enter="runAiExec" clearable />
-          <NButton size="small" type="primary" :loading="aiExecLoading" @click="runAiExec">执行</NButton>
+          <NButton size="small" type="primary" :loading="aiExecLoading" @click="runAiExec()">执行</NButton>
         </div>
         <div v-if="aiExecResult" class="ai-exec-result">
           <div class="insight-title">{{ aiExecResult.summary }}</div>
@@ -816,7 +821,7 @@ onMounted(() => {
         <h2>模块导航</h2>
       </header>
       <div class="module-grid">
-        <button v-for="m in modules" :key="m.key" class="module-entry" @click="go(m.path)">
+        <button v-for="m in visibleModules" :key="m.key" class="module-entry" @click="go(m.path)">
           <span class="module-dot" :style="{ background: moduleColor(m.key, themeStore.dark) }"></span>
           <span class="me-name">{{ m.label }}</span>
           <span class="me-code mono">{{ m.name }}</span>

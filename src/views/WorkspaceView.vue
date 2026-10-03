@@ -636,10 +636,10 @@ function loadRollbackPoints() {
         <div class="card-body">
           <div class="tool-bar">
             <NInput v-model:value="keyword" size="small" placeholder="搜索工具…" clearable style="flex: 1" />
-            <NButton size="tiny" quaternary @click="toggleToolSort">{{ toolSort === 'hot' ? '按频次' : '按名称' }}</NButton>
-            <NButton size="tiny" quaternary @click="copyBat">生成 .bat</NButton>
-            <NButton size="tiny" type="primary" ghost @click="quickStart">一键开始</NButton>
-            <NButton size="tiny" type="warning" ghost @click="quickEnd">收工</NButton>
+            <NButton size="tiny" quaternary @click="toggleToolSort()">{{ toolSort === 'hot' ? '按频次' : '按名称' }}</NButton>
+            <NButton size="tiny" quaternary @click="copyBat()">生成 .bat</NButton>
+            <NButton size="tiny" type="primary" ghost @click="quickStart()">一键开始</NButton>
+            <NButton size="tiny" type="warning" ghost @click="quickEnd()">收工</NButton>
           </div>
           <div class="tool-hint mono">热键：Alt+1..9 启动前 9 个工具 · F-LP-04/05/06/08</div>
           <div v-if="orderedTools.length" class="tool-grid">
@@ -722,7 +722,7 @@ function loadRollbackPoints() {
           <span class="accent-bar" style="background: var(--wb-module-workspace)"></span>
           <h2>Agent 会话扫描</h2>
           <span class="count mono">{{ sessions.length }} 会话 · 卡死 {{ stalledCount }}</span>
-          <NButton size="tiny" type="primary" ghost :loading="sessionLoading" @click="loadSessions">
+          <NButton size="tiny" type="primary" ghost :loading="sessionLoading" @click="loadSessions()">
             <template #icon><NIcon :component="Refresh" /></template>
             扫描
           </NButton>
@@ -760,7 +760,7 @@ function loadRollbackPoints() {
         <div class="card-body">
           <div class="wf-input">
             <NInput v-model:value="wfGoal" size="small" type="textarea" :rows="2" placeholder="输入目标任务，如：把下载目录按类型整理并去重归档" />
-            <NButton size="small" type="primary" ghost :loading="wfLoading" @click="runWorkflow">
+            <NButton size="small" type="primary" ghost :loading="wfLoading" @click="runWorkflow()">
               <template #icon><NIcon :component="Rocket" /></template>
               拆解计划
             </NButton>
@@ -792,7 +792,7 @@ function loadRollbackPoints() {
           <div v-if="wfHistory.length" class="wf-history">
             <div class="wf-history-head">
               <span>执行历史</span>
-              <NButton size="tiny" text type="warning" @click="clearWfHistory">清空</NButton>
+              <NButton size="tiny" text type="warning" @click="clearWfHistory()">清空</NButton>
             </div>
             <div v-for="(h, i) in wfHistory" :key="i" class="wf-history-item">
               <span class="wf-h-time mono">{{ h.at }}</span>
@@ -868,7 +868,7 @@ function loadRollbackPoints() {
           <div class="wf-block-title" style="margin-top: 14px">交接包</div>
           <div class="wf-input" style="margin-top: 6px">
             <span style="font-size: 12px; color: var(--wb-text-3)">为最近一次工作流生成 Markdown 交接包（含子任务/质量检查/风险/自愈预案），复制到剪贴板。</span>
-            <NButton size="small" type="primary" ghost @click="handoffPack">生成并复制交接包</NButton>
+            <NButton size="small" type="primary" ghost @click="handoffPack()">生成并复制交接包</NButton>
           </div>
 
           <!-- Prompt 库 -->
@@ -876,7 +876,7 @@ function loadRollbackPoints() {
           <div class="wf-input" style="margin-top: 6px">
             <NInput v-model:value="promptName" size="small" placeholder="名称，如：代码审查" style="flex: 0 0 140px" />
             <NInput v-model:value="promptText" size="small" placeholder="模板内容，可用 {{goal}} 占位" style="flex: 1" />
-            <NButton size="small" type="primary" ghost @click="addPrompt">保存</NButton>
+            <NButton size="small" type="primary" ghost @click="addPrompt()">保存</NButton>
           </div>
           <div v-if="promptLib.length" class="prompt-list">
             <div v-for="p in promptLib" :key="p.id" class="prompt-item">
@@ -898,7 +898,7 @@ function loadRollbackPoints() {
           <div v-if="rollbackPoints.length" class="notify-list">
             <div v-for="(r, i) in rollbackPoints" :key="i" class="notify-item">
               <span class="mono" style="color: var(--wb-text-3)">{{ r.at }}</span> {{ r.goal }}
-              <NButton size="tiny" text type="primary" @click="quickEnd">恢复点</NButton>
+              <NButton size="tiny" text type="primary" @click="quickEnd()">恢复点</NButton>
             </div>
           </div>
           <EmptyState v-else text="尚无回滚点：每次拆解计划 / 收工会自动记录" />
@@ -911,7 +911,7 @@ function loadRollbackPoints() {
         <div class="installed-pick">
           <div class="installed-head">
             <span class="installed-title">从本机程序识别</span>
-            <NButton size="tiny" :loading="installedLoading" @click="loadInstalledApps">加载已安装程序</NButton>
+            <NButton size="tiny" :loading="installedLoading" @click="loadInstalledApps()">加载已安装程序</NButton>
             <NInput v-if="installedApps.length" v-model:value="installedKeyword" size="tiny" placeholder="过滤…" style="width: 140px" clearable />
           </div>
           <div v-if="installedApps.length" class="installed-list">

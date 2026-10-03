@@ -1,14 +1,15 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, nextTick, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
-import { NButton, NIcon, NTag, NPopover, NTooltip } from 'naive-ui'
-import { Moon, Sun, Command, LayoutSidebar, Activity, Refresh, Settings } from '@vicons/tabler'
+import { NButton, NIcon, NTag, NPopover, NTooltip, NInput, useMessage } from 'naive-ui'
+import { Moon, Sun, Command, LayoutSidebar, Activity, Refresh, Settings, Bulb } from '@vicons/tabler'
 import { modules, moduleColor } from '@/theme/tokens'
 import { useThemeStore } from '@/stores/theme'
 import { usePaletteStore } from '@/stores/palette'
 import { useSettings, UPDATE_SOURCE, APP_VERSION } from '@/composables/useSettings'
 import { llmConfigured } from '@/composables/llmClient'
 import { diskSpace, llmStatus, proxyDetect, checkUpdate, type DiskInfo, type LlmStatus, type ProxyInfo } from '@/composables/useTauri'
+import { inspirationsRepo } from '@/db'
 import CommandPalette from './CommandPalette.vue'
 import SettingsPanel from '@/components/SettingsPanel.vue'
 import { refreshTick, settingsOpen, requestRefresh } from '@/stores/ui'
@@ -25,17 +26,42 @@ const activeModule = computed(() => {
 })
 const accent = computed(() => moduleColor(activeModule.value.key, themeStore.dark))
 
-const shortcuts = ['1', '2', '3', '4', '5', '6', '7']
+const shortcuts = ['1', '2', '3', '4', '5', '6', '7', '8']
 
 // 板块开关：设置中可关闭的板块从侧栏隐藏（当前激活页不受影响）
 const navModules = computed(() => modules.filter((m) => s.sections[m.key]))
+
+// ---- 顶栏快速捕获灵感：单行输入，回车即存 ----
+const message = useMessage()
+const quickInsp = ref('')
+const quickInspShow = ref(false)
+const quickInputEl = ref<{ focus: () => void } | null>(null)
+watch(quickInspShow, (v) => {
+  if (v) nextTick(() => quickInputEl.value?.focus())
+  else quickInsp.value = ''
+})
+async function saveQuickInspiration() {
+  const raw = quickInsp.value.trim()
+  if (!raw) return
+  const { parseInspiration } = await import('@/composables/inspiration')
+  const { content, tags } = parseInspiration(raw)
+  if (!content && !tags) return
+  try {
+    await inspirationsRepo.insert({ content: content || raw, tags: tags || null })
+    quickInsp.value = ''
+    message.success('灵感已记录')
+    requestRefresh()
+  } catch {
+    message.error('记录失败：数据层不可用')
+  }
+}
 
 // ---- 启动即监控本机状态（磁盘 / LLM / 代理 / 更新） ----
 const sysStatus = ref<{
   diskUsed: string
   llm: LlmStatus | null
   proxy: ProxyInfo | null
-  update: { has: boolean; latest: string } | null
+  update: { has: boolean; latest: string; url: string } | null
   checkedAt: string
   loading: boolean
 }>({ diskUsed: '', llm: null, proxy: null, update: null, checkedAt: '', loading: false })
@@ -70,7 +96,7 @@ async function refreshSysStatus() {
     try {
       const up = await checkUpdate(url, APP_VERSION)
       sysStatus.value.update = up.has_update
-        ? { has: true, latest: up.latest ?? '' }
+        ? { has: true, latest: up.latest ?? '', url: up.release_url ?? '' }
         : null
     } catch {
       sysStatus.value.update = null
@@ -79,6 +105,10 @@ async function refreshSysStatus() {
 }
 
 const syncStatus = ref<SyncStatus>({ state: 'idle', message: '', lastSyncAt: null, pending: 0 })
+function openDownload() {
+  const u = sysStatus.value.update?.url
+  if (u) window.open(u, '_blank')
+}
 onSyncStatus((st) => { syncStatus.value = st })
 const syncLabel = computed(() => {
   if (!useSettings().cloudToken) return ''
@@ -153,14 +183,42 @@ onMounted(() => {
               <div>磁盘占用：{{ sysStatus.diskUsed || '--' }}</div>
               <div v-if="s.llmEnabled">LLM 服务：{{ sysStatus.llm?.configured ? `${sysStatus.llm.provider} 已配置` : '未配置' }}</div>
               <div>代理状态：{{ sysStatus.proxy?.enabled ? sysStatus.proxy.server : '未启用' }}</div>
-              <div v-if="sysStatus.update">发现新版本 v{{ sysStatus.update.latest }}，可在设置中查看发布说明</div>
+              <div v-if="sysStatus.update" class="sys-update">
+                <span>发现新版本 v{{ sysStatus.update.latest }}</span>
+                <NButton
+                  v-if="sysStatus.update.url"
+                  size="tiny"
+                  type="primary"
+                  ghost
+                  @click="openDownload()"
+                >前往下载</NButton>
+                <NButton v-else size="tiny" text type="primary" @click="settingsOpen = true">查看</NButton>
+              </div>
               <div class="sys-checked">检查于 {{ sysStatus.checkedAt || '--' }}</div>
             </div>
           </NPopover>
-          <NButton size="tiny" quaternary circle :loading="sysStatus.loading" @click="refreshSysStatus" title="刷新系统状态">
+          <NButton size="tiny" quaternary circle :loading="sysStatus.loading" @click="refreshSysStatus()" title="刷新系统状态">
             <template #icon><NIcon :component="Activity" /></template>
           </NButton>
           <span class="divider"></span>
+          <NPopover v-model:show="quickInspShow" trigger="click" placement="bottom-end" :style="{ width: '340px' }">
+            <template #trigger>
+              <NButton size="small" quaternary circle title="记灵感" class="quick-bulb">
+                <template #icon><NIcon :component="Bulb" /></template>
+              </NButton>
+            </template>
+            <div class="quick-insp">
+              <NInput
+                ref="quickInputEl"
+                v-model:value="quickInsp"
+                placeholder="灵感稍纵即逝… 支持 #标签 回车即存"
+                size="small"
+                clearable
+                @keyup.enter="saveQuickInspiration()"
+              />
+              <div class="quick-insp-tip">Enter 保存 · 自动解析 #标签</div>
+            </div>
+          </NPopover>
           <div v-if="syncLabel" class="sync-chip" :class="{ err: syncStatus.state === 'error', busy: syncStatus.state === 'syncing' }"
               title="云同步状态，点击管理" @click="settingsOpen = true">
             <span class="sync-dot"></span>{{ syncLabel }}
@@ -406,6 +464,14 @@ html.theme-brutal .logo-mark {
   margin-top: 4px;
   border-top: 1px solid var(--wb-border);
   padding-top: 4px;
+}
+.quick-bulb {
+  color: var(--wb-warning);
+}
+.quick-insp-tip {
+  margin-top: 6px;
+  font-size: 11px;
+  color: var(--wb-text-3);
 }
 @keyframes wb-spin {
   to { transform: rotate(360deg); }
