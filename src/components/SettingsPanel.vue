@@ -7,7 +7,7 @@ import { useSettings, UPDATE_SOURCE, type CustomCard } from '@/composables/useSe
 import { modules, tokens, COLOR_MODES, STYLE_MODES, comboKey, type ColorMode, type StyleMode } from '@/theme/tokens'
 import { AVATAR_PALETTE, avatarColor, avatarChar, avatarName, avatarSeed } from '@/composables/avatar'
 import { useThemeStore } from '@/stores/theme'
-import { exportBackupTo, checkUpdate, llmStatus } from '@/composables/useTauri'
+import { exportBackupTo, checkUpdate, llmStatus, openPath } from '@/composables/useTauri'
 import { APP_VERSION } from '@/composables/useSettings'
 import { llmConfigured, llmConfigLabel, llmChat } from '@/composables/llmClient'
 import { cloudRegister, cloudLogin, cloudLogout, syncNow, onSyncStatus, type SyncStatus } from '@/db/sync'
@@ -63,7 +63,8 @@ async function checkUpdateNow() {
   }
 }
 function openReleasePage() {
-  if (updateUrl.value) window.open(updateUrl.value, '_blank')
+  if (!updateUrl.value) return
+  openPath(updateUrl.value).catch(() => window.open(updateUrl.value, '_blank'))
 }
 
 // ---- LLM 服务：开关 + 自定义配置（工作台升级：非仅开关） ----

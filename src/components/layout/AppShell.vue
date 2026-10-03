@@ -9,7 +9,7 @@ import { useThemeStore } from '@/stores/theme'
 import { usePaletteStore } from '@/stores/palette'
 import { useSettings, UPDATE_SOURCE, APP_VERSION } from '@/composables/useSettings'
 import { llmConfigured } from '@/composables/llmClient'
-import { diskSpace, llmStatus, proxyDetect, checkUpdate, type DiskInfo, type LlmStatus, type ProxyInfo } from '@/composables/useTauri'
+import { diskSpace, llmStatus, proxyDetect, checkUpdate, openPath, type DiskInfo, type LlmStatus, type ProxyInfo } from '@/composables/useTauri'
 import { inspirationsRepo } from '@/db'
 import CommandPalette from './CommandPalette.vue'
 import SettingsPanel from '@/components/SettingsPanel.vue'
@@ -119,7 +119,9 @@ async function refreshSysStatus() {
 const syncStatus = ref<SyncStatus>({ state: 'idle', message: '', lastSyncAt: null, pending: 0 })
 function openDownload() {
   const u = sysStatus.value.update?.url
-  if (u) window.open(u, '_blank')
+  if (!u) return
+  // Tauri WebView2 里 window.open 无效，走系统默认浏览器
+  openPath(u).catch(() => window.open(u, '_blank'))
 }
 onSyncStatus((st) => { syncStatus.value = st })
 const syncLabel = computed(() => {

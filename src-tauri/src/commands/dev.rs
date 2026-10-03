@@ -43,6 +43,15 @@ pub async fn open_path(path: String) -> Result<String, String> {
                 .map_err(|e| format!("打开协议失败: {e}"))?;
             return Ok(format!("已通过系统协议打开: {path}"));
         }
+        // http/https：交给系统默认浏览器（Tauri WebView2 内 window.open 无效）
+        if path.starts_with("http://") || path.starts_with("https://") {
+            std::process::Command::new("cmd")
+                .args(["/C", "start", "", &path])
+                .creation_flags(NO_WINDOW)
+                .spawn()
+                .map_err(|e| format!("打开浏览器失败: {e}"))?;
+            return Ok(format!("已在默认浏览器打开: {path}"));
+        }
         if std::path::Path::new(&path).exists() {
             std::process::Command::new("explorer")
                 .arg(&path)
