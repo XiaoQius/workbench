@@ -77,7 +77,7 @@ function submit() {
     <template #footer>
       <n-space justify="end">
         <n-button quaternary @click="emit('update:show', false)">取消</n-button>
-        <n-button type="primary" @click="submit">{{ confirmText }}</n-button>
+        <n-button type="primary" @click="submit()">{{ confirmText }}</n-button>
       </n-space>
     </template>
   </n-modal>

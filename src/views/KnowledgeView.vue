@@ -579,7 +579,7 @@ async function shareSnapshot() {
       <n-tab-pane name="assets" tab="素材索引">
         <div class="toolbar">
           <NInput v-model:value="assetRoot" size="small" placeholder="扫描根目录…" clearable style="width: 260px" />
-          <NButton size="small" type="primary" ghost :loading="assetLoading" @click="runAssets">
+          <NButton size="small" type="primary" ghost :loading="assetLoading" @click="runAssets()">
             <template #icon><NIcon :component="Refresh" /></template>
             扫描
           </NButton>
@@ -784,8 +784,8 @@ async function shareSnapshot() {
             批量入库
           </NButton>
           <div style="display: flex; gap: 6px">
-            <NButton size="small" ghost @click="exportSnapshot">快照导出</NButton>
-            <NButton size="small" ghost @click="shareSnapshot">分享摘要</NButton>
+            <NButton size="small" ghost @click="exportSnapshot()">快照导出</NButton>
+            <NButton size="small" ghost @click="shareSnapshot()">分享摘要</NButton>
           </div>
         </div>
         <div class="review-head">每行一条：踩坑自动分类入库（按关键词归入前端/后端/数据库/运维/工具/其他），资源自动提取 URL。</div>

@@ -485,11 +485,11 @@ const remindItems = computed(() => {
             <span class="dim" style="font-size: 12px">分钟</span>
           </div>
           <div class="pomo-ops">
-            <NButton v-if="!pomoRunning" size="small" type="primary" ghost @click="startPomo">
+            <NButton v-if="!pomoRunning" size="small" type="primary" ghost @click="startPomo()">
               <template #icon><NIcon :component="Check" /></template>
               开始
             </NButton>
-            <NButton v-else size="small" type="warning" ghost @click="stopPomo">暂停并记录</NButton>
+            <NButton v-else size="small" type="warning" ghost @click="stopPomo()">暂停并记录</NButton>
           </div>
         </div>
         <div class="pomo-stats">
@@ -542,7 +542,7 @@ const remindItems = computed(() => {
           <div class="hf-row">
             <NInput v-model:value="healthToday.note" size="small" placeholder="备注（选填）" clearable style="width: 260px" />
           </div>
-          <NButton size="small" type="primary" ghost @click="saveHealth">保存今日记录</NButton>
+          <NButton size="small" type="primary" ghost @click="saveHealth()">保存今日记录</NButton>
         </div>
         <div v-if="healthRecords.length" class="health-table">
           <div class="ht-row head">

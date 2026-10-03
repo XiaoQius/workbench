@@ -27,7 +27,7 @@ export interface LlmConfig {
 }
 
 export interface KeymapSwitches {
-  ctrlNum: boolean // Ctrl+1..7 模块切换
+  ctrlNum: boolean // Ctrl+1..8 模块切换
   gSeq: boolean // g 序列跳转
   theme: boolean // Ctrl+Shift+D 主题
   newShortcut: boolean // n 新建

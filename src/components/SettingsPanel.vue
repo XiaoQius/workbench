@@ -48,13 +48,16 @@ const LLM_PROVIDERS = [
 // ---- 升级检测（Rust 命令 check_update：支持 GitHub owner/repo 或自定义 JSON 端点） ----
 const checking = ref(false)
 const updateMsg = ref('')
+const updateUrl = ref('')
 async function checkUpdateNow() {
   updateMsg.value = ''
+  updateUrl.value = ''
   checking.value = true
   try {
     const res = await checkUpdate(UPDATE_SOURCE, APP_VERSION)
     if (res.has_update) {
-      updateMsg.value = `发现新版本 v${res.latest}（当前 v${APP_VERSION}）` + (res.release_url ? `\n发布页：${res.release_url}` : '')
+      updateMsg.value = `发现新版本 v${res.latest}（当前 v${APP_VERSION}）`
+      updateUrl.value = res.release_url || ''
     } else {
       updateMsg.value = `当前已是最新版本 v${APP_VERSION}`
     }
@@ -63,6 +66,9 @@ async function checkUpdateNow() {
   } finally {
     checking.value = false
   }
+}
+function openReleasePage() {
+  if (updateUrl.value) window.open(updateUrl.value, '_blank')
 }
 
 // ---- LLM 服务：开关 + 自定义配置（工作台升级：非仅开关） ----
@@ -229,7 +235,7 @@ function commitFontScale(v: number) {
           <div class="sp-row">
             <NInput v-model:value="cardName" placeholder="卡片名称" style="flex: 0 0 160px" />
             <NInput v-model:value="cardContent" placeholder="内容（文本 / 键值行）" style="flex: 1" />
-            <NButton size="small" type="primary" ghost @click="addCard">添加</NButton>
+            <NButton size="small" type="primary" ghost @click="addCard()">添加</NButton>
           </div>
           <NList v-if="s.cards.length" size="small" style="margin-top: 8px">
             <NListItem v-for="c in s.cards" :key="c.id">
@@ -286,8 +292,8 @@ function commitFontScale(v: number) {
           <div class="sp-row">
             <span>启用智能层 / LLM 能力</span>
             <NSwitch v-model:value="s.llmEnabled" />
-            <NButton size="tiny" quaternary @click="refreshLlmStatus">探测状态</NButton>
-            <NButton size="tiny" type="primary" ghost :loading="llmTesting" @click="testLlm">测试连接</NButton>
+            <NButton size="tiny" quaternary @click="refreshLlmStatus()">探测状态</NButton>
+            <NButton size="tiny" type="primary" ghost :loading="llmTesting" @click="testLlm()">测试连接</NButton>
           </div>
           <div class="sp-row">
             <span class="sp-dim sp-k">服务类型</span>
@@ -315,7 +321,7 @@ function commitFontScale(v: number) {
         <div class="sp-sec">
           <div class="sp-label">应用更新 · 当前 v{{ APP_VERSION }}</div>
           <div class="sp-row">
-            <NButton size="small" type="primary" ghost :loading="checking" @click="checkUpdateNow">检查更新</NButton>
+            <NButton size="small" type="primary" ghost :loading="checking" @click="checkUpdateNow()">检查更新</NButton>
             <span class="sp-dim">更新检查已内置，无需配置</span>
           </div>
           <div class="sp-row">
@@ -323,6 +329,9 @@ function commitFontScale(v: number) {
             <NSwitch v-model:value="s.autoCheckUpdate" size="small" />
           </div>
           <div class="sp-dim" v-if="updateMsg" style="white-space: pre-line">{{ updateMsg }}</div>
+          <div class="sp-row" v-if="updateUrl">
+            <NButton size="small" type="primary" @click="openReleasePage()">前往下载新版本</NButton>
+          </div>
           <div class="sp-dim">启动后自动检测官方发布的新版本，发现更新会在顶栏状态区提示。</div>
         </div>
 
@@ -330,7 +339,7 @@ function commitFontScale(v: number) {
           <div class="sp-label">数据备份（F-SYS-07）</div>
           <div class="sp-row">
             <NInput v-model:value="s.gitSyncDir" placeholder="本地备份目录，如 D:\sync\workbench" style="flex: 1" />
-            <NButton size="small" type="primary" ghost :loading="syncing" @click="syncToGitDir">导出备份</NButton>
+            <NButton size="small" type="primary" ghost :loading="syncing" @click="syncToGitDir()">导出备份</NButton>
           </div>
           <div class="sp-dim" v-if="syncMsg" style="white-space: pre-line; color: var(--wb-success)">{{ syncMsg }}</div>
           <div class="sp-dim">将工作台全部数据导出为 JSON 备份文件，可搭配网盘或 Git 实现多机同步。</div>
@@ -355,8 +364,8 @@ function commitFontScale(v: number) {
             <div class="sp-row"><NInput v-model:value="cloudForm.password" type="password" show-password-on="click" placeholder="密码（≥6位）" style="flex: 1" /></div>
             <div class="sp-row"><NInput v-model:value="cloudForm.device" placeholder="设备名称" style="flex: 1" /></div>
             <div class="sp-row">
-              <NButton size="small" type="primary" :loading="cloudBusy" @click="doCloudRegister">注册并同步</NButton>
-              <NButton size="small" :loading="cloudBusy" @click="doCloudLogin">登录</NButton>
+              <NButton size="small" type="primary" :loading="cloudBusy" @click="doCloudRegister()">注册并同步</NButton>
+              <NButton size="small" :loading="cloudBusy" @click="doCloudLogin()">登录</NButton>
             </div>
             <div class="sp-dim" v-if="cloudMsg" style="white-space: pre-line">{{ cloudMsg }}</div>
           </div>
@@ -371,8 +380,8 @@ function commitFontScale(v: number) {
             <div class="sp-row"><span class="sp-dim" style="margin:0">上次同步：{{ s.lastSyncAt ? new Date(s.lastSyncAt).toLocaleString() : '从未' }}</span>
               <span class="sp-dim" style="margin:0 0 0 10px">待推送：{{ syncStatus.pending }} 行</span></div>
             <div class="sp-row">
-              <NButton size="small" type="primary" ghost :loading="syncStatus.state === 'syncing'" @click="doSyncNow">立即同步</NButton>
-              <NButton size="small" quaternary type="warning" @click="doCloudLogout">退出登录</NButton>
+              <NButton size="small" type="primary" ghost :loading="syncStatus.state === 'syncing'" @click="doSyncNow()">立即同步</NButton>
+              <NButton size="small" quaternary type="warning" @click="doCloudLogout()">退出登录</NButton>
             </div>
             <div class="sp-dim" v-if="cloudMsg" style="white-space: pre-line">{{ cloudMsg }}</div>
             <div class="sp-dim">改动会实时推送到云端并同步到你的其他设备；断网时本地照常使用，联网后自动补传。冲突按"最新修改优先"合并。</div>
