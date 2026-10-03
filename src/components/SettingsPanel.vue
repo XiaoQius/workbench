@@ -5,6 +5,7 @@ import {
 } from 'naive-ui'
 import { useSettings, UPDATE_SOURCE, type CustomCard } from '@/composables/useSettings'
 import { modules, tokens, COLOR_MODES, STYLE_MODES, comboKey, type ColorMode, type StyleMode } from '@/theme/tokens'
+import { AVATAR_PALETTE, avatarColor, avatarChar, avatarName, avatarSeed } from '@/composables/avatar'
 import { useThemeStore } from '@/stores/theme'
 import { exportBackupTo, checkUpdate, llmStatus } from '@/composables/useTauri'
 import { APP_VERSION } from '@/composables/useSettings'
@@ -200,10 +201,31 @@ function commitFontScale(v: number) {
     <div class="sp-title">系统设置</div>
 
     <NTabs v-model:value="activeTab" type="line" animated class="sp-tabs">
-      <!-- 通用：无障碍 / 快捷键 / 自定义卡片 -->
+      <!-- 通用：头像 / 无障碍 / 快捷键 / 自定义卡片 -->
       <NTabPane name="general" tab="通用">
         <div class="sp-sec">
-          <div class="sp-label">无障碍 · 字号可调（F-SYS-11）</div>
+          <div class="sp-label">头像</div>
+          <div class="sp-row" style="align-items: center; gap: 14px">
+            <span class="avatar-preview" :style="{ background: s.avatarColor || avatarColor(avatarSeed(s.deviceName, s.cloudUser)) }">{{ (s.avatarText.trim() || avatarChar(avatarName(s.deviceName, s.cloudUser))) }}</span>
+            <NInput v-model:value="s.avatarText" placeholder="头像文字（留空自动取用户名/设备名首字）" maxlength="2" style="flex: 1" />
+          </div>
+          <div class="sp-row" style="flex-wrap: wrap; gap: 8px">
+            <button
+              v-for="c in AVATAR_PALETTE"
+              :key="c"
+              type="button"
+              class="avatar-dot"
+              :class="{ active: s.avatarColor === c }"
+              :style="{ background: c }"
+              @click="s.avatarColor = s.avatarColor === c ? '' : c"
+            ></button>
+            <NButton v-if="s.avatarColor" size="tiny" quaternary @click="s.avatarColor = ''">恢复自动配色</NButton>
+          </div>
+          <div class="sp-dim">点选色块自定义底色，再点一次取消；未设置时按登录用户名自动配色。</div>
+        </div>
+
+        <div class="sp-sec">
+          <div class="sp-label">无障碍 · 字号可调</div>
           <div class="sp-row">
             <span class="sp-dim">85%</span>
             <NSlider :value="fontScaleDraft" :min="0.85" :max="1.3" :step="0.05" style="flex: 1" @update-value="commitFontScale" />
@@ -216,8 +238,8 @@ function commitFontScale(v: number) {
         </div>
 
         <div class="sp-sec">
-          <div class="sp-label">快捷键自定义（F-SYS-02）</div>
-          <div class="sp-row"><span>Ctrl+1..7 模块切换</span><NSwitch v-model:value="s.keymap.ctrlNum" /></div>
+          <div class="sp-label">快捷键自定义</div>
+          <div class="sp-row"><span>Ctrl+1..8 模块切换</span><NSwitch v-model:value="s.keymap.ctrlNum" /></div>
           <div class="sp-row"><span>g 序列跳转（g d / g l / g s / g o / g k / g w / g h）</span><NSwitch v-model:value="s.keymap.gSeq" /></div>
           <div class="sp-row"><span>Ctrl+Shift+D 主题切换</span><NSwitch v-model:value="s.keymap.theme" /></div>
           <div class="sp-row"><span>n 快速新建（编辑区外）</span><NSwitch v-model:value="s.keymap.newShortcut" /></div>
@@ -225,7 +247,7 @@ function commitFontScale(v: number) {
         </div>
 
         <div class="sp-sec">
-          <div class="sp-label">自定义卡片（F-SYS-06 简化版）</div>
+          <div class="sp-label">自定义卡片</div>
           <div class="sp-row">
             <NInput v-model:value="cardName" placeholder="卡片名称" style="flex: 0 0 160px" />
             <NInput v-model:value="cardContent" placeholder="内容（文本 / 键值行）" style="flex: 1" />
@@ -287,7 +309,7 @@ function commitFontScale(v: number) {
         <div class="sp-sec">
           <div class="sp-label">板块显示（关闭后在左侧菜单隐藏对应板块）</div>
           <div class="sp-grid">
-            <div v-for="m in modules" :key="m.key" class="sp-row">
+            <div v-for="m in modules" :key="m.key" class="sp-row sp-switch">
               <span>{{ m.label }}</span>
               <NSwitch v-model:value="s.sections[m.key]" size="small" />
             </div>
@@ -333,7 +355,6 @@ function commitFontScale(v: number) {
           <div class="sp-label">应用更新 · 当前 v{{ APP_VERSION }}</div>
           <div class="sp-row">
             <NButton size="small" type="primary" ghost :loading="checking" @click="checkUpdateNow()">检查更新</NButton>
-            <span class="sp-dim">更新检查已内置，无需配置</span>
           </div>
           <div class="sp-row">
             <span>启动时自动检查更新</span>
@@ -343,11 +364,10 @@ function commitFontScale(v: number) {
           <div class="sp-row" v-if="updateUrl">
             <NButton size="small" type="primary" @click="openReleasePage()">前往下载新版本</NButton>
           </div>
-          <div class="sp-dim">启动后自动检测官方发布的新版本，发现更新会在顶栏状态区提示。</div>
         </div>
 
         <div class="sp-sec">
-          <div class="sp-label">数据备份（F-SYS-07）</div>
+          <div class="sp-label">数据备份</div>
           <div class="sp-row">
             <NInput v-model:value="s.gitSyncDir" placeholder="本地备份目录，如 D:\sync\workbench" style="flex: 1" />
             <NButton size="small" type="primary" ghost :loading="syncing" @click="syncToGitDir()">导出备份</NButton>
@@ -364,7 +384,6 @@ function commitFontScale(v: number) {
             <span style="flex:1">启用云同步（多端实时同步全部数据）</span>
             <NSwitch v-model:value="s.cloudEnabled" />
           </div>
-          <div class="sp-dim">云端服务为可选能力：不注册、不登录，工作台所有功能照常本地使用。</div>
         </div>
 
         <template v-if="!s.cloudToken">
@@ -395,7 +414,6 @@ function commitFontScale(v: number) {
               <NButton size="small" quaternary type="warning" @click="doCloudLogout()">退出登录</NButton>
             </div>
             <div class="sp-dim" v-if="cloudMsg" style="white-space: pre-line">{{ cloudMsg }}</div>
-            <div class="sp-dim">改动会实时推送到云端并同步到你的其他设备；断网时本地照常使用，联网后自动补传。冲突按"最新修改优先"合并。</div>
           </div>
         </template>
       </NTabPane>
@@ -414,6 +432,22 @@ function commitFontScale(v: number) {
 .sp-label { font-size: 13px; font-weight: 600; margin-bottom: 8px; }
 .sp-row { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; font-size: 13px; }
 .sp-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 0 16px; }
+.avatar-preview {
+  width: 34px; height: 34px; flex: none;
+  border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  color: #fff; font-weight: 700; font-size: 15px;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.18);
+}
+.avatar-dot {
+  width: 22px; height: 22px; border-radius: 50%;
+  border: 2px solid transparent; cursor: pointer; padding: 0;
+  transition: transform 120ms ease-out;
+}
+.avatar-dot:hover { transform: scale(1.15); }
+.avatar-dot.active { border-color: var(--wb-text-1); box-shadow: 0 0 0 2px var(--wb-bg) inset; }
+.sp-switch > span { flex: 1; }
+.sp-switch .n-switch { margin-left: auto; }
 .sp-dim { font-size: 12px; color: var(--wb-text-3); margin-top: 4px; }
 .sp-k { width: 110px; flex: none; margin-top: 0; }
 .theme-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }

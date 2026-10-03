@@ -351,6 +351,7 @@ async function cloudAuth(serverUrl: string, path: string, username: string, pass
   if (!res.ok) throw new Error(data.error || String(res.status))
   s.cloudUrl = base
   s.cloudToken = data.token
+  s.cloudUser = username
   s.cloudEnabled = true
   s.deviceName = deviceName
 }
@@ -365,6 +366,7 @@ export function cloudLogout(): void {
   const s = useSettings()
   s.cloudEnabled = false
   s.cloudToken = ''
+  s.cloudUser = ''
   disconnectLive()
 }
 

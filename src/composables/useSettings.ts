@@ -61,7 +61,10 @@ function defaults() {
     cloudEnabled: false,
     cloudUrl: 'https://testapi.xusn.cn',
     cloudToken: '',
+    cloudUser: '',
     deviceName: '',
+    avatarText: '',
+    avatarColor: '',
     lastSyncAt: 0 as number,
   }
 }
@@ -80,7 +83,10 @@ export interface WbSettings {
   cloudEnabled: boolean
   cloudUrl: string
   cloudToken: string
+  cloudUser: string
   deviceName: string
+  avatarText: string
+  avatarColor: string
   lastSyncAt: number
 }
 
@@ -104,7 +110,10 @@ function load(): WbSettings {
       cloudEnabled: !!p.cloudEnabled,
       cloudUrl: typeof p.cloudUrl === 'string' && p.cloudUrl ? p.cloudUrl : d.cloudUrl,
       cloudToken: typeof p.cloudToken === 'string' ? p.cloudToken : '',
+      cloudUser: typeof p.cloudUser === 'string' ? p.cloudUser : '',
       deviceName: typeof p.deviceName === 'string' ? p.deviceName : '',
+      avatarText: typeof p.avatarText === 'string' ? p.avatarText : '',
+      avatarColor: typeof p.avatarColor === 'string' ? p.avatarColor : '',
       lastSyncAt: typeof p.lastSyncAt === 'number' ? p.lastSyncAt : 0,
     }
   } catch {

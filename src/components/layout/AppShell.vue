@@ -2,8 +2,9 @@
 import { computed, onMounted, nextTick, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { NButton, NIcon, NTag, NPopover, NTooltip, NInput, useMessage } from 'naive-ui'
-import { Moon, Sun, Command, LayoutSidebar, Activity, Refresh, Settings, Bulb } from '@vicons/tabler'
+import { Moon, Sun, Command, LayoutSidebar, Activity, Refresh, Settings, Bulb, Home, Briefcase, Code, Server, Heart, Book2, School } from '@vicons/tabler'
 import { modules, moduleColor } from '@/theme/tokens'
+import { avatarColor, avatarChar, avatarName, avatarSeed } from '@/composables/avatar'
 import { useThemeStore } from '@/stores/theme'
 import { usePaletteStore } from '@/stores/palette'
 import { useSettings, UPDATE_SOURCE, APP_VERSION } from '@/composables/useSettings'
@@ -27,6 +28,17 @@ const activeModule = computed(() => {
 const accent = computed(() => moduleColor(activeModule.value.key, themeStore.dark))
 
 const shortcuts = ['1', '2', '3', '4', '5', '6', '7', '8']
+
+// 模块线条图标:折叠侧栏下靠图标辨认模块(圆点仅展开时做点缀)
+const MODULE_ICONS: Record<string, unknown> = {
+  home: Home, workspace: Briefcase, dev: Code, ops: Server,
+  life: Heart, study: Book2, knowledge: School, inspiration: Bulb,
+}
+
+// 侧栏顶部头像：自定义 > 登录用户名定色 > 设备名稳定取色
+const avatarLabel = computed(() => s.avatarText.trim() || avatarName(s.deviceName, s.cloudUser))
+const avatarBg = computed(() => s.avatarColor || avatarColor(avatarSeed(s.deviceName, s.cloudUser)))
+const avatarCharText = computed(() => s.avatarText.trim() ? s.avatarText.trim()[0] : avatarChar(avatarLabel.value))
 
 // 板块开关：设置中可关闭的板块从侧栏隐藏（当前激活页不受影响）
 const navModules = computed(() => modules.filter((m) => s.sections[m.key]))
@@ -126,9 +138,9 @@ onMounted(() => {
   <div class="shell">
     <!-- 侧栏：7 模块导航（设置中可关闭板块；可折叠为图标栏） -->
     <aside class="sidebar" :class="{ collapsed: s.sidebarCollapsed }">
-      <div class="logo" title="WORKBENCH">
-        <span class="logo-mark">W</span>
-        <span v-if="!s.sidebarCollapsed" class="logo-text">WORKBENCH</span>
+      <div class="logo" :title="avatarLabel + ' · WORKBENCH'">
+        <span class="user-avatar" :style="{ background: avatarBg }">{{ avatarCharText }}</span>
+        <span v-if="!s.sidebarCollapsed" class="logo-text">{{ avatarLabel }}</span>
       </div>
       <nav class="nav">
         <router-link
@@ -139,7 +151,7 @@ onMounted(() => {
           :class="{ active: activeModule.key === m.key }"
           :title="`${m.label} (Ctrl+${shortcuts[i]})`"
         >
-          <span class="module-dot" :style="{ background: moduleColor(m.key, themeStore.dark) }"></span>
+          <NIcon class="nav-icon" :component="MODULE_ICONS[m.key] || Home" :style="{ color: activeModule.key === m.key ? moduleColor(m.key, themeStore.dark) : undefined }" />
           <span v-if="!s.sidebarCollapsed" class="nav-label">{{ m.label }}</span>
         </router-link>
       </nav>
@@ -283,28 +295,28 @@ onMounted(() => {
   gap: 10px;
   padding: 0 4px;
 }
-.logo-mark {
+.user-avatar {
   width: 30px;
   height: 30px;
-  border-radius: var(--wb-radius-md);
-  background: var(--wb-accent);
+  border-radius: 50%;
+  flex: none;
   color: #fff;
   display: flex;
   align-items: center;
   justify-content: center;
   font-weight: 700;
-  font-size: 15px;
+  font-size: 14px;
   letter-spacing: 0.5px;
-}
-html[data-style="tech"] .logo-mark,
-html[data-style="brutal"] .logo-mark {
-  color: var(--wb-bg);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.18);
 }
 .logo-text {
   font-weight: 700;
   font-size: 14px;
   letter-spacing: 0.4px;
   color: var(--wb-text-1);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .nav {
   display: flex;
@@ -326,11 +338,13 @@ html[data-style="brutal"] .logo-mark {
   transition: background-color 120ms ease-out;
   text-decoration: none;
 }
-.module-dot {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
+.nav-icon {
   flex: none;
+  font-size: 17px;
+  color: var(--wb-text-3);
+}
+.nav-item.active .nav-icon {
+  color: var(--wb-text-1);
 }
 .nav-label {
   font-size: 13px;
@@ -346,9 +360,6 @@ html[data-style="brutal"] .logo-mark {
 }
 .nav-item.active .nav-label {
   color: var(--wb-text-1);
-}
-.nav-item.active .module-dot {
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--wb-accent) 18%, transparent);
 }
 .sidebar-footer {
   display: flex;
@@ -369,9 +380,11 @@ html[data-style="brutal"] .logo-mark {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 0 20px;
-  border-bottom: var(--wb-border-w) solid var(--wb-border);
-  background: var(--wb-bg);
+  margin: 10px 10px 0 10px;
+  padding: 0 14px;
+  border: var(--wb-border-w) solid var(--wb-border);
+  border-radius: var(--wb-radius-lg);
+  background: var(--wb-card);
 }
 .crumb {
   display: flex;
@@ -439,7 +452,7 @@ html[data-style="brutal"] .logo-mark {
 .content {
   flex: 1;
   overflow-y: auto;
-  padding: 14px 18px 36px;
+  padding: 14px 18px 26px;
 }
 .sys-status {
   display: flex;
