@@ -883,7 +883,7 @@ onMounted(() => {
 .load-strip {
   margin: 12px 14px 0;
   padding: 10px 12px;
-  border-radius: 8px;
+  border-radius: var(--wb-radius-md);
   background: var(--wb-card-alt);
   color: var(--wb-text-2);
   font-size: 12.5px;
@@ -1181,6 +1181,6 @@ onMounted(() => {
 /* 卡片隐藏 */
 .stats-tools { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding: 10px 16px; border-top: 1px solid var(--wb-border); }
 .stats-hint { font-size: 11px; color: var(--wb-text-3); margin-right: 4px; }
-.stat-toggle { font-size: 11px; padding: 2px 8px; border-radius: 10px; background: var(--wb-card-alt); cursor: pointer; user-select: none; }
+.stat-toggle { font-size: 11px; padding: 2px 8px; border-radius: var(--wb-radius-md); background: var(--wb-card-alt); cursor: pointer; user-select: none; }
 .stat-toggle.off { opacity: 0.45; text-decoration: line-through; }
 </style>

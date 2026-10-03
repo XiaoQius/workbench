@@ -798,9 +798,9 @@ const remindItems = computed(() => {
 .heat-col { display: flex; flex-direction: column; gap: 4px; }
 .heat-cell { width: 11px; height: 11px; border-radius: 2.5px; }
 .heat-cell.lvl0 { background: var(--wb-card-alt); }
-.heat-cell.lvl1 { background: #d1fae5; }
-.heat-cell.lvl2 { background: #6ee7b7; }
-.heat-cell.lvl3 { background: #059669; }
+.heat-cell.lvl1 { background: color-mix(in srgb, var(--wb-success) 22%, var(--wb-card)); }
+.heat-cell.lvl2 { background: color-mix(in srgb, var(--wb-success) 55%, var(--wb-card)); }
+.heat-cell.lvl3 { background: var(--wb-success); }
 .heat-legend { display: flex; align-items: center; gap: 5px; margin-left: 12px; font-size: 11px; color: var(--wb-text-3); }
 .remind-list { padding: 10px 14px; display: flex; flex-direction: column; gap: 6px; }
 .remind-title { font-size: 12.5px; font-weight: 650; color: var(--wb-warning, #f0a020); }
@@ -815,7 +815,7 @@ const remindItems = computed(() => {
 .cb-ym { width: 46px; flex: none; font-size: 11px; }
 .cb-track { flex: 1; display: flex; gap: 2px; height: 10px; background: var(--wb-card-alt); border-radius: 5px; overflow: hidden; }
 .cb-bar { height: 100%; }
-.cb-exp { background: #f87171; }
-.cb-inc { background: #34d399; }
+.cb-exp { background: var(--wb-danger); }
+.cb-inc { background: var(--wb-success); }
 .cb-val { width: 92px; flex: none; font-size: 11px; text-align: right; }
 </style>

@@ -1026,7 +1026,7 @@ function loadRollbackPoints() {
 .caps-hint { font-size: 10px; color: var(--wb-text-3); margin-left: 2px; }
 .tool-bar { display: flex; align-items: center; gap: 6px; margin-bottom: 6px; }
 .tool-hint { font-size: 10.5px; color: var(--wb-text-3); margin-bottom: 8px; }
-.hotkey-tag { font-size: 9.5px; color: var(--wb-text-3); border: 1px dashed var(--wb-border); border-radius: 8px; padding: 0 4px; margin-left: 4px; }
+.hotkey-tag { font-size: 9.5px; color: var(--wb-text-3); border: 1px dashed var(--wb-border); border-radius: var(--wb-radius-md); padding: 0 4px; margin-left: 4px; }
 .diff-summary { display: flex; flex-direction: column; gap: 3px; padding: 8px 10px; border-radius: var(--wb-radius-sm); background: var(--wb-card-alt); }
 .wf-input { display: flex; gap: 8px; align-items: flex-start; margin-bottom: 12px; }
 .wf-input .n-input { flex: 1; }

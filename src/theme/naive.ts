@@ -89,9 +89,9 @@ function primaryHover(key: ComboKey): string {
     case 'dark-brutal':
       return '#7A86FF'
     case 'light-tech':
-      return '#0E7490'
+      return '#0A7A3A'
     case 'dark-tech':
-      return '#5CF3FF'
+      return '#5AFF85'
     default:
       return '#6366F1'
   }
@@ -106,9 +106,9 @@ function primaryPressed(key: ComboKey): string {
     case 'dark-brutal':
       return '#4353E0'
     case 'light-tech':
-      return '#155E75'
+      return '#014D22'
     case 'dark-tech':
-      return '#00B8CC'
+      return '#00C434'
     default:
       return '#4338CA'
   }
@@ -123,9 +123,9 @@ function inputBg(key: ComboKey): string {
     case 'dark-brutal':
       return '#14141A'
     case 'light-tech':
-      return '#F6FAFE'
+      return '#FAFCF9'
     case 'dark-tech':
-      return '#0A0F1A'
+      return '#060A06'
     default:
       return '#FCFCFB'
   }

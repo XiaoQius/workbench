@@ -253,7 +253,9 @@ onMounted(() => {
   width: 196px;
   flex: none;
   background: var(--wb-card);
-  border-right: var(--wb-border-w) solid var(--wb-border);
+  border: var(--wb-border-w) solid var(--wb-border);
+  border-radius: var(--wb-radius-lg);
+  margin: 10px 0 10px 10px;
   display: flex;
   flex-direction: column;
   align-items: stretch;
@@ -401,7 +403,7 @@ html[data-style="brutal"] .logo-mark {
   color: var(--wb-text-2);
   padding: 2px 8px;
   border: var(--wb-border-w) solid var(--wb-border);
-  border-radius: 20px;
+  border-radius: var(--wb-radius-lg);
   cursor: pointer;
   user-select: none;
 }

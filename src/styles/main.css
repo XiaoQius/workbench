@@ -139,56 +139,56 @@ html[data-color="dark"][data-style="brutal"] {
   --wb-card-hover-border: #f2f0e4;
 }
 
-/* —— 科技 · 浅色：冷白蓝底 + 深霓虹青 + 青色微光 —— */
+/* —— 科技 · 浅色（黑客终端纸面形态）：冷白底 + 终端深绿 —— */
 html[data-color="light"][data-style="tech"] {
-  --wb-bg: #eef4fb;
+  --wb-bg: #f2f5f0;
   --wb-card: #ffffff;
-  --wb-card-alt: #e4eef8;
-  --wb-border: #b9d3e8;
-  --wb-text-1: #0a1a2b;
-  --wb-text-2: #3e5c78;
-  --wb-text-3: #7c96ae;
-  --wb-accent: #0891b2;
-  --wb-success: #059669;
+  --wb-card-alt: #e7ede4;
+  --wb-border: #b7c6b4;
+  --wb-text-1: #0c1a0e;
+  --wb-text-2: #3d5240;
+  --wb-text-3: #7a8c7c;
+  --wb-accent: #00642c;
+  --wb-success: #0b8a4b;
   --wb-warning: #b45309;
-  --wb-danger: #e11d48;
-  --wb-info: #2563eb;
-  --wb-module-home: #0891b2;
-  --wb-module-workspace: #059669;
-  --wb-module-dev: #0d9488;
+  --wb-danger: #c2252c;
+  --wb-info: #1d6fd1;
+  --wb-module-home: #00642c;
+  --wb-module-workspace: #0d9488;
+  --wb-module-dev: #0b8a4b;
   --wb-module-ops: #b45309;
-  --wb-module-life: #db2777;
-  --wb-module-study: #7c3aed;
-  --wb-module-knowledge: #2563eb;
-  --wb-module-inspiration: #ca8a04;
-  --wb-shadow-hover: 0 0 18px rgba(8, 145, 178, 0.22);
-  --wb-card-hover-border: #0891b2;
+  --wb-module-life: #a61b78;
+  --wb-module-study: #5b2d8e;
+  --wb-module-knowledge: #1d6fd1;
+  --wb-module-inspiration: #8a6d00;
+  --wb-shadow-hover: 0 0 16px rgba(0, 100, 44, 0.18);
+  --wb-card-hover-border: #00642c;
 }
 
-/* —— 科技 · 深色：近黑深蓝底 + 霓虹青 + 青色辉光 —— */
+/* —— 科技 · 深色（黑客终端）：纯黑底 + 终端绿 #00FF41 + 绿色辉光 —— */
 html[data-color="dark"][data-style="tech"] {
-  --wb-bg: #05070d;
-  --wb-card: #0c1220;
-  --wb-card-alt: #111a2e;
-  --wb-border: #1b2740;
-  --wb-text-1: #e6f1ff;
-  --wb-text-2: #8fa3c0;
-  --wb-text-3: #5a6b85;
-  --wb-accent: #00e5ff;
-  --wb-success: #2be08a;
-  --wb-warning: #ffb020;
-  --wb-danger: #ff4d6a;
-  --wb-info: #4da3ff;
-  --wb-module-home: #00e5ff;
-  --wb-module-workspace: #2be08a;
-  --wb-module-dev: #2be08a;
-  --wb-module-ops: #ffb020;
+  --wb-bg: #04070a;
+  --wb-card: #080d0a;
+  --wb-card-alt: #0d150e;
+  --wb-border: #143d1f;
+  --wb-text-1: #b6ffc4;
+  --wb-text-2: #4ed46a;
+  --wb-text-3: #2a7a3c;
+  --wb-accent: #00ff41;
+  --wb-success: #00e05a;
+  --wb-warning: #e8b830;
+  --wb-danger: #ff5c5c;
+  --wb-info: #39c0ff;
+  --wb-module-home: #00ff41;
+  --wb-module-workspace: #00d9a0;
+  --wb-module-dev: #3aff6e;
+  --wb-module-ops: #e8b830;
   --wb-module-life: #ff6fb5;
-  --wb-module-study: #a78bfa;
-  --wb-module-knowledge: #4da3ff;
+  --wb-module-study: #9d7bff;
+  --wb-module-knowledge: #39c0ff;
   --wb-module-inspiration: #ffe45c;
-  --wb-shadow-hover: 0 0 20px rgba(0, 229, 255, 0.22);
-  --wb-card-hover-border: #00e5ff;
+  --wb-shadow-hover: 0 0 18px rgba(0, 255, 65, 0.28);
+  --wb-card-hover-border: #00ff41;
 }
 
 /* 科技风：数字 / 代码类元素切等宽字体，是本主题的识别点 */
@@ -196,6 +196,19 @@ html[data-style="tech"] .mono,
 html[data-style="tech"] .stat-value {
   font-family: var(--wb-font-mono);
   font-variant-numeric: tabular-nums;
+}
+
+/* 科技风：正文标签/标题切等宽，营造终端质感 */
+html[data-style="tech"] body {
+  font-family: var(--wb-font-mono);
+  letter-spacing: 0.01em;
+}
+
+/* 科技风 · 深色：卡片标题前缀终端提示符，强化黑客感 */
+html[data-color="dark"][data-style="tech"] .card-head h2::before {
+  content: '$ ';
+  color: var(--wb-accent);
+  text-shadow: 0 0 8px rgba(0, 255, 65, 0.55);
 }
 
 * {
@@ -344,7 +357,7 @@ body {
 .empty-icon {
   width: 44px;
   height: 44px;
-  border-radius: 12px;
+  border-radius: var(--wb-radius-lg);
   border: 1px dashed var(--wb-border);
   display: flex;
   align-items: center;

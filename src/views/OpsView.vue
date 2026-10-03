@@ -876,7 +876,7 @@ async function removeDns(d: OpsDnsRecord) {
 .ellipsis { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 220px; }
 .sc-config {
   margin-top: 8px; font-size: 11.5px; color: var(--wb-text-3);
-  background: var(--wb-card-alt); border-radius: 6px; padding: 6px 8px;
+  background: var(--wb-card-alt); border-radius: var(--wb-radius-sm); padding: 6px 8px;
 }
 .sc-foot {
   display: flex; align-items: center; gap: 12px; margin-top: 10px;

@@ -321,7 +321,7 @@ onMounted(() => {
   color: var(--wb-text-2);
   background: var(--wb-card);
   border: var(--wb-border-w) solid var(--wb-border);
-  border-radius: 20px;
+  border-radius: var(--wb-radius-lg);
   padding: 2px 10px;
   cursor: pointer;
 }

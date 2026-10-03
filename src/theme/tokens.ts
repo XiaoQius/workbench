@@ -138,21 +138,21 @@ const PALETTES: Record<ComboKey, Palette> = {
     module: { home: '#5B6BFF', workspace: '#2DD4BF', dev: '#34D399', ops: '#FB923C', life: '#F472B6', study: '#A78BFA', knowledge: '#60A5FA', inspiration: '#FFB020' },
     shadowHover: '4px 4px 0 #F2F0E4',
   },
-  // —— 科技 · 浅色（新）：冷白蓝底 + 深霓虹青 + 细描边 ——
+  // —— 科技 · 浅色（黑客终端的纸面形态）：冷白底 + 终端深绿 + 细描边 ——
   'light-tech': {
-    bg: '#EEF4FB', card: '#FFFFFF', cardAlt: '#E4EEF8', border: '#B9D3E8',
-    text1: '#0A1A2B', text2: '#3E5C78', text3: '#7C96AE',
-    accent: '#0891B2', success: '#059669', warning: '#B45309', danger: '#E11D48', info: '#2563EB',
-    module: { home: '#0891B2', workspace: '#059669', dev: '#0D9488', ops: '#B45309', life: '#DB2777', study: '#7C3AED', knowledge: '#2563EB', inspiration: '#CA8A04' },
-    shadowHover: '0 0 18px rgba(8,145,178,0.22)',
+    bg: '#F2F5F0', card: '#FFFFFF', cardAlt: '#E7EDE4', border: '#B7C6B4',
+    text1: '#0C1A0E', text2: '#3D5240', text3: '#7A8C7C',
+    accent: '#00642C', success: '#0B8A4B', warning: '#B45309', danger: '#C2252C', info: '#1D6FD1',
+    module: { home: '#00642C', workspace: '#0D9488', dev: '#0B8A4B', ops: '#B45309', life: '#A61B78', study: '#5B2D8E', knowledge: '#1D6FD1', inspiration: '#8A6D00' },
+    shadowHover: '0 0 16px rgba(0,100,44,0.18)',
   },
-  // —— 科技 · 深色（原 tech）：近黑深蓝底 + 霓虹青 + 青色辉光 ——
+  // —— 科技 · 深色（黑客终端）：纯黑底 + 终端绿 #00FF41 系 + 绿色辉光 ——
   'dark-tech': {
-    bg: '#05070D', card: '#0C1220', cardAlt: '#111A2E', border: '#1B2740',
-    text1: '#E6F1FF', text2: '#8FA3C0', text3: '#5A6B85',
-    accent: '#00E5FF', success: '#2BE08A', warning: '#FFB020', danger: '#FF4D6A', info: '#4DA3FF',
-    module: { home: '#00E5FF', workspace: '#2BE08A', dev: '#2BE08A', ops: '#FFB020', life: '#FF6FB5', study: '#A78BFA', knowledge: '#4DA3FF', inspiration: '#FFE45C' },
-    shadowHover: '0 0 20px rgba(0, 229, 255, 0.22)',
+    bg: '#04070A', card: '#080D0A', cardAlt: '#0D150E', border: '#143D1F',
+    text1: '#B6FFC4', text2: '#4ED46A', text3: '#2A7A3C',
+    accent: '#00FF41', success: '#00E05A', warning: '#E8B830', danger: '#FF5C5C', info: '#39C0FF',
+    module: { home: '#00FF41', workspace: '#00D9A0', dev: '#3AFF6E', ops: '#E8B830', life: '#FF6FB5', study: '#9D7BFF', knowledge: '#39C0FF', inspiration: '#FFE45C' },
+    shadowHover: '0 0 18px rgba(0, 255, 65, 0.28)',
   },
 }
 

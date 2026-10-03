@@ -98,7 +98,7 @@ function submit() {
   padding: 5px 10px;
   font-size: 13px;
   border: 1px solid var(--wb-border);
-  border-radius: 6px;
+  border-radius: var(--wb-radius-sm);
   background: var(--wb-card-alt);
   color: var(--wb-text-1);
   outline: none;

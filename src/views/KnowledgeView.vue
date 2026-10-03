@@ -434,7 +434,7 @@ const graphHtml = computed(() => {
     .filter((e) => pos.has(e.from) && pos.has(e.to))
     .map((e) => {
       const a = pos.get(e.from)!, b = pos.get(e.to)!
-      return `<line x1="${a.x}" y1="${a.y}" x2="${b.x}" y2="${b.y}" stroke="#94a3b8" stroke-width="1.2" opacity="0.55"/>`
+      return `<line x1="${a.x}" y1="${a.y}" x2="${b.x}" y2="${b.y}" style="stroke: var(--wb-text-3)" stroke-width="1.2" opacity="0.55"/>`
     })
     .join('')
   const colorOf: Record<string, string> = { pitfall: '#ef4444', resource: '#3b82f6', decision: '#8b5cf6', skill: '#10b981' }
@@ -448,7 +448,7 @@ const graphHtml = computed(() => {
   const labels = nodes
     .map((n) => {
       const p = pos.get(n.id)!
-      return `<text x="${p.x}" y="${p.y + 26}" text-anchor="middle" font-size="10" fill="#94a3b8" style="pointer-events:none">${n.label.slice(0, 12)}</text>`
+      return `<text x="${p.x}" y="${p.y + 26}" text-anchor="middle" font-size="10" style="fill: var(--wb-text-2); pointer-events:none">${n.label.slice(0, 12)}</text>`
     })
     .join('')
   return `<svg viewBox="0 0 520 280" width="100%" height="280">${edgeLines}${nodeCircles}${labels}</svg>`
@@ -871,7 +871,7 @@ async function shareSnapshot() {
 .rv-main { min-width: 0; display: flex; flex-direction: column; gap: 4px; }
 .rv-title { display: flex; align-items: center; font-size: 13px; font-weight: 600; }
 .rv-meta { font-size: 11px; color: var(--wb-text-3); }
-.st-wrap { background: var(--wb-card-bg); border: 1px solid var(--wb-border); border-radius: 10px; padding: 14px; }
+.st-wrap { background: var(--wb-card-bg); border: 1px solid var(--wb-border); border-radius: var(--wb-radius-md); padding: 14px; }
 .st-tree { display: flex; flex-direction: column; gap: 6px; }
 .st-node { display: flex; align-items: center; gap: 7px; font-size: 12.5px; padding: 4px 0; }
 .st-dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; flex: none; }

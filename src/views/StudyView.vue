@@ -875,7 +875,7 @@ const focusMaxMin = computed(() => Math.max(1, ...focusWeek.value.map((d) => d.m
 }
 .sc-cell {
   grid-column: 1;
-  border-radius: 6px;
+  border-radius: var(--wb-radius-sm);
   padding: 5px 6px;
   background: color-mix(in srgb, var(--wb-module-study) 14%, transparent);
   border: 1px solid color-mix(in srgb, var(--wb-module-study) 34%, transparent);
