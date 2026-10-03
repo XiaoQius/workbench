@@ -13,7 +13,7 @@ import { diskSpace, llmStatus, proxyDetect, checkUpdate, type DiskInfo, type Llm
 import { inspirationsRepo } from '@/db'
 import CommandPalette from './CommandPalette.vue'
 import SettingsPanel from '@/components/SettingsPanel.vue'
-import { refreshTick, settingsOpen, requestRefresh } from '@/stores/ui'
+import { refreshTick, settingsOpen, settingsTab, requestRefresh } from '@/stores/ui'
 import { onSyncStatus, type SyncStatus } from '@/db/sync'
 
 const route = useRoute()
@@ -117,7 +117,6 @@ async function refreshSysStatus() {
 }
 
 const syncStatus = ref<SyncStatus>({ state: 'idle', message: '', lastSyncAt: null, pending: 0 })
-const settingsTab = ref<string | undefined>(undefined)
 function openSettings(tab?: string) {
   settingsTab.value = tab
   settingsOpen.value = true

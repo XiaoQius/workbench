@@ -434,6 +434,20 @@ const MIGRATIONS_V1: string[] = [
     createdAt TEXT,
     updatedAt TEXT
   )`,
+  // ---- 个人档案 PROFILE（跨端头像同步，单行语义）----
+  // 固定单行 id=1（而非文本 'me'）：推拉引擎整条链路都按整数主键设计——
+  // _sync_state.rowId 声明 INTEGER，applyRemoteBatch 拼 `WHERE id = ${rowId}` 不带引号，
+  // relay 推送用 Number(id)>0 判断是否带服务端 id、新行由 AUTOINCREMENT 分配。
+  // 文本主键会在上述拼接处产生 SQL 错误并卡死拉取游标，故保持整数 1。
+  // 同步列(user_id/_ut/_del/_dev/_sv)与其余业务表一致：本地不建列，
+  // 桌面端记账在 _sync_state，relay 启动时由 db.js 统一 ALTER 追加。
+  `CREATE TABLE IF NOT EXISTS profile (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    avatarText TEXT,
+    avatarColor TEXT,
+    avatarImg TEXT,
+    updatedAt INTEGER
+  )`,
 ]
 
 // 索引：此前全库无索引，所有过滤/排序都是全表扫描，数据增长后查询与同步线性变慢。

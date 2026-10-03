@@ -10,7 +10,7 @@ import { useThemeStore } from '@/stores/theme'
 import { exportBackupTo, checkUpdate, downloadUpdate, installUpdate, llmStatus, openPath } from '@/composables/useTauri'
 import { APP_VERSION } from '@/composables/useSettings'
 import { llmConfigured, llmConfigLabel, llmChat } from '@/composables/llmClient'
-import { cloudRegister, cloudLogin, cloudLogout, syncNow, onSyncStatus, type SyncStatus } from '@/db/sync'
+import { cloudRegister, cloudLogin, cloudLogout, cloudPair, syncNow, onSyncStatus, type SyncStatus } from '@/db/sync'
 import {
   tasksRepo, deadlinesRepo, projectsRepo, snippetsRepo, habitsRepo, ledgerRepo,
   coursesRepo, assignmentsRepo, notesRepo, pitfallsRepo, serversRepo, domainsRepo,
@@ -219,6 +219,16 @@ async function doCloudLogin() {
     cloudMsg.value = '登录成功，正在同步…'
     void syncNow()
   } catch (e) { cloudMsg.value = '登录失败：' + String(e instanceof Error ? e.message : e) } finally { cloudBusy.value = false }
+}
+// ---- 配对码登录：不想输账号密码时，用管理面板生成的 8 位配对码配对 ----
+const pairForm = ref({ server: s.cloudUrl || 'https://testapi.xusn.cn', code: '', device: '我的电脑' })
+async function doCloudPair() {
+  cloudBusy.value = true; cloudMsg.value = ''
+  try {
+    await cloudPair(pairForm.value.server, pairForm.value.code.trim().toUpperCase(), pairForm.value.device.trim() || '我的电脑')
+    cloudMsg.value = '配对成功，正在同步…'
+    void syncNow()
+  } catch (e) { cloudMsg.value = '配对失败：' + String(e instanceof Error ? e.message : e) } finally { cloudBusy.value = false }
 }
 function doCloudLogout() {
   cloudLogout(); cloudMsg.value = '已退出云同步（本地数据保留不动）'
@@ -453,6 +463,17 @@ function commitFontScale(v: number) {
               <NButton size="small" :loading="cloudBusy" @click="doCloudLogin()">登录</NButton>
             </div>
             <div class="sp-dim" v-if="cloudMsg" style="white-space: pre-line">{{ cloudMsg }}</div>
+          </div>
+
+          <div class="sp-sec">
+            <div class="sp-label">配对码登录</div>
+            <div class="sp-row"><NInput v-model:value="pairForm.server" placeholder="服务地址" style="flex: 1" /></div>
+            <div class="sp-row"><NInput v-model:value="pairForm.code" maxlength="8" placeholder="8 位配对码（云端管理面板生成）" style="flex: 1" /></div>
+            <div class="sp-row"><NInput v-model:value="pairForm.device" placeholder="设备名称" style="flex: 1" /></div>
+            <div class="sp-row">
+              <NButton size="small" type="primary" :loading="cloudBusy" @click="doCloudPair()">配对并同步</NButton>
+            </div>
+            <div class="sp-dim">不想输账号密码时用配对码：在已登录设备的云端管理面板生成一个 8 位码，新设备输入即可归属同一账号。配对码一次性有效。</div>
           </div>
         </template>
 

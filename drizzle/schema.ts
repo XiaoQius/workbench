@@ -595,3 +595,20 @@ export const inspirations = sqliteTable('inspirations', {
 })
 export type Inspiration = typeof inspirations.$inferSelect
 export type NewInspiration = typeof inspirations.$inferInsert
+
+/**
+ * 个人档案（跨端头像同步，单行语义）。
+ * 固定整型主键（约定单行 id=1 语义）而非文本 'me'：推拉引擎全链路按整数主键设计
+ * （_sync_state.rowId INTEGER、applyRemoteBatch 拼接 `WHERE id = ${rowId}`、
+ * relay push 的 Number(id)>0 判定与 AUTOINCREMENT 分配），文本主键会破坏这三处。
+ * 列名与 src/db/migrate.ts 及 relay/db/schema.sql 保持一致。
+ */
+export const profile = sqliteTable('profile', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  avatarText: text('avatarText'),
+  avatarColor: text('avatarColor'),
+  avatarImg: text('avatarImg'), // 头像 dataURL（JPEG，约几十 KB）
+  updatedAt: integer('updatedAt'), // ms 时间戳
+})
+export type Profile = typeof profile.$inferSelect
+export type NewProfile = typeof profile.$inferInsert

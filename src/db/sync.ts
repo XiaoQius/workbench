@@ -12,7 +12,7 @@ import { exec, query } from './client'
 import { ensureSyncIndexes, runBatch } from './migrate'
 import { useSettings } from '@/composables/useSettings'
 
-/** 与云端 db/schema.sql 对齐的 41 张业务表 */
+/** 与云端 db/schema.sql 对齐的 42 张业务表 */
 export const SYNC_TABLES = [
   'tasks', 'deadlines', 'links',
   'projects', 'snippets',
@@ -26,6 +26,7 @@ export const SYNC_TABLES = [
   'decisions', 'skillTree', 'learningPaths', 'threeDProjects', 'portfolios', 'contentCalendars',
   'fixedBills', 'grades', 'flashcards', 'readQueue', 'feynmanLogs',
   'inspirations',
+  'profile',
 ] as const
 
 const NOW_MS = `CAST((julianday('now') - 2440587.5) * 86400000 AS INTEGER)`
@@ -511,4 +512,30 @@ export async function initSync(): Promise<void> {
   // 每次登录/注册都会调 initSync，原先重复注册会叠加出多个轮询定时器。
   if (pollTimer !== null) window.clearInterval(pollTimer)
   pollTimer = window.setInterval(() => { if (useSettings().cloudEnabled) void syncNow() }, 5 * 60 * 1000)
+}
+
+// ---------------- 配对码登录（免账号密码） ----------------
+
+/**
+ * 配对码登录：用管理面板生成的 8 位配对码换取设备 Token，无需用户名密码。
+ * 服务端 relay /api/auth/pair 契约：请求 { pairingCode, name, platform }（归属用户由配对码本身决定，
+ * 请求体不带 userId）；响应 { userId, deviceId, token, serverVersion }（无 username 字段）。
+ * 存储方式与 cloudAuth 一致：token 落 cloudToken，启用云同步，记住设备名；
+ * cloudUser 用响应里的 userId 转字符串占位（响应无用户名）。
+ */
+export async function cloudPair(serverUrl: string, pairingCode: string, deviceName: string): Promise<void> {
+  const s = useSettings()
+  const base = serverUrl.replace(/\/+$/, '')
+  const res = await fetch(`${base}/api/auth/pair`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ pairingCode, name: deviceName, platform: 'desktop' }),
+  })
+  const data = await res.json()
+  if (!res.ok) throw new Error(data.error || String(res.status))
+  s.cloudUrl = base
+  s.cloudToken = data.token
+  s.cloudUser = data.userId !== undefined ? String(data.userId) : s.cloudUser
+  s.cloudEnabled = true
+  s.deviceName = deviceName
 }

@@ -5,7 +5,8 @@ import { useThemeStore } from './stores/theme'
 import { useDataStore } from './stores/data'
 import { naiveOverrides } from './theme/naive'
 import { initDb } from './db/migrate'
-import { initSync } from './db/sync'
+import { initSync, initSyncSchema } from './db/sync'
+import { initProfileSync } from './composables/profileSync'
 import { useKeyboard } from './composables/useKeyboard'
 import { useSettings, applyAccessibility } from './composables/useSettings'
 import { watch } from 'vue'
@@ -31,14 +32,22 @@ watch(
 
 // 云同步（建 120 个触发器 + 全量拉取）延后到首屏渲染完成后的空闲时段执行，
 // 原先与 initDb 串行挤在同一 tick，是启动白屏过长的主因之一。
-function scheduleSync() {
-  const run = () => {
+async function scheduleSync() {
+  const run = async () => {
+    try {
+      // 先建 _sync_state/触发器（幂等），profileSync 的本地写入才能被捕获；
+      // initProfileSync 注册完成后 initSync 内部会再跑一次 initSyncSchema，无害。
+      await initSyncSchema()
+      initProfileSync()
+    } catch (e) {
+      console.error('[WORKBENCH] profile 同步初始化失败:', e)
+    }
     initSync().catch((e) => console.error('[WORKBENCH] 云同步初始化失败:', e))
   }
   if (typeof requestIdleCallback === 'function') {
-    requestIdleCallback(run, { timeout: 3000 })
+    requestIdleCallback(() => void run(), { timeout: 3000 })
   } else {
-    setTimeout(run, 300)
+    setTimeout(() => void run(), 300)
   }
 }
 
