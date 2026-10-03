@@ -1,10 +1,9 @@
 import type { GlobalThemeOverrides } from 'naive-ui'
-import { tokens, themeMeta, type ThemeKey } from './tokens'
+import { tokens, type ComboKey } from './tokens'
 
-/** 由设计 token 生成 Naive UI 主题覆盖（四套主题共用一套映射，颜色取自对应主题 token） */
-export function naiveOverrides(key: ThemeKey): GlobalThemeOverrides {
+/** 由设计 token 生成 Naive UI 主题覆盖（6 组合共用一套映射，颜色取自对应组合 token） */
+export function naiveOverrides(key: ComboKey): GlobalThemeOverrides {
   const t = tokens[key]
-  const dark = themeMeta(key).dark
   const radius = `${t.radiusMd}px`
   return {
     common: {
@@ -81,40 +80,51 @@ export function naiveOverrides(key: ThemeKey): GlobalThemeOverrides {
   }
 }
 
-// 以下三项原先是写死的三元（按 light/dark 取色），新的两套主题沿用会残留旧配色
-function primaryHover(key: ThemeKey): string {
+function primaryHover(key: ComboKey): string {
   switch (key) {
-    case 'dark':
+    case 'dark-normal':
       return '#93A0FA'
-    case 'brutal':
+    case 'light-brutal':
       return '#1E33D6'
-    case 'tech':
+    case 'dark-brutal':
+      return '#7A86FF'
+    case 'light-tech':
+      return '#0E7490'
+    case 'dark-tech':
       return '#5CF3FF'
     default:
       return '#6366F1'
   }
 }
 
-function primaryPressed(key: ThemeKey): string {
+function primaryPressed(key: ComboKey): string {
   switch (key) {
-    case 'dark':
+    case 'dark-normal':
       return '#6E7AF2'
-    case 'brutal':
+    case 'light-brutal':
       return '#18279E'
-    case 'tech':
+    case 'dark-brutal':
+      return '#4353E0'
+    case 'light-tech':
+      return '#155E75'
+    case 'dark-tech':
       return '#00B8CC'
     default:
       return '#4338CA'
   }
 }
 
-function inputBg(key: ThemeKey): string {
+function inputBg(key: ComboKey): string {
   switch (key) {
-    case 'dark':
+    case 'dark-normal':
       return '#141416'
-    case 'brutal':
+    case 'light-brutal':
       return '#FFFFFF'
-    case 'tech':
+    case 'dark-brutal':
+      return '#14141A'
+    case 'light-tech':
+      return '#F6FAFE'
+    case 'dark-tech':
       return '#0A0F1A'
     default:
       return '#FCFCFB'

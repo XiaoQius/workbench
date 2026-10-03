@@ -4,7 +4,7 @@ import {
   NModal, NInput, NSlider, NSwitch, NButton, NTag, NText, NList, NListItem, NThing, NSelect, NTabs, NTabPane,
 } from 'naive-ui'
 import { useSettings, UPDATE_SOURCE, type CustomCard } from '@/composables/useSettings'
-import { modules, THEMES, tokens } from '@/theme/tokens'
+import { modules, tokens, COLOR_MODES, STYLE_MODES, comboKey, type ColorMode, type StyleMode } from '@/theme/tokens'
 import { useThemeStore } from '@/stores/theme'
 import { exportBackupTo, checkUpdate, llmStatus } from '@/composables/useTauri'
 import { APP_VERSION } from '@/composables/useSettings'
@@ -22,17 +22,11 @@ const emit = defineEmits<{ (e: 'update:show', v: boolean): void }>()
 const s = useSettings()
 const themeStore = useThemeStore()
 
-// 主题选择：每项用该主题自己的 bg / accent / border 自绘小色卡预览
-const themeOptions = THEMES.map((t) => {
-  const tk = tokens[t.key]
-  return {
-    meta: t,
-    bg: tk.bg,
-    accent: tk.accent,
-    border: tk.border,
-    text: tk.text1,
-  }
-})
+// 主题预览：配色维度用当前风格的组合取色，风格维度用当前配色的组合取色
+function comboPreview(color: ColorMode, style: StyleMode) {
+  const tk = tokens[comboKey(color, style)]
+  return { bg: tk.bg, accent: tk.accent, border: tk.border, text: tk.text1 }
+}
 
 
 // ---- 设置面板二级分类（工作台升级：单页过长过乱，按类别分组） ----
@@ -253,24 +247,41 @@ function commitFontScale(v: number) {
       <!-- 显示：主题选择 + 板块显示开关 -->
       <NTabPane name="display" tab="显示">
         <div class="sp-sec">
-          <div class="sp-label">主题（4 选 1，立即全局生效）</div>
+          <div class="sp-label">配色（明暗）</div>
           <div class="theme-grid">
             <button
-              v-for="o in themeOptions"
-              :key="o.meta.key"
+              v-for="c in COLOR_MODES"
+              :key="c.key"
               type="button"
               class="theme-item"
-              :class="{ active: themeStore.themeKey === o.meta.key }"
-              @click="themeStore.setTheme(o.meta.key)"
+              :class="{ active: themeStore.colorMode === c.key }"
+              @click="themeStore.setColorMode(c.key)"
             >
-              <span class="theme-swatch" :style="{ background: o.bg, borderColor: o.border }">
-                <span class="swatch-bar" :style="{ background: o.accent }"></span>
-                <span class="swatch-block" :style="{ background: o.bg, borderColor: o.border, color: o.text }"></span>
+              <span class="theme-swatch" :style="{ background: comboPreview(c.key, themeStore.styleMode).bg, borderColor: comboPreview(c.key, themeStore.styleMode).border }">
+                <span class="swatch-bar" :style="{ background: comboPreview(c.key, themeStore.styleMode).accent }"></span>
+                <span class="swatch-block" :style="{ background: comboPreview(c.key, themeStore.styleMode).bg, borderColor: comboPreview(c.key, themeStore.styleMode).border, color: comboPreview(c.key, themeStore.styleMode).text }"></span>
               </span>
-              <span class="theme-name">{{ o.meta.label }}</span>
+              <span class="theme-name">{{ c.label }}</span>
             </button>
           </div>
-          <div class="sp-dim">顶栏的 ☀/☾ 按钮与 Ctrl+Shift+D 仍是「浅色 ⇄ 深色」快捷切换；这里的选项会记住并在重启后保持。</div>
+          <div class="sp-label" style="margin-top: 14px">风格（造型）</div>
+          <div class="theme-grid">
+            <button
+              v-for="st in STYLE_MODES"
+              :key="st.key"
+              type="button"
+              class="theme-item"
+              :class="{ active: themeStore.styleMode === st.key }"
+              @click="themeStore.setStyleMode(st.key)"
+            >
+              <span class="theme-swatch" :style="{ background: comboPreview(themeStore.colorMode, st.key).bg, borderColor: comboPreview(themeStore.colorMode, st.key).border }">
+                <span class="swatch-bar" :style="{ background: comboPreview(themeStore.colorMode, st.key).accent }"></span>
+                <span class="swatch-block" :style="{ background: comboPreview(themeStore.colorMode, st.key).bg, borderColor: comboPreview(themeStore.colorMode, st.key).border, color: comboPreview(themeStore.colorMode, st.key).text }"></span>
+              </span>
+              <span class="theme-name">{{ st.label }}</span>
+            </button>
+          </div>
+          <div class="sp-dim">配色与风格两维独立组合（共 6 套）；顶栏的 ☀/☾ 按钮与 Ctrl+Shift+D 只切明暗、保留当前风格；选择会记住并在重启后保持。</div>
         </div>
 
         <div class="sp-sec">

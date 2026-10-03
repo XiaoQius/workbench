@@ -1,8 +1,7 @@
 import { defineConfig, presetUno } from 'unocss'
 import { tokens } from './src/theme/tokens'
 
-const light = tokens.light
-const dark = tokens.dark
+const light = tokens['light-normal']
 
 // UnoCSS 原子样式：设计 token 注入主题，配合 src/styles/main.css 的 CSS 变量
 export default defineConfig({

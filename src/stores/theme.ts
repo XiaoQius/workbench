@@ -1,55 +1,69 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
-import { normalizeTheme, setActiveTheme, themeMeta, type ThemeKey } from '@/theme/tokens'
+import {
+  comboKey, isColorMode, isStyleMode, migrateLegacyTheme, setActiveTheme,
+  type ColorMode, type StyleMode, type ComboKey,
+} from '@/theme/tokens'
 
-const STORAGE_KEY = 'workbench.theme'
-const THEME_CLASSES = ['theme-light', 'theme-dark', 'theme-brutal', 'theme-tech']
+const COLOR_KEY = 'workbench.colorMode'
+const STYLE_KEY = 'workbench.styleMode'
+const LEGACY_KEY = 'workbench.theme'
 
-export const useThemeStore = defineStore('theme', () => {
-  let initial: ThemeKey = 'light'
+function loadInitial(): { color: ColorMode; style: StyleMode } {
   try {
-    // 历史存的是 'light' / 'dark'，新增 brutal / tech，非法值回退 light
-    initial = normalizeTheme(localStorage.getItem(STORAGE_KEY))
+    const c = localStorage.getItem(COLOR_KEY)
+    const s = localStorage.getItem(STYLE_KEY)
+    if (isColorMode(c) && isStyleMode(s)) return { color: c, style: s }
+    // 迁移旧的单维主题值
+    const migrated = migrateLegacyTheme(localStorage.getItem(LEGACY_KEY))
+    if (migrated) return migrated
   } catch {
     /* ignore */
   }
-  const themeKey = ref<ThemeKey>(initial)
+  return { color: 'light', style: 'normal' }
+}
 
-  // 保留 dark / mode：HomeView、AppShell、PageHeader、CommandPalette 的调用点不受影响
-  const dark = computed(() => themeMeta(themeKey.value).dark)
-  const mode = computed(() => (dark.value ? 'dark' : 'light'))
+export const useThemeStore = defineStore('theme', () => {
+  const init = loadInitial()
+  const colorMode = ref<ColorMode>(init.color)
+  const styleMode = ref<StyleMode>(init.style)
 
-  /** 顶栏 Sun/Moon 与 Ctrl+Shift+D 的快捷切换：保持「浅 ⇄ 深」原有语义 */
-  function toggle() {
-    themeKey.value = dark.value ? 'light' : 'dark'
-    apply()
-  }
-
-  function setMode(m: 'light' | 'dark') {
-    themeKey.value = m
-    apply()
-  }
-
-  function setTheme(key: ThemeKey) {
-    themeKey.value = normalizeTheme(key)
-    apply()
-  }
+  const combo = computed<ComboKey>(() => comboKey(colorMode.value, styleMode.value))
+  // 兼容旧调用点：dark 仍表示「是否暗色系」
+  const dark = computed(() => colorMode.value === 'dark')
+  const mode = computed(() => colorMode.value)
 
   function apply() {
-    setActiveTheme(themeKey.value)
+    setActiveTheme(combo.value)
     const root = document.documentElement
+    root.dataset.color = colorMode.value
+    root.dataset.style = styleMode.value
     root.classList.toggle('dark', dark.value)
-    THEME_CLASSES.forEach((c) => root.classList.remove(c))
-    root.classList.add('theme-' + themeKey.value)
     try {
-      localStorage.setItem(STORAGE_KEY, themeKey.value)
+      localStorage.setItem(COLOR_KEY, colorMode.value)
+      localStorage.setItem(STYLE_KEY, styleMode.value)
     } catch {
       /* ignore */
     }
   }
 
-  // 初始应用一次
+  /** 顶栏 Sun/Moon 与 Ctrl+Shift+D：只切明暗，保留当前风格 */
+  function toggle() {
+    colorMode.value = dark.value ? 'light' : 'dark'
+    apply()
+  }
+
+  function setColorMode(m: ColorMode) {
+    if (isColorMode(m)) colorMode.value = m
+    apply()
+  }
+
+  function setStyleMode(s: StyleMode) {
+    if (isStyleMode(s)) styleMode.value = s
+    apply()
+  }
+
   apply()
 
-  return { themeKey, dark, mode, toggle, setMode, setTheme }
+  return { colorMode, styleMode, combo, dark, mode, toggle, setColorMode, setStyleMode }
 })

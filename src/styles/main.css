@@ -1,6 +1,9 @@
 /* ============================================================
    WORKBENCH 全局样式：设计 token CSS 变量 + 基础排版
-   浅色默认，html.dark 切换深色
+   两维正交主题（参考云端管理面板 skins 模型）：
+     · html[data-color=light|dark]  配色维度（明暗）
+     · html[data-style=normal|brutal|tech]  风格维度（造型）
+   默认浅色标准 = :root 基础层，无需属性即生效
    ============================================================ */
 
 :root {
@@ -45,7 +48,22 @@
   --wb-card-hover-border: var(--wb-text-3);
 }
 
-html.dark {
+/* —— 风格维度：造型参数（与明暗无关）—— */
+html[data-style="brutal"] {
+  --wb-radius-sm: 8px;
+  --wb-radius-md: 14px;
+  --wb-radius-lg: 20px;
+  --wb-border-w: 3px;
+}
+html[data-style="tech"] {
+  --wb-radius-sm: 6px;
+  --wb-radius-md: 8px;
+  --wb-radius-lg: 10px;
+  --wb-border-w: 1px;
+}
+
+/* —— 配色维度：深色 · 标准 —— */
+html[data-color="dark"] {
   --wb-bg: #0f0f10;
   --wb-card: #1a1a1c;
   --wb-card-alt: #232326;
@@ -69,8 +87,8 @@ html.dark {
   --wb-shadow-hover: 0 4px 16px rgba(0, 0, 0, 0.35);
 }
 
-/* 圆角新粗野风：米白纸底 + 墨黑厚描边 + 硬偏移投影 + 大圆角 */
-html.theme-brutal {
+/* —— 粗野 · 浅色：米白纸底 + 墨黑厚描边 + 硬偏移投影 —— */
+html[data-color="light"][data-style="brutal"] {
   --wb-bg: #fff8e7;
   --wb-card: #ffffff;
   --wb-card-alt: #fff1c9;
@@ -92,15 +110,63 @@ html.theme-brutal {
   --wb-module-knowledge: #14509e;
   --wb-module-inspiration: #ff8a00;
   --wb-shadow-hover: 4px 4px 0 #141414;
-  --wb-radius-sm: 8px;
-  --wb-radius-md: 14px;
-  --wb-radius-lg: 20px;
-  --wb-border-w: 3px;
   --wb-card-hover-border: #141414;
 }
 
-/* 科技风：近黑深蓝底 + 霓虹青 + 细描边 + 青色辉光 */
-html.theme-tech {
+/* —— 粗野 · 深色：墨黑底 + 亮纸色厚描边 + 硬偏移投影 —— */
+html[data-color="dark"][data-style="brutal"] {
+  --wb-bg: #16161c;
+  --wb-card: #1e1e26;
+  --wb-card-alt: #26262f;
+  --wb-border: #f2f0e4;
+  --wb-text-1: #f5f3e7;
+  --wb-text-2: #b8b6ac;
+  --wb-text-3: #807e76;
+  --wb-accent: #5b6bff;
+  --wb-success: #22c55e;
+  --wb-warning: #f97316;
+  --wb-danger: #ff4d4d;
+  --wb-info: #3b9eff;
+  --wb-module-home: #5b6bff;
+  --wb-module-workspace: #2dd4bf;
+  --wb-module-dev: #34d399;
+  --wb-module-ops: #fb923c;
+  --wb-module-life: #f472b6;
+  --wb-module-study: #a78bfa;
+  --wb-module-knowledge: #60a5fa;
+  --wb-module-inspiration: #ffb020;
+  --wb-shadow-hover: 4px 4px 0 #f2f0e4;
+  --wb-card-hover-border: #f2f0e4;
+}
+
+/* —— 科技 · 浅色：冷白蓝底 + 深霓虹青 + 青色微光 —— */
+html[data-color="light"][data-style="tech"] {
+  --wb-bg: #eef4fb;
+  --wb-card: #ffffff;
+  --wb-card-alt: #e4eef8;
+  --wb-border: #b9d3e8;
+  --wb-text-1: #0a1a2b;
+  --wb-text-2: #3e5c78;
+  --wb-text-3: #7c96ae;
+  --wb-accent: #0891b2;
+  --wb-success: #059669;
+  --wb-warning: #b45309;
+  --wb-danger: #e11d48;
+  --wb-info: #2563eb;
+  --wb-module-home: #0891b2;
+  --wb-module-workspace: #059669;
+  --wb-module-dev: #0d9488;
+  --wb-module-ops: #b45309;
+  --wb-module-life: #db2777;
+  --wb-module-study: #7c3aed;
+  --wb-module-knowledge: #2563eb;
+  --wb-module-inspiration: #ca8a04;
+  --wb-shadow-hover: 0 0 18px rgba(8, 145, 178, 0.22);
+  --wb-card-hover-border: #0891b2;
+}
+
+/* —— 科技 · 深色：近黑深蓝底 + 霓虹青 + 青色辉光 —— */
+html[data-color="dark"][data-style="tech"] {
   --wb-bg: #05070d;
   --wb-card: #0c1220;
   --wb-card-alt: #111a2e;
@@ -122,16 +188,12 @@ html.theme-tech {
   --wb-module-knowledge: #4da3ff;
   --wb-module-inspiration: #ffe45c;
   --wb-shadow-hover: 0 0 20px rgba(0, 229, 255, 0.22);
-  --wb-radius-sm: 6px;
-  --wb-radius-md: 8px;
-  --wb-radius-lg: 10px;
-  --wb-border-w: 1px;
   --wb-card-hover-border: #00e5ff;
 }
 
 /* 科技风：数字 / 代码类元素切等宽字体，是本主题的识别点 */
-html.theme-tech .mono,
-html.theme-tech .stat-value {
+html[data-style="tech"] .mono,
+html[data-style="tech"] .stat-value {
   font-family: var(--wb-font-mono);
   font-variant-numeric: tabular-nums;
 }

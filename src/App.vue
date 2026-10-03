@@ -17,7 +17,7 @@ const initError = ref('')
 const settings = useSettings()
 
 const naiveTheme = computed(() => (themeStore.dark ? darkTheme : null))
-const overrides = computed(() => naiveOverrides(themeStore.themeKey))
+const overrides = computed(() => naiveOverrides(themeStore.combo))
 
 useKeyboard()
 

@@ -294,8 +294,8 @@ onMounted(() => {
   font-size: 15px;
   letter-spacing: 0.5px;
 }
-html.theme-tech .logo-mark,
-html.theme-brutal .logo-mark {
+html[data-style="tech"] .logo-mark,
+html[data-style="brutal"] .logo-mark {
   color: var(--wb-bg);
 }
 .logo-text {
