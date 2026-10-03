@@ -8,14 +8,17 @@ const props = defineProps<{
   sub?: string
   color?: string
   icon?: string
+  clickable?: boolean
 }>()
+
+const emit = defineEmits<{ (e: 'click'): void }>()
 
 const themeStore = useThemeStore()
 const accent = computed(() => props.color ?? 'var(--wb-accent)')
 </script>
 
 <template>
-  <div class="stat-card wb-card">
+  <div class="stat-card wb-card" :class="{ clickable }" @click="clickable && emit('click')">
     <div class="stat-icon" :style="{ color: accent, background: `color-mix(in srgb, ${accent} 10%, transparent)` }">
       {{ icon ?? '▧' }}
     </div>
@@ -33,6 +36,14 @@ const accent = computed(() => props.color ?? 'var(--wb-accent)')
   gap: 12px;
   padding: 14px 16px;
   align-items: center;
+}
+.stat-card.clickable {
+  cursor: pointer;
+}
+.stat-card.clickable:hover {
+  transform: translateY(-2px);
+  box-shadow: var(--wb-shadow-hover);
+  border-color: var(--wb-card-hover-border);
 }
 .stat-icon {
   width: 38px;

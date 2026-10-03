@@ -386,6 +386,11 @@ function go(path: string) {
   router.push(path)
 }
 
+// 统计卡跳转目标：stats.key 即模块 key（两个 dev 卡路径相同）
+function statPath(key: string): string {
+  return modules.find((m) => m.key === key)?.path ?? '/'
+}
+
 // ---- 智能层执行面板（F-AI-01/02/03/04/06/07/08/10 实际后端执行，开关联动）----
 const aiExecMode = ref<'semantic_search' | 'auto_classify' | 'smart_suggest' | 'summarize' | 'generate' | 'qa' | 'auto_tag' | 'dedupe'>('semantic_search')
 const aiExecInput = ref('')
@@ -570,6 +575,9 @@ onMounted(() => {
       <NButton size="tiny" type="primary" ghost @click="dismissFirstRun()">我知道了</NButton>
     </div>
 
+    <!-- ===== 上半区 · 数据区 ===== -->
+    <div class="zone-title">数据</div>
+
     <!-- 今日焦点 -->
     <div class="section-grid">
       <section class="wb-card focus-card">
@@ -579,7 +587,7 @@ onMounted(() => {
           <NTag size="small" :bordered="false" class="mono">{{ todayStr }}</NTag>
         </header>
         <div v-if="focusTasks.length" class="focus-list">
-          <div v-for="t in focusTasks" :key="t.id" class="focus-item">
+          <div v-for="t in focusTasks" :key="t.id" class="focus-item clickable" @click="go('/dev')">
             <NTag size="small" :bordered="false" :color="{ color: 'transparent', textColor: moduleColor(t.scope === 'study' ? 'study' : t.scope === 'life' ? 'life' : 'dev', themeStore.dark) }">
               {{ t.scope }}
             </NTag>
@@ -600,7 +608,16 @@ onMounted(() => {
         </header>
         <div v-if="loading" class="load-strip">数据加载中…</div>
         <div class="stats-grid">
-          <StatCard v-for="s in visibleStats" :key="s.key" :label="s.label" :value="s.value" :sub="s.sub" :color="moduleColor(s.key, themeStore.dark)" />
+          <StatCard
+            v-for="s in visibleStats"
+            :key="s.key"
+            :label="s.label"
+            :value="s.value"
+            :sub="s.sub"
+            :color="moduleColor(s.key, themeStore.dark)"
+            clickable
+            @click="go(statPath(s.key))"
+          />
         </div>
         <div class="stats-tools">
           <span class="stats-hint">点击隐藏 / 恢复统计卡片（F-OVW-06）</span>
@@ -609,8 +626,79 @@ onMounted(() => {
       </section>
     </div>
 
-    <!-- 能力层：系统底座 + 智能层 -->
-    <div class="section-grid cap-grid" style="margin-bottom: 16px">
+    <!-- 截止提醒 + 7 日趋势 + 动态流（数据区） -->
+    <div class="data-grid" style="margin-bottom: 16px">
+      <section class="wb-card">
+        <header class="card-head">
+          <span class="accent-bar" :style="{ background: moduleColor('life', themeStore.dark) }"></span>
+          <h2>截止提醒</h2>
+          <NTag size="small" :bordered="false" class="mono">点击查看任务</NTag>
+        </header>
+        <div class="cap-body" style="min-height: 0">
+          <div v-if="deadlineAlerts.length" class="deadline-list">
+            <div v-for="d in deadlineAlerts" :key="d.id" class="deadline-item clickable" @click="go('/dev')">
+              <span class="deadline-title">{{ d.title }}</span>
+              <span class="mono" style="color: var(--wb-text-3); font-size: 11.5px">{{ d.dueDate }}</span>
+            </div>
+          </div>
+          <EmptyState v-else text="近期没有开放的截止项" />
+        </div>
+      </section>
+      <section class="wb-card">
+        <header class="card-head">
+          <span class="accent-bar" :style="{ background: moduleColor('dev', themeStore.dark) }"></span>
+          <h2>7 日趋势</h2>
+          <NTag size="small" :bordered="false" class="mono">任务完成 / 习惯打卡</NTag>
+        </header>
+        <div class="cap-body">
+          <div v-if="trendData.length" class="trend-bars">
+            <div v-for="d in trendData" :key="d.date" class="trend-col">
+              <div class="trend-bar-wrap">
+                <div class="trend-bar" :style="{ height: Math.max(4, (d.done / trendMax) * 80) + 'px' }" :title="`完成 ${d.done}`"></div>
+                <div class="trend-bar second" :style="{ height: Math.max(4, (d.habits / trendMax) * 80) + 'px' }" :title="`打卡 ${d.habits}`"></div>
+              </div>
+              <span class="trend-label mono">{{ d.date }}</span>
+            </div>
+          </div>
+          <EmptyState v-else text="暂无趋势数据" />
+        </div>
+      </section>
+      <section class="wb-card">
+        <header class="card-head">
+          <span class="accent-bar" :style="{ background: moduleColor('home', themeStore.dark) }"></span>
+          <h2>动态流</h2>
+          <NTag size="small" :bordered="false" class="mono">最近操作</NTag>
+        </header>
+        <div class="cap-body" style="min-height: 0">
+          <div v-if="activityFeed.length" class="activity-list">
+            <div v-for="(a, i) in activityFeed" :key="i" class="activity-item">
+              <span class="mono activity-at">{{ a.at }}</span>
+              <span>{{ a.text }}</span>
+            </div>
+          </div>
+          <EmptyState v-else text="暂无动态，执行智能层操作后自动记录" />
+        </div>
+      </section>
+    </div>
+
+    <!-- 模块入口（数据区尾部，随板块开关联动） -->
+    <section class="wb-card modules-card">
+      <header class="card-head">
+        <span class="accent-bar" :style="{ background: moduleColor('home', themeStore.dark) }"></span>
+        <h2>模块导航</h2>
+      </header>
+      <div class="module-grid">
+        <button v-for="m in visibleModules" :key="m.key" class="module-entry" @click="go(m.path)">
+          <span class="module-dot" :style="{ background: moduleColor(m.key, themeStore.dark) }"></span>
+          <span class="me-name">{{ m.label }}</span>
+          <span class="me-code mono">{{ m.name }}</span>
+        </button>
+      </div>
+    </section>
+
+    <!-- ===== 下半区 · 操作区 ===== -->
+    <div class="zone-title" style="margin-top: 20px">操作</div>
+    <div class="section-grid cap-grid" style="margin-top: 16px; margin-bottom: 16px">
       <section class="wb-card">
         <header class="card-head">
           <span class="accent-bar" :style="{ background: moduleColor('ops', themeStore.dark) }"></span>
@@ -750,46 +838,6 @@ onMounted(() => {
       </div>
     </section>
 
-    <!-- F-OVW-03 动态流 + F-OVW-04 7日趋势 -->
-    <div class="section-grid" style="margin-bottom: 16px">
-      <section class="wb-card">
-        <header class="card-head">
-          <span class="accent-bar" :style="{ background: moduleColor('dev', themeStore.dark) }"></span>
-          <h2>7 日趋势</h2>
-          <NTag size="small" :bordered="false" class="mono">任务完成 / 习惯打卡</NTag>
-        </header>
-        <div class="cap-body">
-          <div v-if="trendData.length" class="trend-bars">
-            <div v-for="d in trendData" :key="d.date" class="trend-col">
-              <div class="trend-bar-wrap">
-                <div class="trend-bar" :style="{ height: Math.max(4, (d.done / trendMax) * 80) + 'px' }" :title="`完成 ${d.done}`"></div>
-                <div class="trend-bar second" :style="{ height: Math.max(4, (d.habits / trendMax) * 80) + 'px' }" :title="`打卡 ${d.habits}`"></div>
-              </div>
-              <span class="trend-label mono">{{ d.date }}</span>
-            </div>
-          </div>
-          <EmptyState v-else text="暂无趋势数据" />
-        </div>
-      </section>
-
-      <section class="wb-card">
-        <header class="card-head">
-          <span class="accent-bar" :style="{ background: moduleColor('home', themeStore.dark) }"></span>
-          <h2>动态流</h2>
-          <NTag size="small" :bordered="false" class="mono">最近操作</NTag>
-        </header>
-        <div class="cap-body">
-          <div v-if="activityFeed.length" class="activity-list">
-            <div v-for="(a, i) in activityFeed" :key="i" class="activity-item">
-              <span class="mono activity-at">{{ a.at }}</span>
-              <span>{{ a.text }}</span>
-            </div>
-          </div>
-          <EmptyState v-else text="暂无动态，执行智能层操作后自动记录" />
-        </div>
-      </section>
-    </div>
-
     <!-- F-SYS-05 全局搜索（支持 type:/tag:/date: 语法） -->
     <section class="wb-card global-search-card" style="margin-bottom: 16px">
       <header class="card-head">
@@ -814,26 +862,67 @@ onMounted(() => {
       </div>
     </section>
 
-    <!-- 模块入口 -->
-    <section class="wb-card modules-card">
-      <header class="card-head">
-        <span class="accent-bar" :style="{ background: moduleColor('home', themeStore.dark) }"></span>
-        <h2>模块导航</h2>
-      </header>
-      <div class="module-grid">
-        <button v-for="m in visibleModules" :key="m.key" class="module-entry" @click="go(m.path)">
-          <span class="module-dot" :style="{ background: moduleColor(m.key, themeStore.dark) }"></span>
-          <span class="me-name">{{ m.label }}</span>
-          <span class="me-code mono">{{ m.name }}</span>
-        </button>
-      </div>
-    </section>
-
-    
   </div>
 </template>
 
 <style scoped>
+/* 分区标题：数据区 / 操作区 */
+.zone-title {
+  font-size: 12px;
+  font-weight: 650;
+  letter-spacing: 0.12em;
+  color: var(--wb-text-3);
+  margin: 0 0 10px;
+  padding-left: 2px;
+}
+.zone-title:not(:first-child) {
+  border-top: 1px dashed var(--wb-border);
+  padding-top: 14px;
+}
+/* 可点击数据条目 */
+.clickable {
+  cursor: pointer;
+  transition: background-color 120ms ease-out;
+}
+.clickable:hover {
+  background: var(--wb-card-alt);
+}
+/* 截止提醒列表 */
+.deadline-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+/* 数据区三列网格 */
+.data-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 16px;
+}
+@media (max-width: 1100px) {
+  .data-grid {
+    grid-template-columns: 1fr;
+  }
+}
+.deadline-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 8px;
+  border-bottom: 1px dashed var(--wb-border);
+  border-radius: var(--wb-radius-sm);
+}
+.deadline-item:last-child {
+  border-bottom: none;
+}
+.deadline-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12.5px;
+}
 .plugin-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 16px; }
 .plugin-card pre.plugin-content { white-space: pre-wrap; font-family: var(--wb-mono, monospace); font-size: 12.5px; color: var(--wb-text-2); margin: 0; }
 .section-grid {
