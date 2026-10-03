@@ -28,3 +28,33 @@ export function avatarChar(name: string): string {
 export function avatarSeed(deviceName: string, username: string): string {
   return (username || '').trim() || (deviceName || '').trim() || 'workbench-local'
 }
+
+export const AVATAR_IMG_MAX_SIDE = 256
+
+/** 读取并压缩用户上传的头像：正方形裁切居中内容，最长边 256px，输出 JPEG dataURL（约几十 KB，适配 localStorage）。解码失败返回 null。 */
+export async function resizeAvatarImage(file: File): Promise<string | null> {
+  if (file.type && !/^image\//.test(file.type)) return null
+  const url = URL.createObjectURL(file)
+  try {
+    const img = await new Promise<HTMLImageElement>((res, rej) => {
+      const im = new Image()
+      im.onload = () => res(im)
+      im.onerror = () => rej(new Error('decode'))
+      im.src = url
+    })
+    const side = Math.min(img.naturalWidth, img.naturalHeight)
+    if (!side) return null
+    const out = AVATAR_IMG_MAX_SIDE
+    const canvas = document.createElement('canvas')
+    canvas.width = out
+    canvas.height = out
+    const ctx = canvas.getContext('2d')
+    if (!ctx) return null
+    ctx.drawImage(img, (img.naturalWidth - side) / 2, (img.naturalHeight - side) / 2, side, side, 0, 0, out, out)
+    return canvas.toDataURL('image/jpeg', 0.85)
+  } catch {
+    return null
+  } finally {
+    URL.revokeObjectURL(url)
+  }
+}

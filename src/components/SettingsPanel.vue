@@ -5,7 +5,7 @@ import {
 } from 'naive-ui'
 import { useSettings, UPDATE_SOURCE, type CustomCard } from '@/composables/useSettings'
 import { modules, tokens, COLOR_MODES, STYLE_MODES, comboKey, type ColorMode, type StyleMode } from '@/theme/tokens'
-import { AVATAR_PALETTE, avatarColor, avatarChar, avatarName, avatarSeed } from '@/composables/avatar'
+import { AVATAR_PALETTE, avatarColor, avatarChar, avatarName, avatarSeed, resizeAvatarImage } from '@/composables/avatar'
 import { useThemeStore } from '@/stores/theme'
 import { exportBackupTo, checkUpdate, downloadUpdate, installUpdate, llmStatus, openPath } from '@/composables/useTauri'
 import { APP_VERSION } from '@/composables/useSettings'
@@ -98,6 +98,22 @@ async function downloadAndInstall() {
 // ---- LLM 服务：开关 + 自定义配置（工作台升级：非仅开关） ----
 const llmMsg = ref('')
 const llmTesting = ref(false)
+
+const avatarFileInput = ref<HTMLInputElement | null>(null)
+const avatarMsg = ref('')
+async function pickAvatarImage(ev: Event) {
+  const input = ev.target as HTMLInputElement
+  const file = input.files?.[0]
+  input.value = ''
+  if (!file) return
+  const dataUrl = await resizeAvatarImage(file)
+  if (!dataUrl) {
+    avatarMsg.value = '图片读取失败，请换一张（支持 PNG/JPEG/WebP 等）'
+    return
+  }
+  s.avatarImg = dataUrl
+  avatarMsg.value = ''
+}
 async function refreshLlmStatus() {
   llmMsg.value = ''
   if (llmConfigured()) {
@@ -235,8 +251,15 @@ function commitFontScale(v: number) {
         <div class="sp-sec">
           <div class="sp-label">头像</div>
           <div class="sp-row" style="align-items: center; gap: 14px">
-            <span class="avatar-preview" :style="{ background: s.avatarColor || avatarColor(avatarSeed(s.deviceName, s.cloudUser)) }">{{ (s.avatarText.trim() || avatarChar(avatarName(s.deviceName, s.cloudUser))) }}</span>
+            <img v-if="s.avatarImg" class="avatar-preview avatar-img" :src="s.avatarImg" alt="头像" />
+            <span v-else class="avatar-preview" :style="{ background: s.avatarColor || avatarColor(avatarSeed(s.deviceName, s.cloudUser)) }">{{ (s.avatarText.trim() || avatarChar(avatarName(s.deviceName, s.cloudUser))) }}</span>
             <NInput v-model:value="s.avatarText" placeholder="头像文字（留空自动取用户名/设备名首字）" maxlength="2" style="flex: 1" />
+          </div>
+          <div class="sp-row" style="flex-wrap: wrap; gap: 8px">
+            <NButton size="tiny" @click="avatarFileInput?.click()">上传图片</NButton>
+            <NButton v-if="s.avatarImg" size="tiny" quaternary @click="s.avatarImg = ''">移除图片</NButton>
+            <input ref="avatarFileInput" type="file" accept="image/*" style="display: none" @change="pickAvatarImage($event)" />
+            <span v-if="avatarMsg" class="sp-dim">{{ avatarMsg }}</span>
           </div>
           <div class="sp-row" style="flex-wrap: wrap; gap: 8px">
             <button
@@ -250,7 +273,7 @@ function commitFontScale(v: number) {
             ></button>
             <NButton v-if="s.avatarColor" size="tiny" quaternary @click="s.avatarColor = ''">恢复自动配色</NButton>
           </div>
-          <div class="sp-dim">点选色块自定义底色，再点一次取消；未设置时按登录用户名自动配色。</div>
+          <div class="sp-dim">可上传图片作为头像（自动裁成方形并压缩）；未上传图片时，点选色块自定义底色，再点一次取消；未设置时按登录用户名自动配色。</div>
         </div>
 
         <div class="sp-sec">
@@ -471,6 +494,7 @@ function commitFontScale(v: number) {
   color: #fff; font-weight: 700; font-size: 15px;
   box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.18);
 }
+.avatar-img { object-fit: cover; }
 .avatar-dot {
   width: 22px; height: 22px; border-radius: 50%;
   border: 2px solid transparent; cursor: pointer; padding: 0;

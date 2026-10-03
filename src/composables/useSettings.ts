@@ -65,6 +65,7 @@ function defaults() {
     deviceName: '',
     avatarText: '',
     avatarColor: '',
+    avatarImg: '',
     lastSyncAt: 0 as number,
   }
 }
@@ -87,6 +88,7 @@ export interface WbSettings {
   deviceName: string
   avatarText: string
   avatarColor: string
+  avatarImg: string
   lastSyncAt: number
 }
 
@@ -114,6 +116,7 @@ function load(): WbSettings {
       deviceName: typeof p.deviceName === 'string' ? p.deviceName : '',
       avatarText: typeof p.avatarText === 'string' ? p.avatarText : '',
       avatarColor: typeof p.avatarColor === 'string' ? p.avatarColor : '',
+      avatarImg: typeof p.avatarImg === 'string' ? p.avatarImg : '',
       lastSyncAt: typeof p.lastSyncAt === 'number' ? p.lastSyncAt : 0,
     }
   } catch {

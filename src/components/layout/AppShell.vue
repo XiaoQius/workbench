@@ -144,7 +144,8 @@ onMounted(() => {
     <!-- 侧栏：7 模块导航（设置中可关闭板块；可折叠为图标栏） -->
     <aside class="sidebar" :class="{ collapsed: s.sidebarCollapsed }">
       <div class="logo" :title="avatarLabel + ' · WORKBENCH'">
-        <span class="user-avatar" :style="{ background: avatarBg }">{{ avatarCharText }}</span>
+        <img v-if="s.avatarImg" class="user-avatar" :src="s.avatarImg" :alt="avatarLabel" />
+        <span v-else class="user-avatar" :style="{ background: avatarBg }">{{ avatarCharText }}</span>
         <span v-if="!s.sidebarCollapsed" class="logo-text">{{ avatarLabel }}</span>
       </div>
       <nav class="nav">
@@ -313,6 +314,9 @@ onMounted(() => {
   font-size: 14px;
   letter-spacing: 0.5px;
   box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.18);
+}
+img.user-avatar {
+  object-fit: cover;
 }
 .logo-text {
   font-weight: 700;
