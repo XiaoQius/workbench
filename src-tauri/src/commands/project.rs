@@ -107,14 +107,20 @@ fn walk(dir: &Path, depth: usize, max_depth: usize, out: &mut Vec<ProjectInfo>) 
 
 /// 项目扫描命令：扫描 root（默认 E:\CODEX）下含 .git 的项目目录，探测技术栈。
 #[tauri::command]
-pub fn scan_projects(root: String, max_depth: Option<usize>) -> Result<Vec<ProjectInfo>, String> {
-    let depth = max_depth.unwrap_or(3);
-    let root_path = Path::new(&root);
-    if !root_path.is_dir() {
-        return Err(format!("目录不存在: {root}"));
-    }
-    let mut projects = Vec::new();
-    walk(root_path, 0, depth, &mut projects);
-    projects.sort_by(|a, b| b.last_modified.cmp(&a.last_modified));
-    Ok(projects)
+pub async fn scan_projects(root: String, max_depth: Option<usize>) -> Result<Vec<ProjectInfo>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+
+        let depth = max_depth.unwrap_or(3);
+        let root_path = Path::new(&root);
+        if !root_path.is_dir() {
+            return Err(format!("目录不存在: {root}"));
+        }
+        let mut projects = Vec::new();
+        walk(root_path, 0, depth, &mut projects);
+        projects.sort_by(|a, b| b.last_modified.cmp(&a.last_modified));
+        Ok(projects)
+
+    })
+    .await
+    .map_err(|e| format!("{e}"))?
 }

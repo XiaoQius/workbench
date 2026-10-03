@@ -273,15 +273,29 @@ async function removeSkill(s: SkillNode) {
 }
 const skillStatusColor = (s: SkillNode) => (s.status === 'mastered' ? 'success' : s.status === 'learning' ? 'info' : 'default') as 'success' | 'info' | 'default'
 const skillTreeComputed = computed(() => {
-  const roots = skillNodes.value.filter((s) => !s.parentId || !skillNodes.value.some((x) => x.id === s.parentId))
-  const childrenOf = (id: number) => skillNodes.value.filter((s) => s.parentId === id)
+  // 原先 childrenOf 对每个节点全表扫描 skillNodes，递归后是 O(n²)；
+  // 这里先建一次 parentId -> children 索引，整体降为 O(n)。
+  const ids = new Set(skillNodes.value.map((s) => s.id))
+  const byParent = new Map<number, SkillNode[]>()
+  for (const s of skillNodes.value) {
+    const pid = s.parentId ?? 0
+    const arr = byParent.get(pid)
+    if (arr) arr.push(s)
+    else byParent.set(pid, [s])
+  }
+  const roots = skillNodes.value.filter((s) => !s.parentId || !ids.has(s.parentId))
   const render = (n: SkillNode, depth: number): string => {
-    const kids = childrenOf(n.id)
+    const kids = byParent.get(n.id) ?? []
     const childHtml = kids.length ? `<div class="st-children">${kids.map((k) => render(k, depth + 1)).join('')}</div>` : ''
-    return `<div class="st-node" style="margin-left:${depth * 22}px"><span class="st-dot" data-st="${n.status}"></span>${n.name}<span class="st-meta">L${n.level} · ${n.status}</span>${childHtml}</div>`
+    return `<div class="st-node" style="margin-left:${depth * 22}px"><span class="st-dot" data-st="${escHtml(n.status)}"></span>${escHtml(n.name)}<span class="st-meta">L${n.level} · ${escHtml(n.status)}</span>${childHtml}</div>`
   }
   return roots.map((r) => render(r, 0)).join('')
 })
+
+/** 转义 HTML，避免节点名称里的特殊字符破坏结构或被注入 */
+function escHtml(s: string): string {
+  return String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
+}
 const skillTreeHtml = computed(() => `<div class="st-tree">${skillTreeComputed.value || '<p class="dim">暂无技能节点</p>'}</div>`)
 
 // ---- F-KNW-06 学习路径 ----
@@ -397,9 +411,15 @@ const graphNodes = computed<GraphNode[]>(() => {
   ]
   return ns.slice(0, 60)
 })
-const graphEdges = computed<GraphEdge[]>(() =>
-  allLinks.value.map((l) => ({ from: `${l.fromType}:${l.fromId}`, to: `${l.toType}:${l.toId}`, label: l.label || '' })),
-)
+// 节点已截断到 60，边也须同步过滤：否则上千条边会生成上千个 <line>
+// 塞进 v-html，而这些边的端点根本不在渲染出的节点里。
+const graphEdges = computed<GraphEdge[]>(() => {
+  const visible = new Set(graphNodes.value.map((n) => n.id))
+  return allLinks.value
+    .map((l) => ({ from: `${l.fromType}:${l.fromId}`, to: `${l.toType}:${l.toId}`, label: l.label || '' }))
+    .filter((e) => visible.has(e.from) && visible.has(e.to))
+    .slice(0, 200)
+})
 const graphHtml = computed(() => {
   const nodes = graphNodes.value
   const edges = graphEdges.value

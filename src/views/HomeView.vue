@@ -482,8 +482,16 @@ const visibleStats = computed(() => stats.value.filter((s) => !hiddenStats.value
 
 // ---- F-SYS-05 全局搜索（语法过滤）：支持 type:/tag:/date: 前缀 ----
 const searchQuery = ref('')
+// 防抖副本：输入框绑 searchQuery 保持输入流畅，实际检索用 debouncedQuery，
+// 避免每次按键都对任务/笔记/踩坑/片段/截止五个全表数组做 filter。
+const debouncedQuery = ref('')
+let searchTimer: number | undefined
+watch(searchQuery, (v) => {
+  if (searchTimer !== undefined) clearTimeout(searchTimer)
+  searchTimer = setTimeout(() => { debouncedQuery.value = v }, 250) as unknown as number
+})
 const searchResults = computed(() => {
-  const q = searchQuery.value.trim()
+  const q = debouncedQuery.value.trim()
   if (!q) return []
   let typeFilter = ''
   let tagFilter = ''
