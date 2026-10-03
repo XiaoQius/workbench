@@ -461,20 +461,41 @@ const INDEXES_V1: string[] = [
 ]
 
 /**
+ * 单条 SQL 的失败信息。
+ */
+export interface BatchFailure {
+  /** 失败语句在批次中的下标 */
+  index: number
+  /** 语句前 200 字符，便于定位 */
+  sql: string
+  error: string
+}
+
+/**
  * 批量执行 SQL 脚本：优先整批提交以减少 IPC 往返；
  * 若驱动不接受多语句，自动降级为逐条执行（保证迁移不会因优化而失败）。
+ *
+ * 返回失败清单（原先直接吞掉）。这一点对同步至关重要：
+ * 同步引擎用它判断「本页是否完整落库」，只有全部成功才允许推进游标。
+ * 否则一条约束冲突就会让那一行永远不再被拉取，两端静默分叉。
+ * 迁移链本身不关心返回值，行为与之前一致。
  */
-export async function runBatch(sqls: string[]): Promise<void> {
+export async function runBatch(sqls: string[]): Promise<BatchFailure[]> {
+  const failures: BatchFailure[] = []
   try {
     await exec(sqls.join(';\n'))
+    return failures
   } catch {
-    for (const sql of sqls) {
+    // 整批失败：退化为逐条执行，把真正出错的那几条挑出来
+    for (let i = 0; i < sqls.length; i++) {
+      const sql = sqls[i]
       try {
         await exec(sql)
-      } catch {
-        /* 单条失败不阻断整体迁移 */
+      } catch (e) {
+        failures.push({ index: i, sql: sql.slice(0, 200), error: e instanceof Error ? e.message : String(e) })
       }
     }
+    return failures
   }
 }
 

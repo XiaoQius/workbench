@@ -48,6 +48,8 @@ let reconnectAttempt = 0
 let pollTimer: number | null = null
 const BASE_RETRY_MS = 5_000
 const MAX_RETRY_MS = 5 * 60 * 1000
+/** 最近一次落库失败明细，供 pullTable 抛错时带给用户看 */
+let lastError = ''
 
 export function onSyncStatus(fn: StatusListener): () => void {
   listeners.add(fn)
@@ -92,6 +94,12 @@ export async function initSyncSchema(): Promise<void> {
   await exec(`CREATE TABLE IF NOT EXISTS _sync_cursor (tableName TEXT PRIMARY KEY, cursor INTEGER NOT NULL DEFAULT 0)`)
   await exec(`CREATE TABLE IF NOT EXISTS _sync_flag (key TEXT PRIMARY KEY, v INTEGER NOT NULL DEFAULT 0)`)
   await exec(`INSERT OR IGNORE INTO _sync_flag (key, v) VALUES ('busy', 0)`)
+  // 关键：busy 必须无条件复位。
+  // 拉取时靠它给触发器打护栏（busy=1 期间不捕获本地变更），若进程在
+  // 「置 1」与「置回 0」之间被杀，这个标志会永久停在 1 —— 此后所有本地
+  // 改动都不再进 _sync_state，永远不会上云，而界面照样显示「同步完成」。
+  // INSERT OR IGNORE 不会纠正已存在的行，所以这里必须显式 UPDATE。
+  await exec(`UPDATE _sync_flag SET v = 0 WHERE key = 'busy'`)
 
   // 触发器按表拼接后批量执行：120 条逐条 await 会拖慢启动
   const batches: string[] = []
@@ -227,13 +235,20 @@ async function pullTable(t: string): Promise<void> {
     const r = await api<{ rows: PullRow[]; cursor: number; hasMore: boolean }>(
       `/sync/${t}?since=${since}&limit=500`,
     )
+    let failed = 0
     if (r.rows.length > 0) {
       await exec(`UPDATE _sync_flag SET v = 1 WHERE key = 'busy'`)
       try {
-        await applyRemoteBatch(t, r.rows)
+        failed = await applyRemoteBatch(t, r.rows)
       } finally {
         await exec(`UPDATE _sync_flag SET v = 0 WHERE key = 'busy'`)
       }
+    }
+    // 只有整页完整落库才推进游标。
+    // 原先无条件推进：某一行因约束/类型写失败后被静默跳过，游标一过，
+    // 这一行永远不会再被拉回来 —— 两端从此分叉，且界面上看不出任何异常。
+    if (failed > 0) {
+      throw new Error(`${t} 本页有 ${failed} 行未能落库，游标未推进（下次同步会重试）：${lastError}`)
     }
     await exec(`INSERT INTO _sync_cursor (tableName, cursor) VALUES (?, ?)
       ON CONFLICT(tableName) DO UPDATE SET cursor = excluded.cursor`, [t, r.cursor])
@@ -241,16 +256,50 @@ async function pullTable(t: string): Promise<void> {
   }
 }
 
+/** 本地表的列名缓存：既是白名单，也免去每页 PRAGMA table_info */
+const localColsCache = new Map<string, Set<string>>()
+async function localColumns(t: string): Promise<Set<string>> {
+  let hit = localColsCache.get(t)
+  if (!hit) {
+    const rows = await query<{ name: string }>(`PRAGMA table_info(${t})`)
+    hit = new Set(rows.map((r) => r.name))
+    localColsCache.set(t, hit)
+  }
+  return hit
+}
+
+/** 本表当前 id 占用情况，按「一次拉取会话」缓存，避免每页全表 SELECT id */
+interface IdSpace { ids: Set<number>; max: number }
+const idSpaceCache = new Map<string, IdSpace>()
+async function loadIdSpace(t: string): Promise<IdSpace> {
+  let hit = idSpaceCache.get(t)
+  if (!hit) {
+    const rows = await query<{ id: number }>(`SELECT id FROM ${t}`)
+    const ids = new Set<number>()
+    let max = 0
+    for (const r of rows) {
+      ids.add(r.id)
+      if (r.id > max) max = r.id
+    }
+    hit = { ids, max }
+    idSpaceCache.set(t, hit)
+  }
+  return hit
+}
+
 /**
- * 批量应用一页远端行。
+ * 批量应用一页远端行。返回「未能落库的行数」，>0 表示本页不完整。
  * 原实现逐行 await，每行 3~6 次独立 SQL，40 表 × 500 行可达数万次 IPC 往返，
  * 全部落在渲染主线程造成界面冻结。这里改为：
  *   1) 一次查询解析整页的 serverId → 本地行映射
- *   2) 一次查询取本表现有 id 集合与最大 id（避免逐行查占用）
+ *   2) 一次查询取本表现有 id 集合与最大 id（整次拉取复用，不再每页重扫）
  *   3) 按「删除 / 更新 / 插入」三类分别拼批，各用少量语句完成
+ *
+ * 列名一律走本地表列白名单：远端返回的 key 直接拼进 SET 子句，
+ * 一旦服务端被攻破（或版本错配多出字段），就是本地 SQL 注入。
  */
-async function applyRemoteBatch(t: string, rows: PullRow[]): Promise<void> {
-  if (rows.length === 0) return
+async function applyRemoteBatch(t: string, rows: PullRow[]): Promise<number> {
+  if (rows.length === 0) return 0
 
   const ids = rows.map((r) => r.id)
   const ph = ids.map(() => '?').join(', ')
@@ -263,11 +312,10 @@ async function applyRemoteBatch(t: string, rows: PullRow[]): Promise<void> {
   const known = new Map<number, { rowId: number; ut: number }>()
   for (const k of knownRows) known.set(k.serverId, { rowId: k.rowId, ut: k.ut })
 
-  // 本表现有 id 与最大 id，供插入时判占用
-  const existing = await query<{ id: number }>(`SELECT id FROM ${t}`)
-  const existingIds = new Set(existing.map((e) => e.id))
-  let maxId = 0
-  for (const e of existing) if (e.id > maxId) maxId = e.id
+  const localCols = await localColumns(t)
+  const space = await loadIdSpace(t)
+  const existingIds = space.ids
+  let maxId = space.max
 
   const deletes: number[] = [] // 本地 rowId
   const updates: { rowId: number; ut: number; row: PullRow }[] = []
@@ -292,37 +340,57 @@ async function applyRemoteBatch(t: string, rows: PullRow[]): Promise<void> {
     inserts.push({ localId, row })
   }
 
+  // 记一条语句 ↔ 行 的对应关系，失败时才能报出「哪一行没落库」
+  const owner: string[] = []
   const stmts: string[] = []
+  const push = (sql: string, tag: string) => { stmts.push(sql); owner.push(tag) }
 
   // 删除：业务行 + 同步状态
   for (const rowId of deletes) {
-    stmts.push(`DELETE FROM ${t} WHERE id = ${rowId}`)
+    push(`DELETE FROM ${t} WHERE id = ${rowId}`, `del#${rowId}`)
+    existingIds.delete(rowId)
   }
   if (deletes.length > 0) {
     stmts.push(`DELETE FROM _sync_state WHERE tableName = '${t}' AND rowId IN (${deletes.join(', ')})`)
+    owner.push('del-state')
   }
 
   // 更新：业务行（每行列可能不同，逐条但同一批提交）
   for (const u of updates) {
-    const cols = Object.keys(u.row).filter((k) => !['id', ...REMOTE_ONLY_COLS].includes(k))
+    const cols = Object.keys(u.row).filter((k) => k !== 'id' && !REMOTE_ONLY_COLS.includes(k) && localCols.has(k))
     if (cols.length === 0) continue
     const sets = cols.map((c) => `${c} = ${sqlLit((u.row as Record<string, unknown>)[c])}`).join(', ')
-    stmts.push(`UPDATE ${t} SET ${sets} WHERE id = ${u.rowId}`)
+    push(`UPDATE ${t} SET ${sets} WHERE id = ${u.rowId}`, `upd#${u.rowId}`)
     stmts.push(`UPDATE _sync_state SET ut = ${u.ut}, pending = 0 WHERE tableName = '${t}' AND rowId = ${u.rowId}`)
+    owner.push('upd-state')
   }
 
   // 插入：业务行 + 同步状态
   for (const ins of inserts) {
-    const cols = ['id', ...Object.keys(ins.row).filter((k) => !REMOTE_ONLY_COLS.includes(k))]
+    const cols = ['id', ...Object.keys(ins.row).filter((k) => !REMOTE_ONLY_COLS.includes(k) && localCols.has(k))]
+    if (cols.length === 1) continue // 远端除 id 外没有可落库的列，跳过
     const vals = [ins.localId, ...cols.slice(1).map((c) => sqlLit((ins.row as Record<string, unknown>)[c]))]
-    stmts.push(`INSERT OR REPLACE INTO ${t} (${cols.join(', ')}) VALUES (${vals.join(', ')})`)
+    push(`INSERT OR REPLACE INTO ${t} (${cols.join(', ')}) VALUES (${vals.join(', ')})`, `ins#${ins.localId}`)
     stmts.push(
       `INSERT OR REPLACE INTO _sync_state (tableName, rowId, serverId, ut, del, pending) VALUES ('${t}', ${ins.localId}, ${ins.row.id}, ${ins.row._ut}, 0, 0)`,
     )
+    owner.push('ins-state')
   }
 
-  if (stmts.length === 0) return
-  await runBatch(stmts)
+  if (stmts.length === 0) return 0
+  const failures = await runBatch(stmts)
+  if (failures.length === 0) return 0
+
+  lastError = failures.map((f) => `${owner[f.index] ?? f.index}: ${f.error}`).slice(0, 3).join(' | ')
+  // 只统计业务行（upd/ins/del），_sync_state 那条失败由业务行的失败连带体现
+  const badRows = new Set<string>()
+  for (const f of failures) {
+    const tag = owner[f.index] ?? ''
+    if (tag.startsWith('upd#') || tag.startsWith('ins#') || tag.startsWith('del#')) badRows.add(tag)
+  }
+  // 状态表写入失败但业务行成功：行已经在库里，只是账本没跟上，
+  // 属于可自愈（下次拉取会重新处理），因此不计入「本页不完整」。
+  return badRows.size
 }
 
 /** 把 JS 值转成 SQL 字面量（远端行来自自家服务端，仍做转义以防注入/语法错误） */
@@ -351,7 +419,6 @@ async function cloudAuth(serverUrl: string, path: string, username: string, pass
   if (!res.ok) throw new Error(data.error || String(res.status))
   s.cloudUrl = base
   s.cloudToken = data.token
-  s.cloudUser = username
   s.cloudEnabled = true
   s.deviceName = deviceName
 }
@@ -366,7 +433,6 @@ export function cloudLogout(): void {
   const s = useSettings()
   s.cloudEnabled = false
   s.cloudToken = ''
-  s.cloudUser = ''
   disconnectLive()
 }
 
@@ -377,8 +443,11 @@ export async function syncNow(): Promise<void> {
   const s = useSettings()
   if (!s.cloudEnabled || !s.cloudUrl || !s.cloudToken) return
   syncing = true
+  lastError = ''
   setStatus({ state: 'syncing', message: '同步中…' })
   try {
+    // 本轮拉取开始：重建 id 占用快照（上一轮的快照可能已被本地写入改动）
+    idSpaceCache.clear()
     await bootstrapPending()
     await pushPending()
     for (const t of SYNC_TABLES) await pullTable(t)
@@ -389,6 +458,7 @@ export async function syncNow(): Promise<void> {
     setStatus({ state: 'error', message: msg })
   } finally {
     syncing = false
+    idSpaceCache.clear()
   }
 }
 

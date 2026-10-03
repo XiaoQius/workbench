@@ -38,13 +38,17 @@ pub async fn health_check(target: String) -> Result<HealthResult, String> {
 
         if target.starts_with("http://") || target.starts_with("https://") {
             // HTTP(S) 探活：TCP 连接 + PowerShell 取状态码
+            //
+            // 安全：URL 通过环境变量传给 PowerShell（脚本里读 $env:WB_HEALTH_URL），
+            // 绝不拼进 -Command 字符串。原写法把 target 直接 format 进脚本，
+            // 一个单引号就能闭合字符串并执行任意命令（PowerShell 命令注入）。
+            // 这不只是「用户自己输错」——被同步过来的 servers/domains 等表里
+            // 的 URL 同样会流到这里，属于跨设备可触发的路径。
             let start = Instant::now();
-            let script = format!(
-                "try {{ $r = Invoke-WebRequest -Uri '{t}' -Method Head -TimeoutSec 5 -UseBasicParsing; Write-Output $r.StatusCode }} catch {{ Write-Output ('ERR:' + $_.Exception.Message) }}",
-                t = target
-            );
+            const SCRIPT: &str = "try { $r = Invoke-WebRequest -Uri $env:WB_HEALTH_URL -Method Head -TimeoutSec 5 -UseBasicParsing; Write-Output $r.StatusCode } catch { Write-Output ('ERR:' + $_.Exception.Message) }";
             let out = std::process::Command::new("powershell")
-                .args(["-NoProfile", "-NonInteractive", "-Command", &script])
+                .args(["-NoProfile", "-NonInteractive", "-Command", SCRIPT])
+                .env("WB_HEALTH_URL", &target)
                 .creation_flags(NO_WINDOW)
                 .output()
                 .map_err(|e| format!("powershell 调用失败: {e}"))?;
