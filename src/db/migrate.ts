@@ -424,6 +424,16 @@ const MIGRATIONS_V1: string[] = [
     status TEXT NOT NULL DEFAULT 'draft',
     createdAt TEXT
   )`,
+  // ---- 灵感 INSPIRATION ----
+  `CREATE TABLE IF NOT EXISTS inspirations (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    content TEXT NOT NULL,
+    tags TEXT,
+    mood TEXT,
+    starred INTEGER NOT NULL DEFAULT 0,
+    createdAt TEXT,
+    updatedAt TEXT
+  )`,
 ]
 
 // 索引：此前全库无索引，所有过滤/排序都是全表扫描，数据增长后查询与同步线性变慢。
@@ -447,6 +457,7 @@ const INDEXES_V1: string[] = [
   `CREATE INDEX IF NOT EXISTS idx_readqueue_status ON readQueue(status)`,
   `CREATE INDEX IF NOT EXISTS idx_cmd_snippets_hit ON cmdSnippets(hitCount)`,
   `CREATE INDEX IF NOT EXISTS idx_tools_hit ON tools(hitCount)`,
+  `CREATE INDEX IF NOT EXISTS idx_inspirations_created ON inspirations(createdAt)`,
 ]
 
 /**

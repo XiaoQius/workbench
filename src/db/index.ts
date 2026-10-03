@@ -1,5 +1,5 @@
 import { createRepo } from './repo'
-import type { Task, Deadline, Link, Project, Snippet, Tool, Agent, Server, Domain, Backup, Habit, HabitLog, LedgerEntry, Pomodoro, HealthLog, Course, Assignment, Note, Pitfall, Resource, OpsFlow, OpsChange, OpsSecCheck, OpsSecret, OpsDnsRecord, Deployment, EnvVar, TechDebt, CmdSnippet, Decision, SkillNode, LearningPath, ThreeDProject, Portfolio, ContentCalendar, FixedBill, Grade, Flashcard, ReadQueueItem, FeynmanLog } from '../../drizzle/schema'
+import type { Task, Deadline, Link, Project, Snippet, Tool, Agent, Server, Domain, Backup, Habit, HabitLog, LedgerEntry, Pomodoro, HealthLog, Course, Assignment, Note, Pitfall, Resource, OpsFlow, OpsChange, OpsSecCheck, OpsSecret, OpsDnsRecord, Deployment, EnvVar, TechDebt, CmdSnippet, Decision, SkillNode, LearningPath, ThreeDProject, Portfolio, ContentCalendar, FixedBill, Grade, Flashcard, ReadQueueItem, FeynmanLog, Inspiration } from '../../drizzle/schema'
 
 // 各模块 Repository 实例（跨模块表 + 核心表全覆盖）
 export const tasksRepo = createRepo<Task>('tasks', ['title', 'scope', 'type', 'priority', 'projectId', 'status', 'dueDate', 'focusDate', 'note'], { timestamps: true })
@@ -42,3 +42,4 @@ export const gradesRepo = createRepo<Grade>('grades', ['courseId', 'courseName',
 export const flashcardsRepo = createRepo<Flashcard>('flashcards', ['front', 'back', 'deck', 'level', 'dueDate', 'lastReview', 'reviewCount'])
 export const readQueueRepo = createRepo<ReadQueueItem>('readQueue', ['title', 'author', 'category', 'url', 'status', 'priority', 'totalPages', 'currentPage', 'rating', 'note', 'addedAt', 'finishedAt'])
 export const feynmanLogsRepo = createRepo<FeynmanLog>('feynmanLogs', ['topic', 'explanation', 'gap', 'source', 'status'])
+export const inspirationsRepo = createRepo<Inspiration>('inspirations', ['content', 'tags', 'mood', 'starred'], { timestamps: true })

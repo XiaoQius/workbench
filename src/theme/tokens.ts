@@ -12,6 +12,7 @@ export interface ModuleColors {
   life: string
   study: string
   knowledge: string
+  inspiration: string
 }
 
 export interface ThemeTokens {
@@ -105,6 +106,7 @@ export const tokens: Record<ThemeKey, ThemeTokens> = {
       life: '#DB2777',
       study: '#7C3AED',
       knowledge: '#2563EB',
+      inspiration: '#CA8A04',
     },
     radiusSm: 6,
     radiusMd: 8,
@@ -134,6 +136,7 @@ export const tokens: Record<ThemeKey, ThemeTokens> = {
       life: '#F472B6',
       study: '#A78BFA',
       knowledge: '#60A5FA',
+      inspiration: '#FACC15',
     },
     radiusSm: 6,
     radiusMd: 8,
@@ -165,6 +168,7 @@ export const tokens: Record<ThemeKey, ThemeTokens> = {
       life: '#B3005C',
       study: '#5B2D8E',
       knowledge: '#14509E',
+      inspiration: '#FF8A00',
     },
     radiusSm: 8,
     radiusMd: 14,
@@ -196,6 +200,7 @@ export const tokens: Record<ThemeKey, ThemeTokens> = {
       life: '#FF6FB5',
       study: '#A78BFA',
       knowledge: '#4DA3FF',
+      inspiration: '#FFE45C',
     },
     radiusSm: 6,
     radiusMd: 8,
@@ -215,6 +220,7 @@ export const modules = [
   { key: 'life', path: '/life', label: '生活', name: 'LIFE', colorKey: 'life' },
   { key: 'study', path: '/study', label: '学习', name: 'STUDY', colorKey: 'study' },
   { key: 'knowledge', path: '/knowledge', label: '知识库', name: 'KNOWLEDGE', colorKey: 'knowledge' },
+  { key: 'inspiration', path: '/inspiration', label: '灵感', name: 'INSPIRATION', colorKey: 'inspiration' },
 ] as const
 
 export type ModuleKey = (typeof modules)[number]['key']

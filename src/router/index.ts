@@ -11,6 +11,7 @@ const router = createRouter({
     { path: '/life', name: 'life', component: () => import('@/views/LifeView.vue'), meta: { module: 'life', title: '生活' } },
     { path: '/study', name: 'study', component: () => import('@/views/StudyView.vue'), meta: { module: 'study', title: '学习' } },
     { path: '/knowledge', name: 'knowledge', component: () => import('@/views/KnowledgeView.vue'), meta: { module: 'knowledge', title: '知识库' } },
+    { path: '/inspiration', name: 'inspiration', component: () => import('@/views/InspirationView.vue'), meta: { module: 'inspiration', title: '灵感' } },
     { path: '/:pathMatch(.*)*', redirect: '/' },
   ],
 })
