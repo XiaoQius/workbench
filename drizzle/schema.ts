@@ -582,3 +582,16 @@ export const feynmanLogs = sqliteTable('feynmanLogs', {
 })
 export type FeynmanLog = typeof feynmanLogs.$inferSelect
 export type NewFeynmanLog = typeof feynmanLogs.$inferInsert
+
+/** 灵感：快速捕捉的碎片想法（#标签 由前端解析后存入 tags） */
+export const inspirations = sqliteTable('inspirations', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  content: text('content').notNull(),
+  tags: text('tags'), // 逗号分隔
+  mood: text('mood'), // good | neutral | bad（可空）
+  starred: integer('starred').notNull().default(0),
+  createdAt: text('createdAt'),
+  updatedAt: text('updatedAt'),
+})
+export type Inspiration = typeof inspirations.$inferSelect
+export type NewInspiration = typeof inspirations.$inferInsert

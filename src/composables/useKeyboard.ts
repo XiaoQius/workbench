@@ -8,9 +8,9 @@ import { useSettings } from '@/composables/useSettings'
  * 全局键盘驱动（F-SYS-02）：
  *  - Ctrl/Cmd+K  打开命令面板（固定保留，不可关闭）
  *  - Ctrl/Cmd+/  打开命令面板（等价）
- *  - Ctrl/Cmd+1..7 切换 7 个页面模块（可在设置面板关闭，F-SYS-02 快捷键自定义）
+ *  - Ctrl/Cmd+1..8 切换 8 个页面模块（可在设置面板关闭，F-SYS-02 快捷键自定义）
  *  - Ctrl/Cmd+Shift+D 切换浅/深主题（可关闭）
- *  - g 后按 d/l/s/o/k/w/h 跳转模块（可关闭）
+ *  - g 后按 d/l/s/o/k/w/h/i 跳转模块（可关闭）
  *  - n 触发 wb:quick-new 事件（可关闭）
  *  - Esc 关闭命令面板
  */
@@ -20,9 +20,9 @@ export function useKeyboard() {
   const paletteStore = usePaletteStore()
   const settings = useSettings()
 
-  const MODULE_PATHS = ['/', '/workspace', '/dev', '/ops', '/life', '/study', '/knowledge']
+  const MODULE_PATHS = ['/', '/workspace', '/dev', '/ops', '/life', '/study', '/knowledge', '/inspiration']
   const G_PATHS: Record<string, string> = {
-    h: '/', w: '/workspace', d: '/dev', o: '/ops', l: '/life', s: '/study', k: '/knowledge',
+    h: '/', w: '/workspace', d: '/dev', o: '/ops', l: '/life', s: '/study', k: '/knowledge', i: '/inspiration',
   }
 
   function isEditableTarget(e: KeyboardEvent): boolean {
@@ -47,8 +47,8 @@ export function useKeyboard() {
       themeStore.toggle()
       return
     }
-    // Ctrl+1..7 模块切换
-    if (settings.keymap.ctrlNum && mod && !e.shiftKey && /^[1-7]$/.test(e.key)) {
+    // Ctrl+1..8 模块切换
+    if (settings.keymap.ctrlNum && mod && !e.shiftKey && /^[1-8]$/.test(e.key)) {
       e.preventDefault()
       const idx = Number(e.key) - 1
       router.push(MODULE_PATHS[idx])
@@ -56,7 +56,7 @@ export function useKeyboard() {
     }
     if (isEditableTarget(e) || mod || e.altKey) return
 
-    // g 序列：g 后按 d/l/s/o/k/w/h 跳转模块
+    // g 序列：g 后按 d/l/s/o/k/w/h/i 跳转模块
     if (settings.keymap.gSeq && e.key.toLowerCase() === 'g') {
       e.preventDefault()
       const handler = (ev: KeyboardEvent) => {

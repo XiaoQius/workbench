@@ -23,6 +23,7 @@
   --wb-module-life: #db2777;
   --wb-module-study: #7c3aed;
   --wb-module-knowledge: #2563eb;
+  --wb-module-inspiration: #ca8a04;
   --wb-shadow-hover: 0 4px 16px rgba(0, 0, 0, 0.06);
   --wb-radius-sm: 6px;
   --wb-radius-md: 8px;
@@ -64,6 +65,7 @@ html.dark {
   --wb-module-life: #f472b6;
   --wb-module-study: #a78bfa;
   --wb-module-knowledge: #60a5fa;
+  --wb-module-inspiration: #facc15;
   --wb-shadow-hover: 0 4px 16px rgba(0, 0, 0, 0.35);
 }
 
@@ -88,6 +90,7 @@ html.theme-brutal {
   --wb-module-life: #b3005c;
   --wb-module-study: #5b2d8e;
   --wb-module-knowledge: #14509e;
+  --wb-module-inspiration: #ff8a00;
   --wb-shadow-hover: 4px 4px 0 #141414;
   --wb-radius-sm: 8px;
   --wb-radius-md: 14px;
@@ -117,6 +120,7 @@ html.theme-tech {
   --wb-module-life: #ff6fb5;
   --wb-module-study: #a78bfa;
   --wb-module-knowledge: #4da3ff;
+  --wb-module-inspiration: #ffe45c;
   --wb-shadow-hover: 0 0 20px rgba(0, 229, 255, 0.22);
   --wb-radius-sm: 6px;
   --wb-radius-md: 8px;

@@ -1,12 +1,14 @@
 <script setup lang="ts">
 import { ref, computed, watch, nextTick } from 'vue'
 import { useRouter } from 'vue-router'
+import { useMessage } from 'naive-ui'
 import { usePaletteStore } from '@/stores/palette'
 import { useThemeStore } from '@/stores/theme'
 import { modules, moduleColor } from '@/theme/tokens'
 import type { ModuleKey } from '@/theme/tokens'
-import { projectsRepo, tasksRepo, snippetsRepo, serversRepo, domainsRepo, notesRepo, toolsRepo, ledgerRepo } from '@/db'
+import { projectsRepo, tasksRepo, snippetsRepo, serversRepo, domainsRepo, notesRepo, toolsRepo, ledgerRepo, inspirationsRepo } from '@/db'
 import { refreshTick } from '@/stores/ui'
+import { parseInspiration } from '@/composables/inspiration'
 
 interface Command {
   id: string
@@ -65,37 +67,57 @@ const searchSyntaxHint = '支持语法：type:项目 status:todo tag:重点 due:
 const router = useRouter()
 const paletteStore = usePaletteStore()
 const themeStore = useThemeStore()
+const message = useMessage()
 
 const query = ref('')
 const activeIdx = ref(0)
 const listEl = ref<HTMLElement | null>(null)
 
-const baseCommands = computed<Command[]>(() => [
-  ...modules.map((m) => ({
-    id: `go:${m.key}`,
-    label: `前往 ${m.label}`,
-    hint: m.path,
-    group: '页面模块',
-    color: moduleColor(m.key, themeStore.dark),
-    run: () => router.push(m.path),
-  })),
-  {
-    id: 'theme:toggle',
-    label: themeStore.dark ? '切换为浅色主题' : '切换为深色主题',
-    hint: 'Ctrl+Shift+D',
-    group: '全局',
-    color: moduleColor('home', themeStore.dark),
-    run: () => themeStore.toggle(),
-  },
-  {
-    id: 'shortcuts',
-    label: '查看快捷键',
-    hint: 'Ctrl+K / Ctrl+1..7',
-    group: '全局',
-    color: moduleColor('knowledge', themeStore.dark),
-    run: () => router.push('/'),
-  },
-])
+const baseCommands = computed<Command[]>(() => {
+  const cmds: Command[] = [
+    ...modules.map((m) => ({
+      id: `go:${m.key}`,
+      label: `前往 ${m.label}`,
+      hint: m.path,
+      group: '页面模块',
+      color: moduleColor(m.key, themeStore.dark),
+      run: () => router.push(m.path),
+    })),
+    {
+      id: 'theme:toggle',
+      label: themeStore.dark ? '切换为浅色主题' : '切换为深色主题',
+      hint: 'Ctrl+Shift+D',
+      group: '全局',
+      color: moduleColor('home', themeStore.dark),
+      run: () => themeStore.toggle(),
+    },
+    {
+      id: 'shortcuts',
+      label: '查看快捷键',
+      hint: 'Ctrl+K / Ctrl+1..8',
+      group: '全局',
+      color: moduleColor('knowledge', themeStore.dark),
+      run: () => router.push('/'),
+    },
+  ]
+  // 「灵感: xxx」即时动作：输入前缀即可直接捕获，不用进灵感页
+  const mInsp = /灵感[:：]\s*(.+)$/.exec(query.value.trim())
+  if (mInsp) {
+    cmds.unshift({
+      id: 'insp:capture',
+      label: `记灵感：${mInsp[1].trim()}`,
+      hint: '回车即存，支持 #标签',
+      group: '新建',
+      color: moduleColor('inspiration', themeStore.dark),
+      run: async () => {
+        await quickCaptureInspiration(mInsp[1].trim())
+        message.success('灵感已记录')
+        router.push('/inspiration')
+      },
+    })
+  }
+  return cmds
+})
 
 // 各模块的“新建”动作：跳转到对应模块
 const createActions: Array<{ key: ModuleKey; label: string }> = [
@@ -112,7 +134,18 @@ const createActions: Array<{ key: ModuleKey; label: string }> = [
   { key: 'study', label: '新建笔记' },
   { key: 'knowledge', label: '记录踩坑' },
   { key: 'knowledge', label: '收藏链接' },
+  { key: 'inspiration', label: '记灵感' },
 ]
+
+async function quickCaptureInspiration(text: string) {
+  const { content, tags } = parseInspiration(text)
+  if (!content && !tags) return
+  try {
+    await inspirationsRepo.insert({ content: content || text, tags: tags || null })
+  } catch {
+    /* 浏览器降级：数据层不可用时静默失败，由列表页提示 */
+  }
+}
 
 const createCommands = computed<Command[]>(() =>
   createActions.map((a, i) => {
@@ -161,6 +194,7 @@ const DATA_SOURCES: Array<{ key: ModuleKey; label: string; load: () => Promise<{
   { key: 'study', label: '笔记', load: () => notesRepo.listAll().then((rs) => rs.map((r: any) => ({ id: r.id, name: r.title, sub: (r.tags || '').slice(0, 40), meta: { type: '笔记', tags: (r.tags || '').toLowerCase(), scope: 'study' } }))) },
   { key: 'workspace', label: '工具', load: () => toolsRepo.listAll().then((rs) => rs.map((r: any) => ({ id: r.id, name: r.name, sub: r.target || '', meta: { type: '工具', scope: 'workspace' } }))) },
   { key: 'life', label: '账目', load: () => ledgerRepo.listAll().then((rs) => rs.map((r: any) => ({ id: r.id, name: `${r.type === 'income' ? '收' : '支'} ¥${r.amount}`, sub: (r.category || '') + (r.note ? ' · ' + r.note : ''), meta: { type: '账目', tags: (r.category || '').toLowerCase(), scope: 'life' } }))) },
+  { key: 'inspiration', label: '灵感', load: () => inspirationsRepo.listAll().then((rs) => rs.map((r: any) => ({ id: r.id, name: (r.content || '').slice(0, 30), sub: (r.tags || '').toLowerCase(), meta: { type: '灵感', tags: (r.tags || '').toLowerCase(), scope: 'inspiration' } }))) },
 ]
 
 // 每个数据源最多纳入的条数：原先无上限，表一大时每次 Ctrl+K 都全表拉取并
