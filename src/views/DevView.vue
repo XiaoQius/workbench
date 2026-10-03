@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { watch, ref, onMounted, computed } from 'vue'
 import { refreshTick } from '@/stores/ui'
-import { NButton, NTag, NInput, NTabs, NTabPane, NIcon, useMessage, NEmpty, NDropdown } from 'naive-ui'
+import { NButton, NTag, NInput, NTabs, NTabPane, NIcon, useMessage, NEmpty, NDropdown, NModal } from 'naive-ui'
 import { Plus, Trash, Edit, Check, Book2, Code, Refresh } from '@vicons/tabler'
 import EmptyState from '@/components/EmptyState.vue'
 import ModalForm, { type FieldDef } from '@/components/ModalForm.vue'
