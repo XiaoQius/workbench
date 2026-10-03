@@ -12,7 +12,7 @@ import { exec, query } from './client'
 import { ensureSyncIndexes, runBatch } from './migrate'
 import { useSettings } from '@/composables/useSettings'
 
-/** 与云端 db/schema.sql 对齐的 40 张业务表 */
+/** 与云端 db/schema.sql 对齐的 41 张业务表 */
 export const SYNC_TABLES = [
   'tasks', 'deadlines', 'links',
   'projects', 'snippets',
@@ -25,6 +25,7 @@ export const SYNC_TABLES = [
   'deployments', 'envVars', 'techDebts', 'cmdSnippets',
   'decisions', 'skillTree', 'learningPaths', 'threeDProjects', 'portfolios', 'contentCalendars',
   'fixedBills', 'grades', 'flashcards', 'readQueue', 'feynmanLogs',
+  'inspirations',
 ] as const
 
 const NOW_MS = `CAST((julianday('now') - 2440587.5) * 86400000 AS INTEGER)`
