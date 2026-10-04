@@ -29,6 +29,62 @@ pub struct GitCommitInfo {
     pub message: String,
 }
 
+/// 启动本机程序（工具启动台 cmd 类型）。target 可以是：
+/// ① exe 完整路径（可带命令行参数，按第一个空格拆分）；② PATH 里的命令 / 协议链接（交系统解析）。
+/// CREATE_NO_WINDOW 避免闪黑框。
+#[tauri::command]
+pub async fn launch_app(target: String, args: Option<String>) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let trimmed = target.trim().to_string();
+        if trimmed.is_empty() {
+            return Err("启动目标为空".to_string());
+        }
+        let extra = args.unwrap_or_default();
+        let extra = extra.trim().to_string();
+        // 整个 target 就是存在的文件：直接拉起
+        if std::path::Path::new(&trimmed).exists() {
+            let mut cmd = std::process::Command::new(&trimmed);
+            if !extra.is_empty() {
+                cmd.args(extra.split_whitespace());
+            }
+            return cmd
+                .creation_flags(NO_WINDOW)
+                .spawn()
+                .map(|_| format!("已启动: {trimmed}"))
+                .map_err(|e| format!("启动失败: {e}"));
+        }
+        // 带参数的「exe + 参数」连写：按第一个空格拆开，exe 存在则直接拉起
+        if let Some((exe, inline_args)) = trimmed.split_once(' ') {
+            if std::path::Path::new(exe).exists() {
+                let mut cmd = std::process::Command::new(exe);
+                cmd.args(inline_args.split_whitespace());
+                if !extra.is_empty() {
+                    cmd.args(extra.split_whitespace());
+                }
+                return cmd
+                    .creation_flags(NO_WINDOW)
+                    .spawn()
+                    .map(|_| format!("已启动: {exe}"))
+                    .map_err(|e| format!("启动失败: {e}"));
+            }
+        }
+        // 兜底：绝对路径但文件不存在 → 明确报错；其余（命令 / 协议）交系统 Shell 解析
+        let looks_like_path = trimmed.starts_with("\\\\") || trimmed.chars().nth(1) == Some(':');
+        if looks_like_path {
+            return Err(format!("文件不存在: {trimmed}"));
+        }
+        let full = if extra.is_empty() { trimmed.clone() } else { format!("{trimmed} {extra}") };
+        std::process::Command::new("cmd")
+            .args(["/C", "start", "", &full])
+            .creation_flags(NO_WINDOW)
+            .spawn()
+            .map(|_| format!("已交给系统启动: {trimmed}"))
+            .map_err(|e| format!("启动失败: {e}"))
+    })
+    .await
+    .map_err(|e| format!("{e}"))?
+}
+
 /// 一键打开项目目录（F-DEV-04）：Windows 下用 explorer 打开目录；若传入
 /// vscode:// / cursor:// / trae:// 协议链接则直接调用系统默认处理。
 #[tauri::command]

@@ -7,7 +7,7 @@ import EmptyState from '@/components/EmptyState.vue'
 import ModalForm, { type FieldDef } from '@/components/ModalForm.vue'
 import { toolsRepo, agentsRepo } from '@/db'
 import type { Tool, Agent } from '../../drizzle/schema'
-import { scanAgents, portProbe, agentWorkflow, listInstalledApps, resolveShortcut, type AgentSessionInfo, type AgentWorkflowResult, type InstalledApp } from '@/composables/useTauri'
+import { scanAgents, portProbe, agentWorkflow, listInstalledApps, resolveShortcut, launchApp, type AgentSessionInfo, type AgentWorkflowResult, type InstalledApp } from '@/composables/useTauri'
 
 const message = useMessage()
 const tools = ref<Tool[]>([])
@@ -505,8 +505,12 @@ async function launchTool(t: Tool) {
   if (t.launchType === 'url' || /^https?:\/\//.test(target)) {
     window.open(target, '_blank')
   } else if (t.launchType === 'cmd') {
-    window.open('https://www.google.com/search?q=' + encodeURIComponent(target), '_blank')
-    message.info(`命令行启动需在 Tauri 环境执行：${target}`)
+    try {
+      await launchApp(target)
+      message.success(`已启动：${t.name}`)
+    } catch (e) {
+      message.error(`启动失败：${e instanceof Error ? e.message : String(e)}`)
+    }
   } else {
     // 协议启动（vscode:// 等）
     window.location.href = target

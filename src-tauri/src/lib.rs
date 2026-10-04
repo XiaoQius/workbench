@@ -25,6 +25,7 @@ pub fn run() {
             commands::system::backup_verify,
             commands::system::export_backup_to,
             commands::dev::open_path,
+            commands::dev::launch_app,
             commands::dev::git_log,
             commands::dev::code_stats,
             commands::dev::env_list,

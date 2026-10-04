@@ -249,6 +249,11 @@ export function openPath(path: string): Promise<string> {
   return invoke<string>('open_path', { path })
 }
 
+/** 启动本机程序（exe 路径 + 可选参数），工具启动台 cmd 类型使用 */
+export function launchApp(target: string, args?: string): Promise<string> {
+  return invoke<string>('launch_app', { target, args: args ?? null })
+}
+
 /** Git 提交历史（Rust 命令，F-DEV-15/17 Git 操作可视化） */
 export function gitLog(repoPath: string, limit?: number): Promise<GitCommitInfo[]> {
   return invoke<GitCommitInfo[]>('git_log', { repoPath, limit })
