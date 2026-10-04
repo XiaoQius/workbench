@@ -78,11 +78,44 @@ const filteredInstalled = computed(() => {
   return list.slice(0, installedLimit.value)
 })
 
-async function loadInstalledApps() {
+// 扫描结果缓存：list_installed_apps 要递归开始菜单 + 三路注册表 PowerShell，耗时数秒，
+// 不应每次打开应用都重扫。缓存 24h，「重新扫描」强制刷新。
+const INSTALLED_CACHE_KEY = 'wb:installed-apps-cache'
+const INSTALLED_CACHE_TTL = 24 * 60 * 60 * 1000
+function readInstalledCache(): InstalledApp[] | null {
+  try {
+    const raw = localStorage.getItem(INSTALLED_CACHE_KEY)
+    if (!raw) return null
+    const p = JSON.parse(raw) as { at: number; apps: InstalledApp[] }
+    if (!p || typeof p.at !== 'number' || !Array.isArray(p.apps) || !p.apps.length) return null
+    if (Date.now() - p.at > INSTALLED_CACHE_TTL) return null
+    return p.apps
+  } catch { return null }
+}
+function writeInstalledCache(apps: InstalledApp[]) {
+  try { localStorage.setItem(INSTALLED_CACHE_KEY, JSON.stringify({ at: Date.now(), apps })) } catch { /* 容量满则放弃缓存 */ }
+}
+const installedScannedAt = ref<number | null>(null)
+function fmtScannedAt(ts: number): string {
+  const d = new Date(ts)
+  return `${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
+}
+
+async function loadInstalledApps(force = false) {
   if (installedApps.value.length) return
+  if (!force) {
+    const cached = readInstalledCache()
+    if (cached) {
+      installedApps.value = cached
+      try { installedScannedAt.value = JSON.parse(localStorage.getItem(INSTALLED_CACHE_KEY) || '{}').at ?? null } catch { installedScannedAt.value = null }
+      return
+    }
+  }
   installedLoading.value = true
   try {
     installedApps.value = await listInstalledApps()
+    writeInstalledCache(installedApps.value)
+    installedScannedAt.value = Date.now()
   } catch {
     message.error('本机程序识别失败（需 Tauri 环境）')
     installedApps.value = []
@@ -123,7 +156,7 @@ function moreScanApps() {
 }
 async function rescanInstalledApps() {
   installedApps.value = []
-  await loadInstalledApps()
+  await loadInstalledApps(true)
 }
 async function addInstalledApp(a: InstalledApp) {
   if (scanAdding.value[a.name] || isAppAdded(a)) return
@@ -757,6 +790,7 @@ function loadRollbackPoints() {
               <span class="scan-title">本机程序快速添加</span>
               <NInput v-model:value="scanKeyword" size="tiny" placeholder="搜索程序（名称 / 路径 / 来源）…" style="width: 220px" clearable />
               <span class="scan-count mono">{{ scanFiltered.length }} / {{ installedTotal }}</span>
+              <span v-if="installedScannedAt && !installedLoading" class="scan-cache mono" title="扫描结果缓存 24 小时，点「重新扫描」立即刷新">· 扫描于 {{ fmtScannedAt(installedScannedAt) }}</span>
               <NButton size="tiny" quaternary :loading="installedLoading" @click="rescanInstalledApps()">重新扫描</NButton>
               <NButton size="tiny" quaternary @click="closeScanPanel()">收起</NButton>
             </div>

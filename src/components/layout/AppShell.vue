@@ -143,8 +143,10 @@ onMounted(() => {
     <!-- 侧栏：7 模块导航（设置中可关闭板块；可折叠为图标栏） -->
     <aside class="sidebar" :class="{ collapsed: s.sidebarCollapsed }">
       <div class="logo" :title="avatarLabel + ' · WORKBENCH'">
-        <img v-if="s.avatarImg" class="user-avatar" :src="s.avatarImg" :alt="avatarLabel" />
-        <span v-else class="user-avatar" :style="{ background: avatarBg }">{{ avatarCharText }}</span>
+        <span class="avatar-slot">
+          <img v-if="s.avatarImg" class="user-avatar" :src="s.avatarImg" :alt="avatarLabel" />
+          <span v-else class="user-avatar" :style="{ background: avatarBg }">{{ avatarCharText }}</span>
+        </span>
         <span v-if="!s.sidebarCollapsed" class="logo-text">{{ avatarLabel }}</span>
       </div>
       <nav class="nav">
@@ -286,6 +288,7 @@ onMounted(() => {
   padding: 14px 8px;
 }
 .sidebar.collapsed .logo {
+  /* 折叠态头像与图标各自水平居中，中心线天然对齐 */
   justify-content: center;
   padding: 0;
 }
@@ -298,7 +301,15 @@ onMounted(() => {
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 0 4px;
+  /* 12px 与 .nav-item 左内衬一致：头像左缘 = 导航图标左缘 */
+  padding: 0 12px;
+}
+.avatar-slot {
+  /* 与 .nav-icon 同宽并让头像居中：头像中心线 = 导航图标中心线（展开态左缘同 padding 时精确对齐） */
+  width: 17px;
+  flex: none;
+  display: flex;
+  justify-content: center;
 }
 .user-avatar {
   width: 30px;
