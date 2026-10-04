@@ -25,9 +25,56 @@ const installedKeyword = ref('')
 const installedLoading = ref(false)
 const installedLimit = ref(40)
 
+// 系统/框架组件判定：路径位于系统目录，或名称命中常见辅助组件关键词
+const SYSTEM_NAME_WORDS = [
+  'update', 'updater', 'helper', 'helpers', 'service', 'services', 'runtime',
+  'component', 'redistributable', 'addon', 'add-in', 'plug-in', 'plugin',
+  'installer', 'setup', 'driver', 'shared', 'office telemetry',
+  'microsoft edge webview', 'onedrive setup', 'sync center',
+]
+const SYSTEM_EXE_PREFIXES = [
+  'c:\\windows\\', 'c:\\program files\\common files\\microsoft\\',
+  'c:\\program files (x86)\\common files\\microsoft\\',
+  'c:\\program files\\windowsapps\\', 'c:\\windows\\system32\\',
+  'c:\\windows\\syswow64\\', 'c:\\programdata\\microsoft\\windows defender\\',
+  '\\windowsapps\\', '\\microsoft shared\\',
+]
+const SYSTEM_LNK_MARKERS = [
+  '\\start menu\\programs\\windows 工具\\',
+  '\\start menu\\programs\\accessories\\',
+  '\\start menu\\programs\\system tools\\',
+  '\\start menu\\programs\\windows powershell',
+  '\\start menu\\programs\\附\\',
+]
+function isSystemApp(a: InstalledApp): boolean {
+  const exe = (a.exe_path || '').toLowerCase()
+  const lnk = (a.lnk_path || '').toLowerCase()
+  if (lnk.includes('\\windowsnt\\')) return true
+  if (SYSTEM_LNK_MARKERS.some((m) => lnk.includes(m))) return true
+  for (const p of SYSTEM_EXE_PREFIXES) {
+    if (exe && exe.startsWith(p)) return true
+    if (lnk.includes(p)) return true
+  }
+  const name = a.name.toLowerCase()
+  return SYSTEM_NAME_WORDS.some((w) => name.includes(w))
+}
+function sortInstalled(list: InstalledApp[]): InstalledApp[] {
+  const user: InstalledApp[] = []
+  const system: InstalledApp[] = []
+  for (const a of list) (isSystemApp(a) ? system : user).push(a)
+  return [...user, ...system]
+}
+function filterInstalled(list: InstalledApp[], kw: string): InstalledApp[] {
+  if (!kw) return list
+  return list.filter((a) =>
+    a.name.toLowerCase().includes(kw) ||
+    (a.exe_path || '').toLowerCase().includes(kw) ||
+    (a.source === 'start-menu' ? '开始菜单' : '注册表').includes(kw))
+}
+
 const filteredInstalled = computed(() => {
   const kw = installedKeyword.value.trim().toLowerCase()
-  const list = kw ? installedApps.value.filter((a) => a.name.toLowerCase().includes(kw)) : installedApps.value
+  const list = filterInstalled(sortInstalled(installedApps.value), kw)
   return list.slice(0, installedLimit.value)
 })
 
@@ -52,12 +99,12 @@ const scanAdding = ref<Record<string, boolean>>({})
 const installedTotal = computed(() => installedApps.value.length)
 const scanFiltered = computed(() => {
   const kw = scanKeyword.value.trim().toLowerCase()
-  const list = kw ? installedApps.value.filter((a) => a.name.toLowerCase().includes(kw)) : installedApps.value
+  const list = filterInstalled(sortInstalled(installedApps.value), kw)
   return list.slice(0, scanLimit.value)
 })
 const scanRest = computed(() => {
   const kw = scanKeyword.value.trim().toLowerCase()
-  const list = kw ? installedApps.value.filter((a) => a.name.toLowerCase().includes(kw)) : installedApps.value
+  const list = filterInstalled(sortInstalled(installedApps.value), kw)
   return Math.max(0, list.length - scanFiltered.value.length)
 })
 const isAppAdded = (a: InstalledApp) => {
@@ -704,7 +751,7 @@ function loadRollbackPoints() {
           <div v-if="scanPanelShow" class="scan-panel">
             <div class="scan-head">
               <span class="scan-title">本机程序快速添加</span>
-              <NInput v-model:value="scanKeyword" size="tiny" placeholder="搜索程序…" style="width: 160px" clearable />
+              <NInput v-model:value="scanKeyword" size="tiny" placeholder="搜索程序（名称 / 路径 / 来源）…" style="width: 220px" clearable />
               <span class="scan-count mono">{{ scanFiltered.length }} / {{ installedTotal }}</span>
               <NButton size="tiny" quaternary :loading="installedLoading" @click="rescanInstalledApps()">重新扫描</NButton>
               <NButton size="tiny" quaternary @click="closeScanPanel()">收起</NButton>
@@ -715,6 +762,7 @@ function loadRollbackPoints() {
                 <div v-for="a in scanFiltered" :key="a.name + a.source" class="scan-item">
                   <span class="scan-name" :title="a.exe_path || a.lnk_path || ''">{{ a.name }}</span>
                   <NTag size="tiny" :bordered="false" type="default">{{ a.source === 'start-menu' ? '开始菜单' : '注册表' }}</NTag>
+                  <NTag v-if="isSystemApp(a)" size="tiny" :bordered="false" type="warning">系统</NTag>
                   <NButton
                     v-if="isAppAdded(a)" size="tiny" disabled
                   >已添加</NButton>
@@ -729,6 +777,7 @@ function loadRollbackPoints() {
               <div v-if="scanRest > 0" class="installed-more">
                 <NButton size="tiny" text type="primary" @click="moreScanApps()">显示更多（{{ scanRest }}）</NButton>
               </div>
+              <div class="installed-tip scan-sort-tip">排序：安装的程序优先，系统 / 组件类靠后</div>
             </template>
             <div v-else class="installed-tip">未扫描到本机程序（需 Tauri 环境），可点击右上角「重新扫描」</div>
           </div>

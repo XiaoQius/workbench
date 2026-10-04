@@ -388,8 +388,8 @@ img.user-avatar {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  margin: 10px 10px 0 10px;
-  padding: 0 14px;
+  margin: var(--wb-shell-edge) var(--wb-shell-edge) 0 var(--wb-shell-edge);
+  padding: 0 var(--wb-topbar-pad-x);
   border: var(--wb-border-w) solid var(--wb-border);
   border-radius: var(--wb-radius-lg);
   background: var(--wb-card);
@@ -460,7 +460,7 @@ img.user-avatar {
 .content {
   flex: 1;
   overflow-y: auto;
-  padding: 14px 18px 26px;
+  padding: 14px var(--wb-content-pad-x) 26px;
 }
 .sys-status {
   display: flex;

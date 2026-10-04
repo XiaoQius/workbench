@@ -32,6 +32,11 @@
   --wb-radius-md: 8px;
   --wb-radius-lg: 12px;
   --wb-border-w: 1px;
+  /* 左右对齐：顶栏为悬浮卡片（外边距 + 内边距），页面内容区需等于两者之和
+     才能与顶栏内容左边缘对齐；AppShell 统一引用这组变量 */
+  --wb-shell-edge: 10px;
+  --wb-topbar-pad-x: 14px;
+  --wb-content-pad-x: calc(var(--wb-shell-edge) + var(--wb-border-w) + var(--wb-topbar-pad-x));
   --wb-font: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC',
     'Hiragino Sans GB', 'Microsoft YaHei', 'Helvetica Neue', Arial, sans-serif;
   --wb-font-mono: 'JetBrains Mono', 'Cascadia Code', Consolas, 'Courier New',

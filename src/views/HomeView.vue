@@ -19,7 +19,7 @@ import { llmConfigured, llmConfigLabel } from '@/composables/llmClient'
 import { parseInspiration } from '@/composables/inspiration'
 import type {
   Task, Deadline, Habit, HabitLog, LedgerEntry, Course, Assignment, Pomodoro,
-  Note, Pitfall, Snippet,
+  Note, Pitfall, Snippet, Inspiration,
 } from '../../drizzle/schema'
 
 const router = useRouter()
@@ -74,16 +74,17 @@ const allPomodoros = ref<Pomodoro[]>([])
 const allNotes = ref<Note[]>([])
 const allPitfalls = ref<Pitfall[]>([])
 const allSnippets = ref<Snippet[]>([])
+const allInspirations = ref<Inspiration[]>([])
 
 async function load() {
   loading.value = true
   try {
-    const [tasks, deadlines, habits, habitLogs, ledger, courses, assignments, pomodoros, notes, pitfalls, snippets] =
+    const [tasks, deadlines, habits, habitLogs, ledger, courses, assignments, pomodoros, notes, pitfalls, snippets, inspirations] =
       await Promise.all([
         tasksRepo.listAll(), deadlinesRepo.listAll(), habitsRepo.listAll(),
         habitLogsRepo.listAll(), ledgerRepo.listAll(), coursesRepo.listAll(),
         assignmentsRepo.listAll(), pomodorosRepo.listAll(), notesRepo.listAll(),
-        pitfallsRepo.listAll(), snippetsRepo.listAll(),
+        pitfallsRepo.listAll(), snippetsRepo.listAll(), inspirationsRepo.list(),
       ])
     allTasks.value = tasks
     allDeadlines.value = deadlines
@@ -96,6 +97,7 @@ async function load() {
     allNotes.value = notes
     allPitfalls.value = pitfalls
     allSnippets.value = snippets
+    allInspirations.value = inspirations
   } catch (e) {
     console.warn('[Home] 数据加载失败（浏览器降级）', e)
   }
@@ -157,6 +159,32 @@ const focusRows = computed<FocusRow[]>(() => {
   })
   return [...over, ...rest]
 })
+
+// ============================================================
+// ①-b 灵感展示：最近 7 天的灵感（最多 6 条），点击跳灵感页
+// ============================================================
+const INSPIR_LIMIT = 6
+const recentInspirations = computed(() => {
+  const weekAgo = dayKey(shiftDay(today, -7))
+  return allInspirations.value
+    .filter((i) => {
+      const d = (i.createdAt || '').slice(0, 10)
+      return !d || d >= weekAgo
+    })
+    .slice(0, INSPIR_LIMIT)
+})
+function inspTime(i: Inspiration): string {
+  const t = (i.createdAt || '').trim()
+  if (!t) return ''
+  // createdAt 形如 2025-01-02 13:04:05，同日只显示时分
+  const [d, hm] = t.split(' ')
+  const time = (hm || '').slice(0, 5)
+  if (d === todayStr) return `今天 ${time}`
+  return `${(d || '').slice(5)} ${time}`
+}
+function inspTags(i: Inspiration): string[] {
+  return (i.tags || '').split(',').map((s) => s.trim()).filter(Boolean)
+}
 
 function scopePath(scope?: string | null): string {
   return scope === 'study' ? '/study' : scope === 'life' ? '/life' : '/dev'
@@ -487,8 +515,9 @@ async function saveInspiration() {
       </div>
     </div>
 
-    <!-- 第一屏：今日焦点（左，最大权重）｜ 右侧：AI 问答 + 截止预警 -->
+    <!-- 第一屏：今日焦点 + 灵感（左，最大权重）｜ 右侧：AI 问答 + 截止预警 -->
     <div class="top-grid">
+      <div class="top-left">
       <section class="wb-card focus-card">
         <header class="card-head">
           <span class="accent-bar" :style="{ background: moduleColor('home', themeStore.dark) }"></span>
@@ -522,6 +551,37 @@ async function saveInspiration() {
           <NButton size="tiny" text type="primary" @click="go('/dev')">去任务板看看 <template #icon><NIcon :component="ArrowRight" /></template></NButton>
         </div>
       </section>
+
+      <!-- 灵感：最近记录（点击跳灵感页） -->
+      <section class="wb-card insp-card">
+        <header class="card-head">
+          <span class="accent-bar" :style="{ background: moduleColor('inspiration', themeStore.dark) }"></span>
+          <h2>灵感</h2>
+          <span class="mono head-meta">近 7 天 · {{ recentInspirations.length }}</span>
+          <NButton size="tiny" text type="primary" class="insp-all" @click="go('/inspiration')">全部 <template #icon><NIcon :component="ArrowRight" /></template></NButton>
+        </header>
+        <div v-if="recentInspirations.length" class="insp-list">
+          <div
+            v-for="i in recentInspirations"
+            :key="i.id"
+            class="insp-item clickable"
+            :title="i.content"
+            @click="go('/inspiration')"
+          >
+            <NIcon class="insp-icon" :component="Bulb" :style="{ color: moduleColor('inspiration', themeStore.dark) }" />
+            <span class="insp-body">
+              <span class="insp-text">{{ i.content }}</span>
+              <span v-if="inspTags(i).length" class="insp-tags mono">{{ inspTags(i).map((t) => '#' + t).join(' ') }}</span>
+            </span>
+            <span class="insp-time mono">{{ inspTime(i) }}</span>
+          </div>
+        </div>
+        <div v-else class="insp-empty">
+          <EmptyState text="最近 7 天还没有灵感" />
+          <span class="insp-empty-tip">点击顶栏 <NIcon :component="Bulb" class="tip-bulb" /> 灯泡，或上方速记框，随时记录一闪而过的想法</span>
+        </div>
+      </section>
+      </div>
 
       <div class="top-right">
         <!-- AI 智能问答（常驻） -->
@@ -765,6 +825,7 @@ async function saveInspiration() {
   align-items: stretch;
 }
 @media (max-width: 1100px) { .top-grid { grid-template-columns: 1fr; } }
+.top-left { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
 .top-right { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
 
 .card-head {
@@ -807,6 +868,27 @@ async function saveInspiration() {
 .f-due { flex: none; font-size: 11px; color: var(--wb-text-3); }
 .f-due.danger { color: var(--wb-danger); }
 .focus-empty { display: flex; flex-direction: column; align-items: center; gap: 2px; padding: 8px 0 14px; }
+
+/* 灵感卡片 */
+.insp-list { padding: 4px 10px 8px; }
+.insp-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 7px 4px;
+  border-bottom: 1px dashed var(--wb-border);
+  border-radius: var(--wb-radius-sm);
+}
+.insp-item:last-child { border-bottom: none; }
+.insp-icon { flex: none; font-size: 14px; margin-top: 2px; }
+.insp-body { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.insp-text { font-size: 12.5px; line-height: 1.5; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.insp-tags { font-size: 10.5px; color: var(--wb-module-inspiration); opacity: 0.9; }
+.insp-time { flex: none; font-size: 11px; color: var(--wb-text-3); margin-top: 2px; }
+.insp-all { flex: none; }
+.insp-empty { display: flex; flex-direction: column; align-items: center; gap: 2px; padding: 8px 0 14px; }
+.insp-empty-tip { font-size: 11.5px; color: var(--wb-text-3); display: flex; align-items: center; gap: 4px; }
+.tip-bulb { font-size: 13px; color: var(--wb-module-inspiration); vertical-align: -2px; }
 .load-strip {
   margin: 12px 14px;
   padding: 10px 12px;
