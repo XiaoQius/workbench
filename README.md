@@ -42,7 +42,7 @@ Tauri 2 + Vue 3 桌面应用：把开发、运维、生活、学习、知识管�
 | 路由 | Vue Router（hash 模式） |
 | UI | Naive UI + UnoCSS，图标 @vicons/tabler |
 | 数据层 | SQLite（tauri-plugin-sql；`drizzle/schema.ts` 作为类型源与迁移链蓝本） |
-| 云同步 | 自建 relay（可选，REST + WebSocket 实时同步，42 张业务表） |
+| 云同步 | 自建 relay（可选，REST + WebSocket 实时同步，41 张业务表） |
 | 更新 | 云端版本端点 + GitHub Release 直链下载 + msiexec 拉起安装 |
 
 ## 目录结构
