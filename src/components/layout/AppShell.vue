@@ -118,7 +118,7 @@ async function refreshSysStatus() {
   }
 }
 
-const syncStatus = ref<SyncStatus>({ state: 'idle', message: '', lastSyncAt: null, pending: 0 })
+const syncStatus = ref<SyncStatus>({ state: 'idle', message: '', lastSyncAt: null, pending: 0, conflicts: 0 })
 function openSettings(tab?: string) {
   settingsTab.value = tab
   settingsOpen.value = true
@@ -132,6 +132,8 @@ const syncLabel = computed(() => {
   if (!useSettings().cloudToken) return ''
   if (syncStatus.value.state === 'syncing') return '同步中'
   if (syncStatus.value.state === 'error') return '同步异常'
+  if (syncStatus.value.state === 'offline') return '离线待传'
+  if (syncStatus.value.conflicts > 0) return syncStatus.value.conflicts + ' 处冲突'
   return syncStatus.value.pending > 0 ? '待同步 ' + syncStatus.value.pending : '已同步'
 })
 

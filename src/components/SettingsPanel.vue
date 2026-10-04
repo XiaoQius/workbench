@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, watch } from 'vue'
+import { ref, computed, watch, onMounted } from 'vue'
 import {
   NModal, NInput, NSlider, NSwitch, NButton, NTag, NText, NList, NListItem, NThing, NSelect, NTabs, NTabPane,
 } from 'naive-ui'
@@ -10,7 +10,7 @@ import { useThemeStore } from '@/stores/theme'
 import { exportBackupTo, checkUpdate, downloadUpdate, installUpdate, llmStatus, openPath } from '@/composables/useTauri'
 import { APP_VERSION } from '@/composables/useSettings'
 import { llmConfigured, llmConfigLabel, llmChat } from '@/composables/llmClient'
-import { cloudRegister, cloudLogin, cloudLogout, syncNow, onSyncStatus, type SyncStatus } from '@/db/sync'
+import { cloudRegister, cloudLogin, cloudLogout, syncNow, onSyncStatus, listConflicts, resolveConflict, type SyncStatus, type ConflictRow } from '@/db/sync'
 import { useConfirm } from '@/composables/useConfirm'
 import {
   tasksRepo, deadlinesRepo, projectsRepo, snippetsRepo, habitsRepo, ledgerRepo,
@@ -201,15 +201,44 @@ async function removeCard(id: string) {
 
 const hintColor = '#999'
 
+onMounted(() => { if (s.cloudEnabled && s.cloudToken) void loadConflicts() })
+
+const tableLabels: Record<string, string> = {
+  tasks: '任务', deadlines: '截止', links: '链接', projects: '项目', snippets: '代码片段',
+  tools: '工具', agents: 'Agent', servers: '服务器', domains: '域名', backups: '备份',
+  habits: '习惯', habitLogs: '习惯打卡', ledger: '记账', pomodoros: '专注', healthLogs: '健康',
+  courses: '课程', assignments: '作业', notes: '笔记', pitfalls: '踩坑', resources: '资源',
+  opsFlows: '指标', opsChanges: '变更', opsSecChecks: '安全检查', opsSecrets: '密钥', opsDns: 'DNS',
+  deployments: '部署', envVars: '环境变量', techDebts: '技术债', cmdSnippets: '命令',
+  decisions: '决策', skillTree: '技能树', learningPaths: '学习路径', threeDProjects: '3D 项目',
+  portfolios: '作品', contentCalendars: '内容日历', fixedBills: '固定账单', grades: '成绩',
+  flashcards: '闪卡', readQueue: '阅读', feynmanLogs: '费曼', inspirations: '灵感',
+}
+
 // ---- 云同步：注册/登录 + 状态（可选能力，不开启不影响本地使用） ----
 const cloudForm = ref({ server: s.cloudUrl || 'https://testapi.xusn.cn', username: '', password: '', device: '我的电脑' })
 const cloudBusy = ref(false)
 const cloudMsg = ref('')
-const syncStatus = ref<SyncStatus>({ state: 'idle', message: '', lastSyncAt: null, pending: 0 })
+const syncStatus = ref<SyncStatus>({ state: 'idle', message: '', lastSyncAt: null, pending: 0, conflicts: 0 })
+const conflicts = ref<ConflictRow[]>([])
+async function loadConflicts() {
+  try { conflicts.value = await listConflicts() } catch { conflicts.value = [] }
+}
 onSyncStatus((st) => {
   syncStatus.value = st
   if (st.lastSyncAt) s.lastSyncAt = st.lastSyncAt
+  void loadConflicts()
 })
+
+async function resolveConflictRow(c: ConflictRow, choice: 'local' | 'remote') {
+  try {
+    await resolveConflict(c.table, c.rowId, choice)
+    await loadConflicts()
+    cloudMsg.value = choice === 'local' ? '已保留本地版本并上传' : '已采用云端版本'
+  } catch (e) {
+    cloudMsg.value = '处理失败：' + String(e instanceof Error ? e.message : e)
+  }
+}
 async function doCloudRegister() {
   cloudBusy.value = true; cloudMsg.value = ''
   try {
@@ -465,7 +494,7 @@ function commitFontScale(v: number) {
         <template v-else>
           <div class="sp-sec">
             <div class="sp-label">同步状态</div>
-            <div class="sp-row"><span class="sp-dim" style="margin:0">状态：</span><NTag size="small" :type="syncStatus.state === 'error' ? 'error' : 'success'">{{ syncStateLabel }}</NTag>
+            <div class="sp-row"><span class="sp-dim" style="margin:0">状态：</span><NTag size="small" :type="syncStatus.state === 'error' ? 'error' : syncStatus.state === 'offline' ? 'warning' : 'success'">{{ syncStateLabel }}</NTag>
               <span class="sp-dim" style="margin:0 0 0 10px" v-if="syncStatus.message">{{ syncStatus.message }}</span></div>
             <div class="sp-row"><span class="sp-dim" style="margin:0">设备：{{ s.deviceName || '（未命名）' }}</span></div>
             <div class="sp-row"><span class="sp-dim" style="margin:0">上次同步：{{ s.lastSyncAt ? new Date(s.lastSyncAt).toLocaleString() : '从未' }}</span>
@@ -473,6 +502,20 @@ function commitFontScale(v: number) {
             <div class="sp-row">
               <NButton size="small" type="primary" ghost :loading="syncStatus.state === 'syncing'" @click="doSyncNow()">立即同步</NButton>
               <NButton size="small" quaternary type="warning" @click="doCloudLogout()">退出登录</NButton>
+            </div>
+            <div v-if="conflicts.length" class="conflict-box">
+              <div class="conflict-title">{{ conflicts.length }} 处改动与云端冲突</div>
+              <div class="sp-dim" style="margin-bottom: 8px">这些记录在你离线期间被其它设备改过。请选择保留哪一边，未处理前两边都会保留。</div>
+              <div v-for="c in conflicts" :key="c.table + c.rowId" class="conflict-row">
+                <div class="conflict-info">
+                  <span class="conflict-label">{{ c.label }}</span>
+                  <span class="sp-dim">{{ tableLabels[c.table] || c.table }}</span>
+                </div>
+                <div class="conflict-ops">
+                  <NButton size="tiny" type="primary" ghost @click="resolveConflictRow(c, 'local')">保留我的</NButton>
+                  <NButton size="tiny" quaternary @click="resolveConflictRow(c, 'remote')">用云端的</NButton>
+                </div>
+              </div>
             </div>
             <div class="sp-dim" v-if="cloudMsg" style="white-space: pre-line">{{ cloudMsg }}</div>
           </div>
@@ -551,4 +594,23 @@ function commitFontScale(v: number) {
   text-align: center;
 }
 .theme-name { font-size: 12px; text-align: center; }
+.conflict-box {
+  margin-top: 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--wb-warning, #f59e0b);
+  border-radius: var(--wb-radius-md);
+  background: var(--wb-card-alt);
+}
+.conflict-title { font-size: 12.5px; font-weight: 600; color: var(--wb-warning, #f59e0b); margin-bottom: 4px; }
+.conflict-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 6px 0;
+  border-top: 1px solid var(--wb-border);
+}
+.conflict-info { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.conflict-label { font-size: 12.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.conflict-ops { display: flex; gap: 6px; flex: none; }
 </style>

@@ -35,17 +35,19 @@ export interface SyncStatus {
   message: string
   lastSyncAt: number | null
   pending: number
+  conflicts: number
 }
 
 type StatusListener = (s: SyncStatus) => void
 const listeners = new Set<StatusListener>()
-const status: SyncStatus = { state: 'idle', message: '', lastSyncAt: null, pending: 0 }
+const status: SyncStatus = { state: 'idle', message: '', lastSyncAt: null, pending: 0, conflicts: 0 }
 let syncing = false
 let ws: WebSocket | null = null
 let retryTimer: number | null = null
 let reconnectTimer: number | null = null
 let reconnectAttempt = 0
 let pollTimer: number | null = null
+let onlineHooked = false
 const BASE_RETRY_MS = 5_000
 const MAX_RETRY_MS = 5 * 60 * 1000
 /** 最近一次落库失败明细，供 pullTable 抛错时带给用户看 */
@@ -89,8 +91,18 @@ export async function initSyncSchema(): Promise<void> {
     ut INTEGER NOT NULL DEFAULT 0,
     del INTEGER NOT NULL DEFAULT 0,
     pending INTEGER NOT NULL DEFAULT 0,
+    baseUt INTEGER NOT NULL DEFAULT 0,
+    conflict INTEGER NOT NULL DEFAULT 0,
     PRIMARY KEY (tableName, rowId)
   )`)
+  // 老库升级：这两列是后加的，ADD COLUMN 对已存在行填默认值 0
+  for (const col of ['baseUt INTEGER NOT NULL DEFAULT 0', 'conflict INTEGER NOT NULL DEFAULT 0']) {
+    try {
+      await exec(`ALTER TABLE _sync_state ADD COLUMN ${col}`)
+    } catch {
+      /* 列已存在 */
+    }
+  }
   await exec(`CREATE TABLE IF NOT EXISTS _sync_cursor (tableName TEXT PRIMARY KEY, cursor INTEGER NOT NULL DEFAULT 0)`)
   await exec(`CREATE TABLE IF NOT EXISTS _sync_flag (key TEXT PRIMARY KEY, v INTEGER NOT NULL DEFAULT 0)`)
   await exec(`INSERT OR IGNORE INTO _sync_flag (key, v) VALUES ('busy', 0)`)
@@ -105,14 +117,16 @@ export async function initSyncSchema(): Promise<void> {
   const batches: string[] = []
   for (const t of SYNC_TABLES) {
     const when = `WHEN (SELECT v FROM _sync_flag WHERE key='busy') = 0 BEGIN`
-    const guard = `INSERT INTO _sync_state (tableName, rowId, serverId, ut, del, pending) VALUES ('${t}', NEW.id, NULL, ${NOW_MS}, 0, 1)
+    // baseUt 不动：它记录「上次与云端一致时的时间戳」，本地改动只推高 ut。
+    // 二者之差就是「本地有未上云的改动」，是判定真冲突的唯一依据。
+    const guard = `INSERT INTO _sync_state (tableName, rowId, serverId, ut, del, pending, baseUt) VALUES ('${t}', NEW.id, NULL, ${NOW_MS}, 0, 1, 0)
       ON CONFLICT(tableName, rowId) DO UPDATE SET ut=${NOW_MS}, del=0, pending=1;`
     batches.push([
       `CREATE TRIGGER IF NOT EXISTS _sync_${t}_i AFTER INSERT ON ${t} ${when} ${guard} END`,
       `CREATE TRIGGER IF NOT EXISTS _sync_${t}_u AFTER UPDATE ON ${t} ${when} ${guard} END`,
       `CREATE TRIGGER IF NOT EXISTS _sync_${t}_d AFTER DELETE ON ${t} ${when}
-        INSERT INTO _sync_state (tableName, rowId, serverId, ut, del, pending) VALUES ('${t}', OLD.id,
-          (SELECT serverId FROM _sync_state WHERE tableName='${t}' AND rowId=OLD.id), ${NOW_MS}, 1, 1)
+        INSERT INTO _sync_state (tableName, rowId, serverId, ut, del, pending, baseUt) VALUES ('${t}', OLD.id,
+          (SELECT serverId FROM _sync_state WHERE tableName='${t}' AND rowId=OLD.id), ${NOW_MS}, 1, 1, 0)
         ON CONFLICT(tableName, rowId) DO UPDATE SET ut=${NOW_MS}, del=1, pending=1; END`,
     ].join(';\n'))
   }
@@ -127,8 +141,8 @@ async function bootstrapPending(): Promise<void> {
   const pushed = await query<{ n: number }>(`SELECT COUNT(*) AS n FROM _sync_state WHERE pending = 0`)
   if ((done[0]?.n ?? 0) > 0 || (pushed[0]?.n ?? 0) > 0) return // 已经同步过
   for (const t of SYNC_TABLES) {
-    await exec(`INSERT OR IGNORE INTO _sync_state (tableName, rowId, serverId, ut, del, pending)
-      SELECT '${t}', id, NULL, ${NOW_MS}, 0, 1 FROM ${t}`)
+    await exec(`INSERT OR IGNORE INTO _sync_state (tableName, rowId, serverId, ut, del, pending, baseUt)
+      SELECT '${t}', id, NULL, ${NOW_MS}, 0, 1, 0 FROM ${t}`)
   }
 }
 
@@ -138,8 +152,8 @@ interface PushResult { tempId?: string; id: number; accepted: boolean; reason?: 
 
 async function pushPending(): Promise<void> {
   for (const t of SYNC_TABLES) {
-    const states = await query<{ rowId: number; serverId: number | null; ut: number; del: number }>(
-      `SELECT rowId, serverId, ut, del FROM _sync_state WHERE tableName = ? AND pending = 1 ORDER BY rowId LIMIT 500`,
+    const states = await query<{ rowId: number; serverId: number | null; ut: number; del: number; baseUt: number }>(
+      `SELECT rowId, serverId, ut, del, baseUt FROM _sync_state WHERE tableName = ? AND pending = 1 ORDER BY rowId LIMIT 500`,
       [t],
     )
     if (states.length === 0) continue
@@ -155,7 +169,7 @@ async function pushPending(): Promise<void> {
 
     // 服务端已删除但本地从未上送过的墓碑：直接丢弃
     const rows: Record<string, unknown>[] = []
-    const entries: { rowId: number; serverId: number | null; del: number }[] = []
+    const entries: { rowId: number; serverId: number | null; del: number; ut: number; baseUt: number }[] = []
     const orphan: number[] = [] // 本地行已不存在的残留状态
     for (const st of states) {
       if (st.del === 1 && st.serverId == null) {
@@ -178,7 +192,7 @@ async function pushPending(): Promise<void> {
         else clean.tempId = String(st.rowId)
         rows.push(clean)
       }
-      entries.push({ rowId: st.rowId, serverId: st.serverId, del: st.del })
+      entries.push({ rowId: st.rowId, serverId: st.serverId, del: st.del, ut: st.ut, baseUt: st.baseUt ?? 0 })
     }
     // 孤儿状态批量清理
     if (orphan.length > 0) {
@@ -194,18 +208,28 @@ async function pushPending(): Promise<void> {
 
     // 结果回写：按「删除 / 标记已推送 / 放弃 stale」三类拼批，避免逐行 UPDATE
     const doneDeletes: number[] = []
-    const doneUpdates: { rowId: number; serverId: number | null }[] = []
+    const doneUpdates: { rowId: number; serverId: number | null; ut: number }[] = []
     const staleIds: number[] = []
+    // stale 只说明「服务端版本不比我的旧」，不等于冲突。
+    // 真冲突 = 服务端拒绝了 + 我这边的改动确实还没上过云（ut > baseUt）。
+    // baseUt 是上次与云端一致时的时间戳，ut 是本地最后改动时间，二者不等
+    // 即本地有未上云的改动；服务端那份则是别人改的 → 两边都有真实改动，
+    // 标记 conflict 保留双方等用户裁决，绝不静默覆盖。
+    // 注意 baseUt=0 表示「从未与云端对齐过」（含离线新建的行），此时
+    // ut 必 > 0，同样判为冲突——否则离线新建的记录会被云端无声吃掉。
+    const conflictIds: number[] = []
     for (let i = 0; i < entries.length; i++) {
       const entry = entries[i]
       const res = r.results[i]
       if (!res) continue
       if (res.accepted) {
         if (entry.del === 1) doneDeletes.push(entry.rowId)
-        else doneUpdates.push({ rowId: entry.rowId, serverId: res.id ?? entry.serverId })
+        else doneUpdates.push({ rowId: entry.rowId, serverId: res.id ?? entry.serverId, ut: entry.ut })
       } else if (res.reason === 'stale') {
-        // 放弃本次推送标记，保持 pending=0 由服务端版本为准（拉取会覆盖本地）
-        staleIds.push(entry.rowId)
+        // 删除类冲突无法裁决：本地行已经不在了，「保留我的」无处可取，
+        // 只能以云端为准。其余情况才交给用户挑。
+        if (entry.ut > entry.baseUt && entry.del === 0) conflictIds.push(entry.rowId)
+        else staleIds.push(entry.rowId)
       }
     }
     const stmts: string[] = []
@@ -213,12 +237,17 @@ async function pushPending(): Promise<void> {
       stmts.push(`DELETE FROM _sync_state WHERE tableName = '${t}' AND rowId IN (${doneDeletes.join(', ')})`)
     }
     for (const u of doneUpdates) {
+      // 推送成功即与云端对齐：基准推到本次的 ut，后续改动才算「脏」
       stmts.push(
-        `UPDATE _sync_state SET pending = 0, serverId = ${u.serverId ?? 'NULL'} WHERE tableName = '${t}' AND rowId = ${u.rowId}`,
+        `UPDATE _sync_state SET pending = 0, serverId = ${u.serverId ?? 'NULL'}, baseUt = ${u.ut}, conflict = 0 WHERE tableName = '${t}' AND rowId = ${u.rowId}`,
       )
     }
     if (staleIds.length > 0) {
-      stmts.push(`UPDATE _sync_state SET pending = 0 WHERE tableName = '${t}' AND rowId IN (${staleIds.join(', ')})`)
+      // 本地没改过（ut == baseUt），服务端版本更新，直接以服务端为准
+      stmts.push(`UPDATE _sync_state SET pending = 0, baseUt = ut WHERE tableName = '${t}' AND rowId IN (${staleIds.join(', ')})`)
+    }
+    if (conflictIds.length > 0) {
+      stmts.push(`UPDATE _sync_state SET pending = 0, conflict = 1 WHERE tableName = '${t}' AND rowId IN (${conflictIds.join(', ')})`)
     }
     if (stmts.length > 0) await runBatch(stmts)
   }
@@ -305,12 +334,12 @@ async function applyRemoteBatch(t: string, rows: PullRow[]): Promise<number> {
   const ph = ids.map(() => '?').join(', ')
 
   // 已知映射：serverId -> (rowId, ut)
-  const knownRows = await query<{ rowId: number; serverId: number; ut: number }>(
-    `SELECT rowId, serverId, ut FROM _sync_state WHERE tableName = ? AND serverId IN (${ph})`,
+  const knownRows = await query<{ rowId: number; serverId: number; ut: number; baseUt: number; conflict: number }>(
+    `SELECT rowId, serverId, ut, baseUt, conflict FROM _sync_state WHERE tableName = ? AND serverId IN (${ph})`,
     [t, ...ids],
   )
-  const known = new Map<number, { rowId: number; ut: number }>()
-  for (const k of knownRows) known.set(k.serverId, { rowId: k.rowId, ut: k.ut })
+  const known = new Map<number, { rowId: number; ut: number; baseUt: number; conflict: number }>()
+  for (const k of knownRows) known.set(k.serverId, { rowId: k.rowId, ut: k.ut, baseUt: k.baseUt ?? 0, conflict: k.conflict ?? 0 })
 
   const localCols = await localColumns(t)
   const space = await loadIdSpace(t)
@@ -330,6 +359,8 @@ async function applyRemoteBatch(t: string, rows: PullRow[]): Promise<number> {
     if (k) {
       if (row._ut <= k.ut) continue // 本地较新，跳过
       if (!existingIds.has(k.rowId)) continue // 本地行已不存在
+      // 已标记冲突的行不再被远端覆盖，等用户在冲突界面裁决
+      if (k.conflict === 1) continue
       updates.push({ rowId: k.rowId, ut: row._ut, row })
       continue
     }
@@ -361,7 +392,8 @@ async function applyRemoteBatch(t: string, rows: PullRow[]): Promise<number> {
     if (cols.length === 0) continue
     const sets = cols.map((c) => `${c} = ${sqlLit((u.row as Record<string, unknown>)[c])}`).join(', ')
     push(`UPDATE ${t} SET ${sets} WHERE id = ${u.rowId}`, `upd#${u.rowId}`)
-    stmts.push(`UPDATE _sync_state SET ut = ${u.ut}, pending = 0 WHERE tableName = '${t}' AND rowId = ${u.rowId}`)
+    // 落库即与云端对齐：ut 与 baseUt 一起推高，本地才算「干净」
+    stmts.push(`UPDATE _sync_state SET ut = ${u.ut}, baseUt = ${u.ut}, pending = 0, conflict = 0 WHERE tableName = '${t}' AND rowId = ${u.rowId}`)
     owner.push('upd-state')
   }
 
@@ -372,7 +404,7 @@ async function applyRemoteBatch(t: string, rows: PullRow[]): Promise<number> {
     const vals = [ins.localId, ...cols.slice(1).map((c) => sqlLit((ins.row as Record<string, unknown>)[c]))]
     push(`INSERT OR REPLACE INTO ${t} (${cols.join(', ')}) VALUES (${vals.join(', ')})`, `ins#${ins.localId}`)
     stmts.push(
-      `INSERT OR REPLACE INTO _sync_state (tableName, rowId, serverId, ut, del, pending) VALUES ('${t}', ${ins.localId}, ${ins.row.id}, ${ins.row._ut}, 0, 0)`,
+      `INSERT OR REPLACE INTO _sync_state (tableName, rowId, serverId, ut, del, pending, baseUt, conflict) VALUES ('${t}', ${ins.localId}, ${ins.row.id}, ${ins.row._ut}, 0, 0, ${ins.row._ut}, 0)`,
     )
     owner.push('ins-state')
   }
@@ -452,10 +484,26 @@ export async function syncNow(): Promise<void> {
     await pushPending()
     for (const t of SYNC_TABLES) await pullTable(t)
     const pend = await query<{ n: number }>(`SELECT COUNT(*) AS n FROM _sync_state WHERE pending = 1`)
-    setStatus({ state: 'idle', message: '同步完成', lastSyncAt: Date.now(), pending: pend[0]?.n ?? 0 })
+    const conflicts = await query<{ n: number }>(`SELECT COUNT(*) AS n FROM _sync_state WHERE conflict = 1`)
+    const cn = conflicts[0]?.n ?? 0
+    setStatus({
+      state: 'idle',
+      message: cn > 0 ? `${cn} 处改动与云端冲突，待你确认` : '同步完成',
+      lastSyncAt: Date.now(),
+      pending: pend[0]?.n ?? 0,
+      conflicts: cn,
+    })
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e)
-    setStatus({ state: 'error', message: msg })
+    // 网络不可达时不算错误：本地改动仍在 pending 队列里，联网后自动补传。
+    // 此前一律标红「同步异常」，会让离线用户误以为数据丢了。
+    const offline = !navigator.onLine || /fetch|network|Failed to fetch|timeou/i.test(msg)
+    const pend = await query<{ n: number }>(`SELECT COUNT(*) AS n FROM _sync_state WHERE pending = 1`).catch(() => [{ n: 0 }])
+    setStatus({
+      state: offline ? 'offline' : 'error',
+      message: offline ? '离线，改动已保存在本地，联网后自动上传' : msg,
+      pending: pend[0]?.n ?? 0,
+    })
   } finally {
     syncing = false
     idSpaceCache.clear()
@@ -500,10 +548,86 @@ export function getSyncStatus(): SyncStatus {
   return { ...status }
 }
 
+// ---------------- 冲突：查询与裁决 ----------------
+
+export interface ConflictRow {
+  table: string
+  rowId: number
+  serverId: number | null
+  label: string
+  localUppedAt: number
+}
+
+/** 业务表里能拿来给人看的一列，用于冲突列表显示「是哪条记录」 */
+const LABEL_COLS = ['title', 'name', 'task', 'content', 'topic', 'question', 'domain', 'host', 'key']
+
+export async function listConflicts(): Promise<ConflictRow[]> {
+  const out: ConflictRow[] = []
+  for (const t of SYNC_TABLES) {
+    const rows = await query<{ rowId: number; serverId: number | null; ut: number }>(
+      `SELECT rowId, serverId, ut FROM _sync_state WHERE tableName = ? AND conflict = 1`,
+      [t],
+    )
+    if (rows.length === 0) continue
+    const cols = await localColumns(t)
+    const labelCol = LABEL_COLS.find((c) => cols.has(c))
+    const ids = rows.map((r) => r.rowId)
+    const ph = ids.map(() => '?').join(', ')
+    const data = labelCol
+      ? await query<Record<string, unknown>>(`SELECT id, ${labelCol} FROM ${t} WHERE id IN (${ph})`, ids)
+      : []
+    const labelMap = new Map<number, string>()
+    for (const d of data) labelMap.set(d.id as number, String(d[labelCol!] ?? ''))
+    for (const r of rows) {
+      out.push({
+        table: t,
+        rowId: r.rowId,
+        serverId: r.serverId,
+        label: labelMap.get(r.rowId) || `#${r.rowId}`,
+        localUppedAt: r.ut,
+      })
+    }
+  }
+  return out
+}
+
+/**
+ * 冲突裁决：
+ * - 'local'  保留本地版本，重新推上去覆盖云端（把 ut 抬到当前时间以通过服务端 stale 判定）
+ * - 'remote' 放弃本地改动，接受云端版本（清掉冲突标记，下次拉取会覆盖本地）
+ */
+export async function resolveConflict(table: string, rowId: number, choice: 'local' | 'remote'): Promise<void> {
+  if (!SYNC_TABLES.includes(table as (typeof SYNC_TABLES)[number])) throw new Error(`未知表：${table}`)
+  if (choice === 'local') {
+    // 抬 ut 让它大于服务端版本，并重新入队推送
+    await exec(
+      `UPDATE _sync_state SET ut = ${Date.now()}, pending = 1, conflict = 0 WHERE tableName = ? AND rowId = ?`,
+      [table, rowId],
+    )
+    await syncNow()
+  } else {
+    // 接受云端：清冲突标记，并把这张表的游标退回，强制重新拉取。
+    // 该行的云端版本早已越过游标，不回退的话下一次拉取不会再带回它，
+    // 本地会永远停在冲突前的旧值上，等于「选了云端却没生效」。
+    await exec(
+      `UPDATE _sync_state SET conflict = 0, pending = 0, baseUt = ut WHERE tableName = ? AND rowId = ?`,
+      [table, rowId],
+    )
+    await exec(`UPDATE _sync_cursor SET cursor = 0 WHERE tableName = ?`, [table])
+    await syncNow()
+  }
+}
+
 /** 应用启动时调用 */
 export async function initSync(): Promise<void> {
   const s = useSettings()
   await initSyncSchema()
+  // 断网期间的本地改动本来就留在 pending 队列里，这里保证网络一恢复就补传，
+  // 不必等下一次 5 分钟轮询或 WS 重连。
+  if (typeof window !== 'undefined' && !onlineHooked) {
+    onlineHooked = true
+    window.addEventListener('online', () => { if (useSettings().cloudEnabled) void syncNow() })
+  }
   if (!s.cloudEnabled || !s.cloudToken) return
   await syncNow()
   connectLive()
