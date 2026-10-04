@@ -1,6 +1,6 @@
 [package]
 name = "workbench"
-version = "0.2.4"
+version = "0.2.5"
 description = "WORKBENCH - 个人工作台桌面应用"
 edition = "2021"
 
