@@ -105,9 +105,9 @@ pub async fn download_update(url: String, version: String) -> Result<String, Str
             }
         }
 
-        // 校验：非空且 PE 头（MZ）
+        // 校验：MSI 为 OLE 复合文档，魔数 D0 CF 11 E0 A1 B1 1A E1（非 PE 的 MZ）
         let bytes = std::fs::read(&dest).map_err(|e| format!("读取下载文件失败: {e}"))?;
-        if bytes.len() < 1024 || &bytes[..2] != b"MZ" {
+        if bytes.len() < 1024 || &bytes[..8] != b"\xD0\xCF\x11\xE0\xA1\xB1\x1A\xE1" {
             let _ = std::fs::remove_file(&dest);
             return Err("下载内容校验失败（不是有效的安装包），已删除".to_string());
         }

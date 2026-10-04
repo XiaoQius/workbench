@@ -90,7 +90,7 @@ desktop/
 | 知识库 | `scan_assets` |
 | AI | `llm_status` / `llm_chat`（Rust 原生 HTTP 转发，绕开 WebView CORS） |
 | 系统 | `export_backup` / `export_backup_to` / `list_backups` / `read_backup` / `backup_verify` |
-| 更新 | `check_update` / `download_update`（下载 MSI 并校验 PE 头）/ `install_update`（msiexec /passive 拉起） |
+| 更新 | `check_update` / `download_update`（下载 MSI 并校验 OLE 魔数）/ `install_update`（msiexec /passive 拉起） |
 
 ## 快捷键
 
