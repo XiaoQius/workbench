@@ -130,7 +130,7 @@ pub async fn port_probe(host: String, ports: Vec<u16>) -> Vec<PortProbeResult> {
         for port in ports {
             let start = Instant::now();
             let mut open = false;
-            if let Ok(mut addrs) = format!("{host}:{port}").to_socket_addrs() {
+            if let Ok(addrs) = format!("{host}:{port}").to_socket_addrs() {
                 for a in addrs {
                     if TcpStream::connect_timeout(&a, Duration::from_millis(600)).is_ok() {
                         open = true;

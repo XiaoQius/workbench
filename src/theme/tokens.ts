@@ -7,6 +7,8 @@
 // 被 UnoCSS / main.css / Naive UI 覆盖共同消费
 // ============================================================
 
+import { shallowRef } from 'vue'
+
 export interface ModuleColors {
   home: string
   workspace: string
@@ -185,14 +187,16 @@ export const tokens: Record<ComboKey, ThemeTokens> = {
 
 // 当前生效组合。moduleColor(key, dark) 签名保持不变（20 余处调用点不动），
 // 具体取色由 store 的 apply() 通过 setActiveTheme 写入此处。
-let activeCombo: ComboKey = 'light-normal'
+// 用 ref 持有：moduleColor 被 computed / 模板渲染函数调用时才能追踪到切换，
+// 否则「只切风格、明暗不变」的场景下模块色不刷新。
+const activeCombo = shallowRef<ComboKey>('light-normal')
 
 export function setActiveTheme(key: ComboKey): void {
-  activeCombo = key
+  activeCombo.value = key
 }
 
 export function activeThemeKey(): ComboKey {
-  return activeCombo
+  return activeCombo.value
 }
 
 /** 模块路由元信息（名称 / 强调色 / 图标点） */
@@ -211,7 +215,7 @@ export type ModuleKey = (typeof modules)[number]['key']
 
 /** 模块色：签名不变，按当前生效组合取色 */
 export function moduleColor(key: string, dark: boolean): string {
-  const t = tokens[activeCombo]
+  const t = tokens[activeCombo.value]
   const m = key in t.module ? t.module[key as keyof typeof t.module] : undefined
   if (m) return m
   const fallback = dark ? tokens['dark-normal'] : tokens['light-normal']
