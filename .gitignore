@@ -35,3 +35,4 @@ shot_*.png
 build_release.log
 _portable_stage/
 src-tauri/cargo_check.err
+.mimo-notice.md
