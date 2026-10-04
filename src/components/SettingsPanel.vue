@@ -11,6 +11,7 @@ import { exportBackupTo, checkUpdate, downloadUpdate, installUpdate, llmStatus, 
 import { APP_VERSION } from '@/composables/useSettings'
 import { llmConfigured, llmConfigLabel, llmChat } from '@/composables/llmClient'
 import { cloudRegister, cloudLogin, cloudLogout, syncNow, onSyncStatus, type SyncStatus } from '@/db/sync'
+import { useConfirm } from '@/composables/useConfirm'
 import {
   tasksRepo, deadlinesRepo, projectsRepo, snippetsRepo, habitsRepo, ledgerRepo,
   coursesRepo, assignmentsRepo, notesRepo, pitfallsRepo, serversRepo, domainsRepo,
@@ -22,6 +23,7 @@ const emit = defineEmits<{ (e: 'update:show', v: boolean): void }>()
 
 const s = useSettings()
 const themeStore = useThemeStore()
+const { confirm } = useConfirm()
 
 // 主题预览：配色维度用当前风格的组合取色，风格维度用当前配色的组合取色
 function comboPreview(color: ColorMode, style: StyleMode) {
@@ -189,7 +191,10 @@ function addCard() {
   cardName.value = ''
   cardContent.value = ''
 }
-function removeCard(id: string) {
+async function removeCard(id: string) {
+  const card = s.cards.find((c) => c.id === id)
+  const ok = await confirm({ title: '删除这张自定义卡片？', content: card ? `「${card.name}」将从首页移除。` : '该卡片将从首页移除。' })
+  if (!ok) return
   const i = s.cards.findIndex((c) => c.id === id)
   if (i >= 0) s.cards.splice(i, 1)
 }

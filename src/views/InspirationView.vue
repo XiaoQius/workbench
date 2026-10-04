@@ -7,9 +7,11 @@ import EmptyState from '@/components/EmptyState.vue'
 import { inspirationsRepo } from '@/db'
 import type { Inspiration } from '../../drizzle/schema'
 import { parseInspiration } from '@/composables/inspiration'
+import { useConfirm } from '@/composables/useConfirm'
 import { refreshTick } from '@/stores/ui'
 
 const message = useMessage()
+const { confirm } = useConfirm()
 
 // ---- 快速记录：输入框是灵魂，回车即存、清空、保持焦点 ----
 const draft = ref('')
@@ -97,6 +99,8 @@ async function toggleStar(r: Inspiration) {
 }
 
 async function remove(r: Inspiration) {
+  const ok = await confirm({ title: '删除这条灵感？', content: r.content.length > 40 ? `${r.content.slice(0, 40)}…` : r.content })
+  if (!ok) return
   try {
     await inspirationsRepo.remove(r.id)
     rows.value = rows.value.filter((x) => x.id !== r.id)

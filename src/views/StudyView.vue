@@ -5,10 +5,14 @@ import { NButton, NTag, NTabs, NTabPane, NIcon, useMessage, NSelect, NDatePicker
 import { Plus, Trash, Check, Checkbox } from '@vicons/tabler'
 import EmptyState from '@/components/EmptyState.vue'
 import ModalForm, { type FieldDef } from '@/components/ModalForm.vue'
+import { useConfirm } from '@/composables/useConfirm'
 import { coursesRepo, assignmentsRepo, notesRepo, gradesRepo, flashcardsRepo, pitfallsRepo, readQueueRepo, feynmanLogsRepo, tasksRepo, pomodorosRepo } from '@/db'
 import type { Course, Assignment, Note, Grade, Flashcard, Pitfall, ReadQueueItem, FeynmanLog, Task, Pomodoro } from '../../drizzle/schema'
 
 const message = useMessage()
+const { confirm } = useConfirm()
+const _d = new Date()
+const todayStr = `${_d.getFullYear()}-${String(_d.getMonth() + 1).padStart(2, '0')}-${String(_d.getDate()).padStart(2, '0')}`
 const courses = ref<Course[]>([])
 const assignments = ref<Assignment[]>([])
 const notes = ref<Note[]>([])
@@ -46,7 +50,7 @@ async function load() {
     grades.value = gs
     cards.value = fcs
     studyGoals.value = ts.filter((t) => t.scope === 'study' || t.type === 'study')
-    focusRecords.value = ps
+    focusRecords.value = [...ps].sort((a, b) => (b.id || 0) - (a.id || 0))
     pitfalls.value = pits
     readQueue.value = rq
     feynmanLogs.value = fys
@@ -475,6 +479,57 @@ const focusWeek = computed(() => {
 })
 const focusTotalMin = computed(() => focusRecords.value.filter((p) => p.completed === 1).reduce((s, p) => s + (p.minutes || 0), 0))
 const focusMaxMin = computed(() => Math.max(1, ...focusWeek.value.map((d) => d.minutes)))
+
+// ---- 专注记录增删改 ----
+const focusFormShow = ref(false)
+const focusEditing = ref<Pomodoro | null>(null)
+const focusLimit = ref(20)
+const focusFields: FieldDef[] = [
+  { key: 'task', label: '专注内容', required: true, placeholder: '例如：复习第三章' },
+  { key: 'minutes', label: '时长（分钟）', type: 'number', required: true },
+  { key: 'startedAt', label: '开始时间', type: 'date', required: true },
+  { key: 'completed', label: '是否完成', type: 'select', options: [
+    { label: '已完成', value: 1 }, { label: '未完成', value: 0 },
+  ] },
+]
+
+function openFocusEdit(p: Pomodoro) {
+  focusEditing.value = p
+  focusFormShow.value = true
+}
+
+async function submitFocus(v: Record<string, unknown>) {
+  const patch = {
+    task: String(v.task || '').trim(),
+    minutes: Number(v.minutes) || 0,
+    startedAt: String(v.startedAt || '') || undefined,
+    completed: Number(v.completed ?? 1),
+  }
+  try {
+    if (focusEditing.value) {
+      await pomodorosRepo.update(focusEditing.value.id, patch)
+      message.success('已保存')
+    } else {
+      await pomodorosRepo.insert(patch)
+      message.success('已添加')
+    }
+    load()
+  } catch {
+    message.error('保存失败')
+  }
+}
+
+async function removeFocus(p: Pomodoro) {
+  const ok = await confirm({ title: '删除这条专注记录？', content: `${p.task || '专注'} · ${p.minutes} 分钟` })
+  if (!ok) return
+  try {
+    await pomodorosRepo.remove(p.id)
+    message.success('已删除')
+    load()
+  } catch {
+    message.error('删除失败')
+  }
+}
 </script>
 
 <template>
@@ -720,6 +775,41 @@ const focusMaxMin = computed(() => Math.max(1, ...focusWeek.value.map((d) => d.m
             <span class="mono fw-day">{{ d.date.slice(5) }}</span>
           </div>
         </div>
+        <div class="sec-head" style="margin-top: 14px">
+          <span class="sec-title">专注明细</span>
+          <NButton size="tiny" secondary @click="focusFormShow = true">
+            <template #icon><NIcon :component="Plus" /></template>
+            添加记录
+          </NButton>
+        </div>
+        <div v-if="focusRecords.length" class="pr-records">
+          <div class="pr-row head">
+            <span>任务</span><span>时长</span><span>开始时间</span><span>状态</span><span>操作</span>
+          </div>
+          <div v-for="p in focusRecords.slice(0, focusLimit)" :key="p.id" class="pr-row">
+            <span>{{ p.task || '专注' }}</span>
+            <span class="mono">{{ p.minutes }} 分钟</span>
+            <span class="mono">{{ p.startedAt || '—' }}</span>
+            <span><NTag size="tiny" :bordered="false" :type="p.completed === 1 ? 'success' : 'warning'">{{ p.completed === 1 ? '已完成' : '中断' }}</NTag></span>
+            <span class="pr-ops">
+              <NButton size="tiny" quaternary @click="openFocusEdit(p)">编辑</NButton>
+              <NButton size="tiny" quaternary type="error" @click="removeFocus(p)">
+                <template #icon><NIcon :component="Trash" /></template>
+              </NButton>
+            </span>
+          </div>
+          <div v-if="focusRecords.length > focusLimit" class="pr-more">
+            <NButton size="tiny" quaternary @click="focusLimit += 50">加载更多</NButton>
+          </div>
+        </div>
+        <EmptyState v-else text="暂无专注记录" />
+        <ModalForm
+          v-model:show="focusFormShow"
+          :title="focusEditing ? '编辑专注记录' : '添加专注记录'"
+          :fields="focusFields"
+          :initial="focusEditing ? { task: focusEditing.task, minutes: focusEditing.minutes, startedAt: (focusEditing.startedAt || '').slice(0, 10), completed: focusEditing.completed } : { task: '', minutes: 25, startedAt: todayStr, completed: 1 }"
+          @submit="submitFocus"
+        />
       </n-tab-pane>
 
       <!-- 错题本 F-STU-10 -->
@@ -1007,4 +1097,12 @@ const focusMaxMin = computed(() => Math.max(1, ...focusWeek.value.map((d) => d.m
 .fw-bar-wrap { height: 90px; width: 14px; background: var(--wb-card-alt); border-radius: 999px; display: flex; align-items: flex-end; overflow: hidden; }
 .fw-bar { width: 100%; background: var(--wb-module-study); border-radius: 999px; }
 .fw-day { font-size: 10px; color: var(--wb-text-3); }
+.sec-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
+.sec-title { font-size: 13px; font-weight: 600; color: var(--wb-text-2); }
+.pr-records { border: 1px solid var(--wb-border); border-radius: var(--wb-radius-md); overflow: hidden; }
+.pr-row { display: grid; grid-template-columns: 2fr 0.8fr 1.6fr 0.8fr 1fr; gap: 10px; align-items: center; padding: 8px 14px; border-bottom: 1px solid var(--wb-border); font-size: 12.5px; }
+.pr-row:last-child { border-bottom: none; }
+.pr-row.head { background: var(--wb-card-alt); font-weight: 600; color: var(--wb-text-2); font-size: 12px; }
+.pr-ops { display: flex; align-items: center; gap: 2px; justify-content: flex-end; }
+.pr-more { padding: 8px 14px; text-align: center; border-top: 1px solid var(--wb-border); }
 </style>

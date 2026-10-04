@@ -5,10 +5,12 @@ import { NButton, NTag, NTabs, NTabPane, NIcon, useMessage, NInputNumber, NSelec
 import { Plus, Trash, Check } from '@vicons/tabler'
 import EmptyState from '@/components/EmptyState.vue'
 import ModalForm, { type FieldDef } from '@/components/ModalForm.vue'
+import { useConfirm } from '@/composables/useConfirm'
 import { habitsRepo, habitLogsRepo, ledgerRepo, pomodorosRepo, healthLogsRepo, fixedBillsRepo, deadlinesRepo, tasksRepo } from '@/db'
 import type { Habit, HabitLog, LedgerEntry, Pomodoro, HealthLog, FixedBill, Deadline, Task } from '../../drizzle/schema'
 
 const message = useMessage()
+const { confirm } = useConfirm()
 const habits = ref<Habit[]>([])
 const habitLogs = ref<HabitLog[]>([])
 const ledger = ref<LedgerEntry[]>([])
@@ -43,6 +45,11 @@ async function load() {
 }
 watch(refreshTick, () => load())
 onMounted(load)
+// 离开页面时停掉倒计时，否则计时器继续跑并在后台写记录
+onUnmounted(() => {
+  clearPomoInterval()
+  pomoRunning.value = false
+})
 
 // ---- 习惯打卡 ----
 const habitFields: FieldDef[] = [
@@ -59,6 +66,8 @@ async function addHabit(v: Record<string, unknown>) {
 }
 
 async function removeHabit(h: Habit) {
+  const ok = await confirm({ title: '删除这个习惯？', content: `「${h.name}」及其打卡记录将一并删除，无法恢复。` })
+  if (!ok) return
   try {
     await habitsRepo.remove(h.id)
     message.success('已删除')
@@ -139,6 +148,8 @@ async function addLedger(v: Record<string, unknown>) {
 }
 
 async function removeLedger(e: LedgerEntry) {
+  const ok = await confirm({ title: '删除这笔记录？', content: `${e.category || '未分类'} · ${e.amount} 元` })
+  if (!ok) return
   try {
     await ledgerRepo.remove(e.id)
     message.success('已删除')
@@ -165,6 +176,8 @@ const pomoTask = ref('')
 const pomoRunning = ref(false)
 const pomoLeft = ref(25 * 60)
 const pomoRecords = ref<Pomodoro[]>([])
+const pomoLimit = ref(20)
+const pomoEndsAt = ref(0)
 let pomoInterval: number | undefined
 
 const fmtClock = (secs: number) => {
@@ -187,43 +200,110 @@ function clearPomoInterval() {
 
 async function loadPomos() {
   try {
-    pomoRecords.value = (await pomodorosRepo.listAll()).sort((a, b) => (b.id || 0) - (a.id || 0)).slice(0, 20)
+    pomoRecords.value = (await pomodorosRepo.listAll())
+      .sort((a, b) => (b.id || 0) - (a.id || 0))
+      .slice(0, pomoLimit.value)
   } catch {
     pomoRecords.value = []
   }
 }
 
+function showMorePomos() {
+  pomoLimit.value += 50
+  loadPomos()
+}
+
+// 倒计时按结束时间戳计算，避免切窗口被节流后每秒自减产生漂移
 function startPomo() {
   if (pomoRunning.value) return
-  pomoLeft.value = pomoMinutes.value * 60
   pomoRunning.value = true
+  pomoLeft.value = pomoMinutes.value * 60
+  pomoEndsAt.value = Date.now() + pomoMinutes.value * 60 * 1000
+  clearPomoInterval()
   pomoInterval = window.setInterval(() => {
-    pomoLeft.value--
-    if (pomoLeft.value <= 0) completePomo()
-  }, 1000)
+    const left = Math.max(0, Math.round((pomoEndsAt.value - Date.now()) / 1000))
+    pomoLeft.value = left
+    if (left <= 0) completePomo()
+  }, 250)
 }
 
+// 暂停只是中断，不产生记录；此前会误写一条未完成记录
 function stopPomo() {
   clearPomoInterval()
-  if (pomoRunning.value) {
-    pomoRunning.value = false
-    try {
-      pomodorosRepo.insert({ task: pomoTask.value || '专注', minutes: pomoMinutes.value, startedAt: nowStamp(), completed: 0 }).then(loadPomos)
-    } catch { /* 忽略写入失败 */ }
-  }
+  pomoRunning.value = false
+  pomoLeft.value = 0
 }
 
-function completePomo() {
+async function completePomo() {
   clearPomoInterval()
   pomoRunning.value = false
   pomoLeft.value = 0
   try {
-    pomodorosRepo.insert({ task: pomoTask.value || '专注', minutes: pomoMinutes.value, startedAt: nowStamp(), completed: 1 }).then(loadPomos)
-  } catch { /* 忽略写入失败 */ }
-  message.success('番茄钟完成，休息一下吧')
+    await pomodorosRepo.insert({ task: pomoTask.value || '专注', minutes: pomoMinutes.value, startedAt: nowStamp(), completed: 1 })
+    message.success('番茄钟完成，休息一下吧')
+    loadPomos()
+  } catch {
+    message.error('记录保存失败')
+  }
 }
 
-const pomoDoneCount = computed(() => pomoRecords.value.filter((p) => p.completed === 1).length)
+// ---- 专注记录增删改 ----
+const pomoFormShow = ref(false)
+const pomoEditing = ref<Pomodoro | null>(null)
+const pomoFields: FieldDef[] = [
+  { key: 'task', label: '专注内容', required: true, placeholder: '例如：写周报' },
+  { key: 'minutes', label: '时长（分钟）', type: 'number', required: true },
+  { key: 'startedAt', label: '开始时间', type: 'date', required: true },
+  { key: 'completed', label: '是否完成', type: 'select', options: [
+    { label: '已完成', value: 1 }, { label: '未完成', value: 0 },
+  ] },
+]
+
+function openPomoAdd() {
+  pomoEditing.value = null
+  pomoFormShow.value = true
+}
+
+function openPomoEdit(p: Pomodoro) {
+  pomoEditing.value = p
+  pomoFormShow.value = true
+}
+
+async function submitPomo(v: Record<string, unknown>) {
+  const patch = {
+    task: String(v.task || '').trim(),
+    minutes: Number(v.minutes) || 0,
+    startedAt: String(v.startedAt || nowStamp()),
+    completed: Number(v.completed ?? 1),
+  }
+  try {
+    if (pomoEditing.value) {
+      await pomodorosRepo.update(pomoEditing.value.id, patch)
+      message.success('已保存')
+    } else {
+      await pomodorosRepo.insert(patch)
+      message.success('已添加')
+    }
+    loadPomos()
+  } catch {
+    message.error('保存失败')
+  }
+}
+
+async function removePomo(p: Pomodoro) {
+  const ok = await confirm({ title: '删除这条专注记录？', content: `${p.task || '专注'} · ${p.minutes} 分钟` })
+  if (!ok) return
+  try {
+    await pomodorosRepo.remove(p.id)
+    message.success('已删除')
+    loadPomos()
+  } catch {
+    message.error('删除失败')
+  }
+}
+
+// 统计按 startedAt 的日期前缀判定，不依赖当前列表截断范围
+const pomoDoneCount = computed(() => pomoRecords.value.filter((p) => p.completed === 1 && (p.startedAt || '').slice(0, 10) === todayStr).length)
 
 // ---- 健康记录（F-LIFE-06）----
 const healthRecords = ref<HealthLog[]>([])
@@ -316,6 +396,8 @@ async function addBill(v: Record<string, unknown>) {
   } catch { message.error('保存失败（请通过 npm run tauri dev 启动）') }
 }
 async function removeBill(b: FixedBill) {
+  const ok = await confirm({ title: '删除这笔固定账单？', content: `${b.name} · ${b.amount} 元` })
+  if (!ok) return
   try { await fixedBillsRepo.remove(b.id); message.success('已删除'); load() } catch { message.error('删除失败') }
 }
 const billDueSoon = computed(() => {
@@ -354,6 +436,8 @@ async function toggleChore(t: Task) {
   try { await tasksRepo.update(t.id, { status: t.status === 'done' ? 'todo' : 'done' }); t.status = t.status === 'done' ? 'todo' : 'done' } catch { message.error('更新失败') }
 }
 async function removeChore(t: Task) {
+  const ok = await confirm({ title: '删除这条事务？', content: t.title || '未命名事务' })
+  if (!ok) return
   try { await tasksRepo.remove(t.id); message.success('已删除'); load() } catch { message.error('删除失败') }
 }
 const choreFormShow = ref(false)
@@ -489,7 +573,7 @@ const remindItems = computed(() => {
               <template #icon><NIcon :component="Check" /></template>
               开始
             </NButton>
-            <NButton v-else size="small" type="warning" ghost @click="stopPomo()">暂停并记录</NButton>
+            <NButton v-else size="small" type="warning" ghost @click="stopPomo()">暂停</NButton>
           </div>
         </div>
         <div class="pomo-stats">
@@ -502,18 +586,41 @@ const remindItems = computed(() => {
             <span class="mono pomo-stat-num">{{ pomoRecords.filter((p) => p.completed === 1).reduce((s, p) => s + (p.minutes || 0), 0) }} 分钟</span>
           </div>
         </div>
+        <div class="sec-head" style="margin-top: 12px">
+          <span class="sec-title">专注记录</span>
+          <NButton size="tiny" secondary @click="openPomoAdd()">
+            <template #icon><NIcon :component="Plus" /></template>
+            手动添加
+          </NButton>
+        </div>
         <div v-if="pomoRecords.length" class="pomo-records">
           <div class="pr-row head">
-            <span>任务</span><span>时长</span><span>开始时间</span><span>状态</span>
+            <span>任务</span><span>时长</span><span>开始时间</span><span>状态</span><span>操作</span>
           </div>
           <div v-for="p in pomoRecords" :key="p.id" class="pr-row">
             <span>{{ p.task || '专注' }}</span>
             <span class="mono">{{ p.minutes }} 分钟</span>
             <span class="mono">{{ p.startedAt || '—' }}</span>
             <span><NTag size="tiny" :bordered="false" :type="p.completed === 1 ? 'success' : 'warning'">{{ p.completed === 1 ? '已完成' : '中断' }}</NTag></span>
+            <span class="pr-ops">
+              <NButton size="tiny" quaternary @click="openPomoEdit(p)">编辑</NButton>
+              <NButton size="tiny" quaternary type="error" @click="removePomo(p)">
+                <template #icon><NIcon :component="Trash" /></template>
+              </NButton>
+            </span>
+          </div>
+          <div v-if="pomoRecords.length >= pomoLimit" class="pr-more">
+            <NButton size="tiny" quaternary @click="showMorePomos()">加载更多</NButton>
           </div>
         </div>
-        <EmptyState v-else text="暂无番茄钟记录" />
+        <EmptyState v-else text="暂无专注记录，可跑一个番茄钟或手动添加" />
+        <ModalForm
+          v-model:show="pomoFormShow"
+          :title="pomoEditing ? '编辑专注记录' : '添加专注记录'"
+          :fields="pomoFields"
+          :initial="pomoEditing ? { task: pomoEditing.task, minutes: pomoEditing.minutes, startedAt: (pomoEditing.startedAt || '').slice(0, 10), completed: pomoEditing.completed } : { task: '', minutes: 25, startedAt: todayStr, completed: 1 }"
+          @submit="submitPomo"
+        />
       </n-tab-pane>
 
       <!-- 健康记录 -->
@@ -780,7 +887,11 @@ const remindItems = computed(() => {
   border-bottom: 1px solid var(--wb-border);
   font-size: 12.5px;
 }
-.pr-row { grid-template-columns: 2fr 0.8fr 1.6fr 0.8fr; }
+.pr-row { grid-template-columns: 2fr 0.8fr 1.6fr 0.8fr 1fr; }
+.pr-ops { display: flex; align-items: center; gap: 2px; justify-content: flex-end; }
+.pr-more { padding: 8px 14px; text-align: center; border-top: 1px solid var(--wb-border); }
+.sec-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
+.sec-title { font-size: 13px; font-weight: 600; color: var(--wb-text-2); }
 .ht-row { grid-template-columns: 1fr 0.8fr 0.8fr 0.8fr 0.8fr 2fr; }
 .pr-row:last-child, .ht-row:last-child { border-bottom: none; }
 .pr-row.head, .ht-row.head {

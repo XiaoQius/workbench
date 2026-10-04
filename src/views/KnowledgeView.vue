@@ -8,8 +8,10 @@ import ModalForm, { type FieldDef } from '@/components/ModalForm.vue'
 import { pitfallsRepo, resourcesRepo, decisionsRepo, skillTreeRepo, learningPathsRepo, threeDProjectsRepo, portfoliosRepo, contentCalendarsRepo, linksRepo } from '@/db'
 import type { Pitfall, Resource, Decision, SkillNode, LearningPath, ThreeDProject, Portfolio, ContentCalendar, Link } from '../../drizzle/schema'
 import { scanAssets, type AssetInfo } from '@/composables/useTauri'
+import { useConfirm } from '@/composables/useConfirm'
 
 const message = useMessage()
+const { confirm } = useConfirm()
 const pitfalls = ref<Pitfall[]>([])
 const links = ref<Resource[]>([])
 const pitfallFormShow = ref(false)
@@ -164,6 +166,8 @@ async function addPitfall(v: Record<string, unknown>) {
 }
 
 async function removePitfall(p: Pitfall) {
+  const ok = await confirm({ title: '删除踩坑记录？', content: `「${p.title}」删除后无法恢复。` })
+  if (!ok) return
   try {
     await pitfallsRepo.remove(p.id)
     message.success('已删除')
@@ -202,6 +206,8 @@ async function addLink(v: Record<string, unknown>) {
 }
 
 async function removeLink(l: Resource) {
+  const ok = await confirm({ title: '删除收藏链接？', content: `「${l.title}」${l.url}。` })
+  if (!ok) return
   try {
     await resourcesRepo.remove(l.id)
     message.success('已删除')
@@ -237,6 +243,8 @@ async function addDecision(v: Record<string, unknown>) {
   } catch { message.error('保存失败（请通过 npm run tauri dev 启动）') }
 }
 async function removeDecision(d: Decision) {
+  const ok = await confirm({ title: '删除决策记录？', content: `「${d.title}」${d.decidedAt || '无日期'}，删除后无法恢复。` })
+  if (!ok) return
   try { await decisionsRepo.remove(d.id); message.success('已删除'); load() } catch { message.error('删除失败') }
 }
 const decisionStatus = (d: Decision) => ({
@@ -269,6 +277,8 @@ async function addSkill(v: Record<string, unknown>) {
   } catch { message.error('保存失败（请通过 npm run tauri dev 启动）') }
 }
 async function removeSkill(s: SkillNode) {
+  const ok = await confirm({ title: '删除技能节点？', content: `「${s.name}」L${s.level}，删除后无法恢复。` })
+  if (!ok) return
   try { await skillTreeRepo.remove(s.id); message.success('已删除'); load() } catch { message.error('删除失败') }
 }
 const skillStatusColor = (s: SkillNode) => (s.status === 'mastered' ? 'success' : s.status === 'learning' ? 'info' : 'default') as 'success' | 'info' | 'default'
@@ -324,6 +334,8 @@ async function togglePathStatus(p: LearningPath) {
   try { await learningPathsRepo.update(p.id, { status: next }); p.status = next; load() } catch { message.error('更新失败') }
 }
 async function removePath(p: LearningPath) {
+  const ok = await confirm({ title: '删除学习路径步骤？', content: `「${p.title}」第 ${p.step} 步，删除后无法恢复。` })
+  if (!ok) return
   try { await learningPathsRepo.remove(p.id); message.success('已删除'); load() } catch { message.error('删除失败') }
 }
 
@@ -395,9 +407,21 @@ async function addContent(v: Record<string, unknown>) {
     message.success('内容已排期'); load()
   } catch { message.error('保存失败（请通过 npm run tauri dev 启动）') }
 }
-async function removeThreeD(t: ThreeDProject) { try { await threeDProjectsRepo.remove(t.id); load() } catch { /* ignore */ } }
-async function removePortfolio(p: Portfolio) { try { await portfoliosRepo.remove(p.id); load() } catch { /* ignore */ } }
-async function removeContent(c: ContentCalendar) { try { await contentCalendarsRepo.remove(c.id); load() } catch { /* ignore */ } }
+async function removeThreeD(t: ThreeDProject) {
+  const ok = await confirm({ title: '删除 3D 项目？', content: `「${t.name}」${t.tool || '未填工具'}，删除后无法恢复。` })
+  if (!ok) return
+  try { await threeDProjectsRepo.remove(t.id); load() } catch { /* ignore */ }
+}
+async function removePortfolio(p: Portfolio) {
+  const ok = await confirm({ title: '删除作品？', content: `「${p.title}」${p.category}，删除后无法恢复。` })
+  if (!ok) return
+  try { await portfoliosRepo.remove(p.id); load() } catch { /* ignore */ }
+}
+async function removeContent(c: ContentCalendar) {
+  const ok = await confirm({ title: '删除内容排期？', content: `「${c.title}」${c.platform}，计划于 ${c.plannedAt}。` })
+  if (!ok) return
+  try { await contentCalendarsRepo.remove(c.id); load() } catch { /* ignore */ }
+}
 
 // ---- F-KNW-04 实体双链 + 关联图视图 ----
 type GraphNode = { id: string; label: string; group: string }

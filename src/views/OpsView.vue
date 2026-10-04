@@ -8,8 +8,10 @@ import ModalForm, { type FieldDef } from '@/components/ModalForm.vue'
 import { serversRepo, domainsRepo, opsFlowsRepo, opsChangesRepo, opsSecChecksRepo, opsSecretsRepo, opsDnsRepo } from '@/db'
 import { diskSpace, portUsage, healthCheck, proxyDetect, wslStatus, schtasksList, backupVerify, type DiskInfo, type PortInfo, type HealthResult, type ProxyInfo, type WslDistro, type ScheduledTask, type BackupVerifyInfo } from '@/composables/useTauri'
 import type { Server, Domain, OpsFlow, OpsChange, OpsSecCheck, OpsSecret, OpsDnsRecord } from '../../drizzle/schema'
+import { useConfirm } from '@/composables/useConfirm'
 
 const message = useMessage()
+const { confirm } = useConfirm()
 const servers = ref<Server[]>([])
 const domains = ref<Domain[]>([])
 const disks = ref<DiskInfo[]>([])
@@ -224,6 +226,8 @@ async function addServer(v: Record<string, unknown>) {
 }
 
 async function removeServer(s: Server) {
+  const ok = await confirm({ title: '删除服务器？', content: `「${s.name}」${s.ip || '无 IP'}，删除后无法恢复。` })
+  if (!ok) return
   try {
     await serversRepo.remove(s.id)
     message.success('已删除')
@@ -262,6 +266,8 @@ async function addDomain(v: Record<string, unknown>) {
 }
 
 async function removeDomain(d: Domain) {
+  const ok = await confirm({ title: '删除域名？', content: `「${d.name}」删除后无法恢复。` })
+  if (!ok) return
   try {
     await domainsRepo.remove(d.id)
     message.success('已删除')
@@ -311,6 +317,8 @@ async function addFlow(v: Record<string, unknown>) {
   } catch { message.error('添加失败（请通过 npm run tauri dev 启动）') }
 }
 async function removeFlow(f: OpsFlow) {
+  const ok = await confirm({ title: '删除流量预警？', content: `「${f.name}」${f.metric}，阈值 ${f.threshold}。` })
+  if (!ok) return
   try { await opsFlowsRepo.remove(f.id); message.success('已删除'); load() } catch { message.error('删除失败') }
 }
 
@@ -349,6 +357,8 @@ async function addChange(v: Record<string, unknown>) {
   } catch { message.error('添加失败（请通过 npm run tauri dev 启动）') }
 }
 async function removeChange(c: OpsChange) {
+  const ok = await confirm({ title: '删除变更记录？', content: `「${c.title}」${c.env}，${c.changedAt || '无日期'}。` })
+  if (!ok) return
   try { await opsChangesRepo.remove(c.id); message.success('已删除'); load() } catch { message.error('删除失败') }
 }
 
@@ -392,6 +402,8 @@ async function addSec(v: Record<string, unknown>) {
   } catch { message.error('添加失败（请通过 npm run tauri dev 启动）') }
 }
 async function removeSec(s: OpsSecCheck) {
+  const ok = await confirm({ title: '删除安全巡检记录？', content: `「${s.title}」${s.checkedAt || '无日期'}，结果 ${s.result}。` })
+  if (!ok) return
   try { await opsSecChecksRepo.remove(s.id); message.success('已删除'); load() } catch { message.error('删除失败') }
 }
 
@@ -424,6 +436,8 @@ async function addSecret(v: Record<string, unknown>) {
   } catch { message.error('添加失败（请通过 npm run tauri dev 启动）') }
 }
 async function removeSecret(s: OpsSecret) {
+  const ok = await confirm({ title: '删除密钥记录？', content: `「${s.name}」${s.provider || '无服务商'}，删除后无法恢复。` })
+  if (!ok) return
   try { await opsSecretsRepo.remove(s.id); message.success('已删除'); load() } catch { message.error('删除失败') }
 }
 
@@ -461,6 +475,8 @@ async function addDns(v: Record<string, unknown>) {
   } catch { message.error('添加失败（请通过 npm run tauri dev 启动）') }
 }
 async function removeDns(d: OpsDnsRecord) {
+  const ok = await confirm({ title: '删除 DNS 记录？', content: `「${d.name}」${d.recordType} 记录，主机 ${d.host}，指向 ${d.value}。` })
+  if (!ok) return
   try { await opsDnsRepo.remove(d.id); message.success('已删除'); load() } catch { message.error('删除失败') }
 }
 </script>

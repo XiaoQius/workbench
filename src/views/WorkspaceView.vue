@@ -8,8 +8,10 @@ import ModalForm, { type FieldDef } from '@/components/ModalForm.vue'
 import { toolsRepo, agentsRepo } from '@/db'
 import type { Tool, Agent } from '../../drizzle/schema'
 import { scanAgents, portProbe, agentWorkflow, listInstalledApps, resolveShortcut, launchApp, type AgentSessionInfo, type AgentWorkflowResult, type InstalledApp } from '@/composables/useTauri'
+import { useConfirm } from '@/composables/useConfirm'
 
 const message = useMessage()
+const { confirm } = useConfirm()
 const tools = ref<Tool[]>([])
 const agents = ref<Agent[]>([])
 const loading = ref(false)
@@ -531,8 +533,9 @@ async function addTool(v: Record<string, unknown>) {
 
 async function launchTool(t: Tool) {
   try {
-    await toolsRepo.update(t.id, { hitCount: t.hitCount + 1 })
-    t.hitCount += 1
+    const next = (Number(t.hitCount) || 0) + 1
+    await toolsRepo.update(t.id, { hitCount: next })
+    t.hitCount = next
   } catch { /* ignore */ }
   const target = t.target
   if (t.launchType === 'url' || /^https?:\/\//.test(target)) {
@@ -551,6 +554,8 @@ async function launchTool(t: Tool) {
 }
 
 async function removeTool(t: Tool) {
+  const ok = await confirm({ title: '删除这个工具？', content: `「${t.name}」${t.note ? ` · ${t.note}` : ''}` })
+  if (!ok) return
   try {
     await toolsRepo.remove(t.id)
     message.success('已删除')
@@ -600,6 +605,8 @@ async function setAgentStatus(a: Agent, status: string) {
 }
 
 async function removeAgent(a: Agent) {
+  const ok = await confirm({ title: '删除这个 Agent？', content: `「${a.name}」${a.vendor ? ` · ${a.vendor}` : ''}` })
+  if (!ok) return
   try {
     await agentsRepo.remove(a.id)
     message.success('已删除')

@@ -8,8 +8,10 @@ import ModalForm, { type FieldDef } from '@/components/ModalForm.vue'
 import { projectsRepo, tasksRepo, snippetsRepo, deploymentsRepo, envVarsRepo, techDebtsRepo, cmdSnippetsRepo } from '@/db'
 import type { Project, Task, Snippet, Deployment, EnvVar, TechDebt, CmdSnippet } from '../../drizzle/schema'
 import { scanProjects, gitStatus, openPath, gitLog, codeStats, envList, repoHealth, depsCheck, type ProjectInfo, type GitStatus, type GitCommitInfo, type LangStat, type RepoHealth, type DepCheckItem } from '@/composables/useTauri'
+import { useConfirm } from '@/composables/useConfirm'
 
 const message = useMessage()
+const { confirm } = useConfirm()
 const tab = ref('board')
 
 const projects = ref<Project[]>([])
@@ -217,6 +219,8 @@ async function addTask(v: Record<string, unknown>) {
 }
 
 async function removeTask(t: Task) {
+  const ok = await confirm({ title: '删除任务？', content: `「${t.title}」删除后无法恢复。` })
+  if (!ok) return
   try {
     await tasksRepo.remove(t.id)
     message.success('已删除')
@@ -257,6 +261,8 @@ async function addSnippet(v: Record<string, unknown>) {
 }
 
 async function removeSnippet(s: Snippet) {
+  const ok = await confirm({ title: '删除代码片段？', content: `「${s.title}」（${s.language}）删除后无法恢复。` })
+  if (!ok) return
   try {
     await snippetsRepo.remove(s.id)
     if (activeSnippet.value?.id === s.id) activeSnippet.value = null
@@ -310,6 +316,8 @@ async function addDeploy(v: Record<string, unknown>) {
   } catch { message.error('添加失败（请通过 npm run tauri dev 启动）') }
 }
 async function removeDeploy(d: Deployment) {
+  const ok = await confirm({ title: '删除部署记录？', content: `「${d.project}」${d.env}，版本 ${d.version || '未填写'}。` })
+  if (!ok) return
   try { await deploymentsRepo.remove(d.id); message.success('已删除'); load() } catch { message.error('删除失败') }
 }
 const deployStatus = (d: Deployment) => ({
@@ -336,6 +344,8 @@ async function addEnv(v: Record<string, unknown>) {
   } catch { message.error('添加失败（请通过 npm run tauri dev 启动）') }
 }
 async function removeEnv(e: EnvVar) {
+  const ok = await confirm({ title: '删除环境变量？', content: `「${e.key}」删除后无法恢复。` })
+  if (!ok) return
   try { await envVarsRepo.remove(e.id); message.success('已删除'); load() } catch { message.error('删除失败') }
 }
 const sysEnvVars = ref<Array<[string, string]>>([])
@@ -371,6 +381,8 @@ async function addDebt(v: Record<string, unknown>) {
   } catch { message.error('添加失败（请通过 npm run tauri dev 启动）') }
 }
 async function removeDebt(d: TechDebt) {
+  const ok = await confirm({ title: '删除技术债？', content: `「${d.title}」删除后无法恢复。` })
+  if (!ok) return
   try { await techDebtsRepo.remove(d.id); message.success('已删除'); load() } catch { message.error('删除失败') }
 }
 const debtSeverity = (d: TechDebt) => ({
@@ -399,6 +411,8 @@ async function addCmd(v: Record<string, unknown>) {
   } catch { message.error('保存失败（请通过 npm run tauri dev 启动）') }
 }
 async function removeCmd(c: CmdSnippet) {
+  const ok = await confirm({ title: '删除命令片段？', content: `「${c.title}」删除后无法恢复。` })
+  if (!ok) return
   try { await cmdSnippetsRepo.remove(c.id); message.success('已删除'); load() } catch { message.error('删除失败') }
 }
 async function bumpCmd(c: CmdSnippet) {
