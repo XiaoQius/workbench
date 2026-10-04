@@ -36,7 +36,9 @@ const MODULE_ICONS: Record<string, unknown> = {
 }
 
 // 侧栏顶部头像：自定义 > 登录用户名定色 > 设备名稳定取色
-const avatarLabel = computed(() => s.avatarText.trim() || avatarName(s.deviceName, s.cloudUser))
+// 语义分层：右侧文字永远是「展示名」（用户名/设备名），头像文字只控制头像圈里的字。
+// 旧写法 avatarLabel 优先取 avatarText，导致填一个字时圆圈与右侧显示同一个值（重复）。
+const avatarLabel = computed(() => avatarName(s.deviceName, s.cloudUser))
 const avatarBg = computed(() => s.avatarColor || avatarColor(avatarSeed(s.deviceName, s.cloudUser)))
 const avatarCharText = computed(() => s.avatarText.trim() ? s.avatarText.trim()[0] : avatarChar(avatarLabel.value))
 
