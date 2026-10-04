@@ -85,9 +85,10 @@ async function downloadAndInstall() {
   try {
     const path = await downloadUpdate(updateUrl.value, updateLatest.value)
     installPhase.value = 'install'
-    updateMsg.value = '已下载，正在启动安装…'
-    await installUpdate(path)
-    updateMsg.value = `已启动 v${updateLatest.value} 安装程序，请按进度条提示完成更新（完成后重新打开应用即可）`
+    // msiexec 覆盖安装时若本应用仍在运行会占用 exe 导致失败（错误 1603），先如实告知
+    updateMsg.value = `正在安装 v${updateLatest.value}…（请勿关闭本窗口；若提示文件占用，请先退出 WORKBENCH 再点「在浏览器打开」手动安装）`
+    const result = await installUpdate(path)
+    updateMsg.value = `v${updateLatest.value} ${result}`
   } catch (e) {
     updateMsg.value = `应用内更新失败：${String(e)}\n可点「在浏览器打开」手动下载安装`
   } finally {

@@ -134,21 +134,43 @@ fn fetch_to_file(url: &str, dest: &std::path::Path) -> Result<(), String> {
     Ok(())
 }
 
-/// 拉起安装：msiexec /passive 显示进度条但无需交互；不等安装完成，拉起即返回。
+/// 拉起安装并**等待其结束**：msiexec /passive 显示进度条但无需交互。
+///
+/// 关键：必须 wait() 拿退出码。原实现 spawn 后立即返回「已启动安装程序」，
+/// 于是进度条一闪而过、实际没装上（或被占用/UAC 拒绝失败）时界面也报成功——
+/// 这正是「更新包无效」无法自查的原因。现在按退出码给出可读结论。
 #[tauri::command]
 pub async fn install_update(file_path: String) -> Result<String, String> {
     tauri::async_runtime::spawn_blocking(move || {
         if !std::path::Path::new(&file_path).exists() {
             return Err(format!("安装包不存在: {file_path}"));
         }
-        // start 会拉起新窗口（msiexec 进度界面），属预期行为；cmd 自身不闪黑框
         use std::os::windows::process::CommandExt;
-        std::process::Command::new("cmd")
-            .args(["/C", "start", "", "msiexec", "/i", &file_path, "/passive"])
+        // 不再套 cmd /C start：那样拿到的是 cmd 的退出码而非 msiexec 的，
+        // 失败会被掩盖。直接起 msiexec 并等待；CREATE_NO_WINDOW 避免闪黑框。
+        let status = std::process::Command::new("msiexec")
+            .args(["/i", &file_path, "/passive", "/norestart"])
             .creation_flags(0x0800_0000)
-            .spawn()
-            .map_err(|e| format!("启动安装失败: {e}"))?;
-        Ok("已启动安装程序，请按进度条提示完成更新".to_string())
+            .status()
+            .map_err(|e| format!("启动安装程序失败: {e}（若提示需管理员权限，请手动双击安装包）"))?;
+
+        let code = status.code().unwrap_or(-1);
+        match code {
+            // 0 成功；1641 成功且需重启；3010 成功需重启
+            0 | 1641 | 3010 => Ok(if code == 0 {
+                "安装完成，重新打开应用即可".to_string()
+            } else {
+                "安装完成，需要重启电脑后生效".to_string()
+            }),
+            1602 => Err("安装已取消".to_string()),
+            1603 => Err("安装失败（错误 1603）：常见原因是应用仍在运行占用了文件。请完全退出 WORKBENCH 后重试，或手动双击安装包安装".to_string()),
+            1618 => Err("另一个安装程序正在运行，请稍后重试（错误 1618）".to_string()),
+            1619 => Err("无法打开安装包（错误 1619）：文件可能损坏，请重新下载".to_string()),
+            1620 => Err("安装包无效（错误 1620）：请重新下载安装包".to_string()),
+            1638 => Err("已安装了相同或更新的版本（错误 1638），无需重复安装".to_string()),
+            1639 => Err("安装包参数错误（错误 1639）".to_string()),
+            other => Err(format!("安装结束，退出码 {}（0 表示成功）。若未生效，请手动双击安装包安装", other)),
+        }
     })
     .await
     .map_err(|e| format!("{e}"))?
