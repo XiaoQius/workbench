@@ -150,107 +150,106 @@ async function bootstrapPending(): Promise<void> {
 
 interface PushResult { tempId?: string; id: number; accepted: boolean; reason?: string; error?: string; _sv?: number }
 
-async function pushPending(): Promise<void> {
-  for (const t of SYNC_TABLES) {
-    const states = await query<{ rowId: number; serverId: number | null; ut: number; del: number; baseUt: number }>(
-      `SELECT rowId, serverId, ut, del, baseUt FROM _sync_state WHERE tableName = ? AND pending = 1 ORDER BY rowId LIMIT 500`,
-      [t],
-    )
-    if (states.length === 0) continue
-
-    // 批量读取本批次的本地行，避免逐行 SELECT（N+1）
-    const liveIds = states.filter((s) => s.del === 0).map((s) => s.rowId)
-    const rowMap = new Map<number, Record<string, unknown>>()
-    if (liveIds.length > 0) {
-      const lp = liveIds.map(() => '?').join(', ')
-      const rowData = await query<Record<string, unknown>>(`SELECT * FROM ${t} WHERE id IN (${lp})`, liveIds)
-      for (const r of rowData) rowMap.set(r.id as number, r)
+/** 推送单张表的待上云改动（原 pushPending 的循环体，改成可并发调用） */
+async function pushPendingTable(t: string): Promise<void> {
+  const states = await query<{ rowId: number; serverId: number | null; ut: number; del: number; baseUt: number }>(
+    `SELECT rowId, serverId, ut, del, baseUt FROM _sync_state WHERE tableName = ? AND pending = 1 ORDER BY rowId LIMIT 500`,
+    [t],
+  )
+  if (states.length === 0) return
+  
+  // 批量读取本批次的本地行，避免逐行 SELECT（N+1）
+  const liveIds = states.filter((s) => s.del === 0).map((s) => s.rowId)
+  const rowMap = new Map<number, Record<string, unknown>>()
+  if (liveIds.length > 0) {
+    const lp = liveIds.map(() => '?').join(', ')
+    const rowData = await query<Record<string, unknown>>(`SELECT * FROM ${t} WHERE id IN (${lp})`, liveIds)
+    for (const r of rowData) rowMap.set(r.id as number, r)
+  }
+  
+  // 服务端已删除但本地从未上送过的墓碑：直接丢弃
+  const rows: Record<string, unknown>[] = []
+  const entries: { rowId: number; serverId: number | null; del: number; ut: number; baseUt: number }[] = []
+  const orphan: number[] = [] // 本地行已不存在的残留状态
+  for (const st of states) {
+    if (st.del === 1 && st.serverId == null) {
+      orphan.push(st.rowId)
+      continue
     }
-
-    // 服务端已删除但本地从未上送过的墓碑：直接丢弃
-    const rows: Record<string, unknown>[] = []
-    const entries: { rowId: number; serverId: number | null; del: number; ut: number; baseUt: number }[] = []
-    const orphan: number[] = [] // 本地行已不存在的残留状态
-    for (const st of states) {
-      if (st.del === 1 && st.serverId == null) {
+    if (st.del === 1) {
+      rows.push({ id: st.serverId, _del: 1, _ut: st.ut })
+    } else {
+      const rowData = rowMap.get(st.rowId)
+      if (!rowData) {
         orphan.push(st.rowId)
         continue
       }
-      if (st.del === 1) {
-        rows.push({ id: st.serverId, _del: 1, _ut: st.ut })
-      } else {
-        const rowData = rowMap.get(st.rowId)
-        if (!rowData) {
-          orphan.push(st.rowId)
-          continue
-        }
-        const clean: Record<string, unknown> = { _ut: st.ut }
-        for (const [k, v] of Object.entries(rowData)) {
-          if (k !== 'id' && !k.startsWith('_')) clean[k] = v
-        }
-        if (st.serverId != null) clean.id = st.serverId
-        else clean.tempId = String(st.rowId)
-        rows.push(clean)
+      const clean: Record<string, unknown> = { _ut: st.ut }
+      for (const [k, v] of Object.entries(rowData)) {
+        if (k !== 'id' && !k.startsWith('_')) clean[k] = v
       }
-      entries.push({ rowId: st.rowId, serverId: st.serverId, del: st.del, ut: st.ut, baseUt: st.baseUt ?? 0 })
+      if (st.serverId != null) clean.id = st.serverId
+      else clean.tempId = String(st.rowId)
+      rows.push(clean)
     }
-    // 孤儿状态批量清理
-    if (orphan.length > 0) {
-      const op = orphan.map(() => '?').join(', ')
-      await exec(`DELETE FROM _sync_state WHERE tableName = ? AND rowId IN (${op})`, [t, ...orphan])
-    }
-    if (rows.length === 0) continue
-
-    const r = await api<{ results: PushResult[] }>(`/sync/${t}/push`, {
-      method: 'POST',
-      body: JSON.stringify({ rows }),
-    })
-
-    // 结果回写：按「删除 / 标记已推送 / 放弃 stale」三类拼批，避免逐行 UPDATE
-    const doneDeletes: number[] = []
-    const doneUpdates: { rowId: number; serverId: number | null; ut: number }[] = []
-    const staleIds: number[] = []
-    // stale 只说明「服务端版本不比我的旧」，不等于冲突。
-    // 真冲突 = 服务端拒绝了 + 我这边的改动确实还没上过云（ut > baseUt）。
-    // baseUt 是上次与云端一致时的时间戳，ut 是本地最后改动时间，二者不等
-    // 即本地有未上云的改动；服务端那份则是别人改的 → 两边都有真实改动，
-    // 标记 conflict 保留双方等用户裁决，绝不静默覆盖。
-    // 注意 baseUt=0 表示「从未与云端对齐过」（含离线新建的行），此时
-    // ut 必 > 0，同样判为冲突——否则离线新建的记录会被云端无声吃掉。
-    const conflictIds: number[] = []
-    for (let i = 0; i < entries.length; i++) {
-      const entry = entries[i]
-      const res = r.results[i]
-      if (!res) continue
-      if (res.accepted) {
-        if (entry.del === 1) doneDeletes.push(entry.rowId)
-        else doneUpdates.push({ rowId: entry.rowId, serverId: res.id ?? entry.serverId, ut: entry.ut })
-      } else if (res.reason === 'stale') {
-        // 删除类冲突无法裁决：本地行已经不在了，「保留我的」无处可取，
-        // 只能以云端为准。其余情况才交给用户挑。
-        if (entry.ut > entry.baseUt && entry.del === 0) conflictIds.push(entry.rowId)
-        else staleIds.push(entry.rowId)
-      }
-    }
-    const stmts: string[] = []
-    if (doneDeletes.length > 0) {
-      stmts.push(`DELETE FROM _sync_state WHERE tableName = '${t}' AND rowId IN (${doneDeletes.join(', ')})`)
-    }
-    for (const u of doneUpdates) {
-      // 推送成功即与云端对齐：基准推到本次的 ut，后续改动才算「脏」
-      stmts.push(
-        `UPDATE _sync_state SET pending = 0, serverId = ${u.serverId ?? 'NULL'}, baseUt = ${u.ut}, conflict = 0 WHERE tableName = '${t}' AND rowId = ${u.rowId}`,
-      )
-    }
-    if (staleIds.length > 0) {
-      // 本地没改过（ut == baseUt），服务端版本更新，直接以服务端为准
-      stmts.push(`UPDATE _sync_state SET pending = 0, baseUt = ut WHERE tableName = '${t}' AND rowId IN (${staleIds.join(', ')})`)
-    }
-    if (conflictIds.length > 0) {
-      stmts.push(`UPDATE _sync_state SET pending = 0, conflict = 1 WHERE tableName = '${t}' AND rowId IN (${conflictIds.join(', ')})`)
-    }
-    if (stmts.length > 0) await runBatch(stmts)
+    entries.push({ rowId: st.rowId, serverId: st.serverId, del: st.del, ut: st.ut, baseUt: st.baseUt ?? 0 })
   }
+  // 孤儿状态批量清理
+  if (orphan.length > 0) {
+    const op = orphan.map(() => '?').join(', ')
+    await exec(`DELETE FROM _sync_state WHERE tableName = ? AND rowId IN (${op})`, [t, ...orphan])
+  }
+  if (rows.length === 0) return
+  
+  const r = await api<{ results: PushResult[] }>(`/sync/${t}/push`, {
+    method: 'POST',
+    body: JSON.stringify({ rows }),
+  })
+  
+  // 结果回写：按「删除 / 标记已推送 / 放弃 stale」三类拼批，避免逐行 UPDATE
+  const doneDeletes: number[] = []
+  const doneUpdates: { rowId: number; serverId: number | null; ut: number }[] = []
+  const staleIds: number[] = []
+  // stale 只说明「服务端版本不比我的旧」，不等于冲突。
+  // 真冲突 = 服务端拒绝了 + 我这边的改动确实还没上过云（ut > baseUt）。
+  // baseUt 是上次与云端一致时的时间戳，ut 是本地最后改动时间，二者不等
+  // 即本地有未上云的改动；服务端那份则是别人改的 → 两边都有真实改动，
+  // 标记 conflict 保留双方等用户裁决，绝不静默覆盖。
+  // 注意 baseUt=0 表示「从未与云端对齐过」（含离线新建的行），此时
+  // ut 必 > 0，同样判为冲突——否则离线新建的记录会被云端无声吃掉。
+  const conflictIds: number[] = []
+  for (let i = 0; i < entries.length; i++) {
+    const entry = entries[i]
+    const res = r.results[i]
+    if (!res) continue
+    if (res.accepted) {
+      if (entry.del === 1) doneDeletes.push(entry.rowId)
+      else doneUpdates.push({ rowId: entry.rowId, serverId: res.id ?? entry.serverId, ut: entry.ut })
+    } else if (res.reason === 'stale') {
+      // 删除类冲突无法裁决：本地行已经不在了，「保留我的」无处可取，
+      // 只能以云端为准。其余情况才交给用户挑。
+      if (entry.ut > entry.baseUt && entry.del === 0) conflictIds.push(entry.rowId)
+      else staleIds.push(entry.rowId)
+    }
+  }
+  const stmts: string[] = []
+  if (doneDeletes.length > 0) {
+    stmts.push(`DELETE FROM _sync_state WHERE tableName = '${t}' AND rowId IN (${doneDeletes.join(', ')})`)
+  }
+  for (const u of doneUpdates) {
+    // 推送成功即与云端对齐：基准推到本次的 ut，后续改动才算「脏」
+    stmts.push(
+      `UPDATE _sync_state SET pending = 0, serverId = ${u.serverId ?? 'NULL'}, baseUt = ${u.ut}, conflict = 0 WHERE tableName = '${t}' AND rowId = ${u.rowId}`,
+    )
+  }
+  if (staleIds.length > 0) {
+    // 本地没改过（ut == baseUt），服务端版本更新，直接以服务端为准
+    stmts.push(`UPDATE _sync_state SET pending = 0, baseUt = ut WHERE tableName = '${t}' AND rowId IN (${staleIds.join(', ')})`)
+  }
+  if (conflictIds.length > 0) {
+    stmts.push(`UPDATE _sync_state SET pending = 0, conflict = 1 WHERE tableName = '${t}' AND rowId IN (${conflictIds.join(', ')})`)
+  }
+  if (stmts.length > 0) await runBatch(stmts)
 }
 
 // ---------------- 拉取 ----------------
@@ -470,6 +469,30 @@ export function cloudLogout(): void {
 
 // ---------------- 主循环 ----------------
 
+/**
+ * 有界并发：把 fn 映射到 items，最多同时跑 limit 个。
+ * 串行跑 41 张表时，每张表一次 HTTP 往返，实测整轮同步 3.4s 里有 ~3.1s
+ * 纯粹耗在串行等待网络上（本地 DB 只占 0.23s）。并发度取 6：
+ * 足以掩盖 RTT，又不至于把 relay 的连接打满或触发限流。
+ */
+async function mapLimit<T>(items: readonly T[], limit: number, fn: (item: T) => Promise<void>): Promise<Error[]> {
+  const errors: Error[] = []
+  let cursor = 0
+  const workers = Array.from({ length: Math.min(limit, items.length) }, async () => {
+    for (;;) {
+      const i = cursor++
+      if (i >= items.length) return
+      try {
+        await fn(items[i])
+      } catch (e) {
+        errors.push(e instanceof Error ? e : new Error(String(e)))
+      }
+    }
+  })
+  await Promise.all(workers)
+  return errors
+}
+
 export async function syncNow(): Promise<void> {
   if (syncing) return
   const s = useSettings()
@@ -481,8 +504,17 @@ export async function syncNow(): Promise<void> {
     // 本轮拉取开始：重建 id 占用快照（上一轮的快照可能已被本地写入改动）
     idSpaceCache.clear()
     await bootstrapPending()
-    await pushPending()
-    for (const t of SYNC_TABLES) await pullTable(t)
+    // push 同样按表独立：每表只读自己的 _sync_state 分页并回写，无跨表依赖
+    const pushErrors = await mapLimit(SYNC_TABLES, 6, (t) => pushPendingTable(t))
+    if (pushErrors.length > 0) {
+      throw new Error(`${pushErrors.length} 张表推送失败：${pushErrors.slice(0, 2).map((e) => e.message).join(' | ')}`)
+    }
+    // 各表各写自己的 _sync_cursor，彼此无共享状态，可安全并发
+    const pullErrors = await mapLimit(SYNC_TABLES, 6, (t) => pullTable(t))
+    // 有表拉取失败不能静默：否则游标停在那儿，用户看到「同步完成」但数据其实缺了
+    if (pullErrors.length > 0) {
+      throw new Error(`${pullErrors.length} 张表拉取失败：${pullErrors.slice(0, 2).map((e) => e.message).join(' | ')}`)
+    }
     const pend = await query<{ n: number }>(`SELECT COUNT(*) AS n FROM _sync_state WHERE pending = 1`)
     const conflicts = await query<{ n: number }>(`SELECT COUNT(*) AS n FROM _sync_state WHERE conflict = 1`)
     const cn = conflicts[0]?.n ?? 0
@@ -562,13 +594,24 @@ export interface ConflictRow {
 const LABEL_COLS = ['title', 'name', 'task', 'content', 'topic', 'question', 'domain', 'host', 'key']
 
 export async function listConflicts(): Promise<ConflictRow[]> {
+  // 原实现无条件对 41 张表逐表查询，即使一处冲突也没有。
+  // 实测启动阶段光这一项就产生 172 次 IPC 往返 / ~1.29s，是全启动最贵的单点
+  // （settings 面板挂载 + 每次同步状态变更都会调它）。
+  // 改为：一条 SQL 取全部冲突行，再只对「确有冲突」的表补查标签列。
+  const all = await query<{ tableName: string; rowId: number; serverId: number | null; ut: number }>(
+    `SELECT tableName, rowId, serverId, ut FROM _sync_state WHERE conflict = 1`,
+  )
+  if (all.length === 0) return []
+
+  const byTable = new Map<string, { rowId: number; serverId: number | null; ut: number }[]>()
+  for (const r of all) {
+    const arr = byTable.get(r.tableName) ?? []
+    arr.push(r)
+    byTable.set(r.tableName, arr)
+  }
+
   const out: ConflictRow[] = []
-  for (const t of SYNC_TABLES) {
-    const rows = await query<{ rowId: number; serverId: number | null; ut: number }>(
-      `SELECT rowId, serverId, ut FROM _sync_state WHERE tableName = ? AND conflict = 1`,
-      [t],
-    )
-    if (rows.length === 0) continue
+  for (const [t, rows] of byTable) {
     const cols = await localColumns(t)
     const labelCol = LABEL_COLS.find((c) => cols.has(c))
     const ids = rows.map((r) => r.rowId)

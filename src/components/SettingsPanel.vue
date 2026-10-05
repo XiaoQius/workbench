@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, watch, onMounted } from 'vue'
+import { ref, computed, watch, onUnmounted } from 'vue'
 import {
   NModal, NInput, NSlider, NSwitch, NButton, NTag, NText, NList, NListItem, NThing, NSelect, NTabs, NTabPane,
 } from 'naive-ui'
@@ -201,7 +201,22 @@ async function removeCard(id: string) {
 
 const hintColor = '#999'
 
-onMounted(() => { if (s.cloudEnabled && s.cloudToken) void loadConflicts() })
+// 冲突列表改为按需加载。
+// 原先 onMounted 无条件拉取：listConflicts 会对 41 张表逐一查询，
+// 再加上 onSyncStatus 每次状态变更都重拉，启动阶段仅此一项就是 ~1.3s 的 IPC 开销。
+// 现在只在「面板打开 + 停在云同步页」时才查，并加 300ms 防抖避免状态抖动重复触发。
+let conflictTimer: number | null = null
+function scheduleConflicts() {
+  if (!props.show || activeTab.value !== 'cloud') return
+  if (!s.cloudEnabled || !s.cloudToken) return
+  if (conflictTimer) window.clearTimeout(conflictTimer)
+  conflictTimer = window.setTimeout(() => {
+    conflictTimer = null
+    void loadConflicts()
+  }, 300)
+}
+watch(() => [props.show, activeTab.value] as const, () => scheduleConflicts(), { immediate: true })
+onUnmounted(() => { if (conflictTimer) window.clearTimeout(conflictTimer) })
 
 const tableLabels: Record<string, string> = {
   tasks: '任务', deadlines: '截止', links: '链接', projects: '项目', snippets: '代码片段',
@@ -227,7 +242,7 @@ async function loadConflicts() {
 onSyncStatus((st) => {
   syncStatus.value = st
   if (st.lastSyncAt) s.lastSyncAt = st.lastSyncAt
-  void loadConflicts()
+  scheduleConflicts()
 })
 
 async function resolveConflictRow(c: ConflictRow, choice: 'local' | 'remote') {
