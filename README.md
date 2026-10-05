@@ -49,7 +49,7 @@ Tauri 2 + Vue 3 桌面应用：把开发、运维、生活、学习、知识管�
 
 ```
 desktop/
-├─ drizzle/schema.ts           # 表定义（类型源，42 张业务表）
+├─ drizzle/schema.ts           # 表定义（类型源，41 张业务表）
 ├─ src
 │  ├─ App.vue                  # 入口：SQLite 迁移链 + 主题/命令面板挂载
 │  ├─ router/index.ts          # hash 路由：8 页面模块
