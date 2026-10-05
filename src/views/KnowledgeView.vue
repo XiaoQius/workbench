@@ -4,6 +4,7 @@ import { refreshTick } from '@/stores/ui'
 import { NButton, NTag, NTabs, NTabPane, NIcon, useMessage, NInput } from 'naive-ui'
 import { Plus, Trash, ExternalLink, AlertTriangle, Refresh } from '@vicons/tabler'
 import EmptyState from '@/components/EmptyState.vue'
+import ListSkeleton from '@/components/ListSkeleton.vue'
 import ModalForm, { type FieldDef } from '@/components/ModalForm.vue'
 import { pitfallsRepo, resourcesRepo, decisionsRepo, skillTreeRepo, learningPathsRepo, threeDProjectsRepo, portfoliosRepo, contentCalendarsRepo, linksRepo } from '@/db'
 import type { Pitfall, Resource, Decision, SkillNode, LearningPath, ThreeDProject, Portfolio, ContentCalendar, Link } from '../../drizzle/schema'
@@ -117,7 +118,9 @@ const assetGroups = computed(() => {
   return groups
 })
 
+const loading = ref(false)
 async function load() {
+  loading.value = true
   try {
     const [ps, ls, ds, sk, pa, td, pf, cc, lk] = await Promise.all([
       pitfallsRepo.listAll(), resourcesRepo.listAll(), decisionsRepo.listAll(), skillTreeRepo.listAll(),
@@ -136,6 +139,8 @@ async function load() {
   } catch (e) {
     message.warning('数据加载失败（浏览器降级为演示模式）')
     console.warn(e)
+  } finally {
+    loading.value = false
   }
 }
 watch(refreshTick, () => load())
@@ -549,7 +554,8 @@ async function shareSnapshot() {
             记录踩坑
           </NButton>
         </div>
-        <div v-if="filteredPitfalls.length" class="pitfall-list">
+        <ListSkeleton v-if="loading" :rows="5" />
+        <div v-else-if="filteredPitfalls.length" class="pitfall-list">
           <div v-for="p in filteredPitfalls" :key="p.id" class="pitfall-card wb-card">
             <div class="pc-head">
               <span class="pc-title"><NIcon :component="AlertTriangle" style="color: var(--wb-warning); margin-right: 7px" />{{ p.title }}</span>
@@ -579,7 +585,8 @@ async function shareSnapshot() {
             收藏链接
           </NButton>
         </div>
-        <div v-if="links.length" class="link-list">
+        <ListSkeleton v-if="loading" :rows="5" />
+        <div v-else-if="links.length" class="link-list">
           <div v-for="l in links" :key="l.id" class="link-item wb-card hoverable" @click="openLink(l)">
             <div class="link-main">
               <span class="link-title">{{ l.title }}</span>
@@ -637,7 +644,8 @@ async function shareSnapshot() {
         <div class="review-head">
           <span>间隔复习：1 → 3 → 7 → 14 → 30 天逐步巩固，到期条目自动出现在这里</span>
         </div>
-        <div v-if="reviewItems.length" class="review-list">
+        <ListSkeleton v-if="loading" :rows="4" />
+        <div v-else-if="reviewItems.length" class="review-list">
           <div v-for="r in reviewItems" :key="`${r.kind}-${r.id}`" class="review-item wb-card">
             <div class="rv-main">
               <div class="rv-title">
@@ -667,7 +675,8 @@ async function shareSnapshot() {
             记录决策
           </NButton>
         </div>
-        <div v-if="decisions.length" class="link-list">
+        <ListSkeleton v-if="loading" :rows="4" />
+        <div v-else-if="decisions.length" class="link-list">
           <div v-for="d in decisions" :key="d.id" class="link-item wb-card">
             <div class="link-main">
               <span class="link-title">{{ d.title }}</span>
@@ -706,7 +715,8 @@ async function shareSnapshot() {
             添加步骤
           </NButton>
         </div>
-        <div v-if="paths.length" class="review-list">
+        <ListSkeleton v-if="loading" :rows="4" />
+        <div v-else-if="paths.length" class="review-list">
           <div v-for="p in [...paths].sort((a, b) => (a.orderIndex || 0) - (b.orderIndex || 0))" :key="p.id" class="review-item wb-card">
             <div class="rv-main">
               <div class="rv-title">
@@ -737,7 +747,8 @@ async function shareSnapshot() {
           <header class="cb-head"><span>3D 项目台账（F-KNW-08）</span>
             <NButton size="tiny" type="primary" ghost @click="threeDFormShow = true"><template #icon><NIcon :component="Plus" /></template>新增</NButton>
           </header>
-          <div v-if="threeD.length" class="review-list">
+          <ListSkeleton v-if="loading" :rows="3" />
+          <div v-else-if="threeD.length" class="review-list">
             <div v-for="t in threeD" :key="t.id" class="review-item wb-card">
               <div class="rv-main">
                 <div class="rv-title">{{ t.name }}
@@ -749,13 +760,14 @@ async function shareSnapshot() {
               <NButton size="tiny" quaternary circle type="error" @click="removeThreeD(t)"><template #icon><NIcon :component="Trash" /></template></NButton>
             </div>
           </div>
-          <EmptyState v-if="!threeD.length" text="暂无 3D 项目" />
+          <EmptyState v-else-if="!threeD.length" text="暂无 3D 项目" />
         </div>
         <div class="creation-block" style="margin-top: 14px">
           <header class="cb-head"><span>作品集（F-KNW-09）</span>
             <NButton size="tiny" type="primary" ghost @click="portfolioFormShow = true"><template #icon><NIcon :component="Plus" /></template>新增</NButton>
           </header>
-          <div v-if="portfolios.length" class="review-list">
+          <ListSkeleton v-if="loading" :rows="3" />
+          <div v-else-if="portfolios.length" class="review-list">
             <div v-for="p in portfolios" :key="p.id" class="review-item wb-card">
               <div class="rv-main">
                 <div class="rv-title">{{ p.title }}
@@ -766,13 +778,14 @@ async function shareSnapshot() {
               <NButton size="tiny" quaternary circle type="error" @click="removePortfolio(p)"><template #icon><NIcon :component="Trash" /></template></NButton>
             </div>
           </div>
-          <EmptyState v-if="!portfolios.length" text="暂无作品记录" />
+          <EmptyState v-else-if="!portfolios.length" text="暂无作品记录" />
         </div>
         <div class="creation-block" style="margin-top: 14px">
           <header class="cb-head"><span>内容日历（F-KNW-10）</span>
             <NButton size="tiny" type="primary" ghost @click="contentFormShow = true"><template #icon><NIcon :component="Plus" /></template>新增</NButton>
           </header>
-          <div v-if="contentCal.length" class="review-list">
+          <ListSkeleton v-if="loading" :rows="3" />
+          <div v-else-if="contentCal.length" class="review-list">
             <div v-for="c in [...contentCal].sort((a, b) => (a.plannedAt || '').localeCompare(b.plannedAt || ''))" :key="c.id" class="review-item wb-card">
               <div class="rv-main">
                 <div class="rv-title">{{ c.title }}
@@ -783,7 +796,7 @@ async function shareSnapshot() {
               <NButton size="tiny" quaternary circle type="error" @click="removeContent(c)"><template #icon><NIcon :component="Trash" /></template></NButton>
             </div>
           </div>
-          <EmptyState v-if="!contentCal.length" text="暂无内容排期" />
+          <EmptyState v-else-if="!contentCal.length" text="暂无内容排期" />
         </div>
       </n-tab-pane>
 

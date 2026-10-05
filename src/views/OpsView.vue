@@ -4,6 +4,7 @@ import { refreshTick } from '@/stores/ui'
 import { NButton, NTag, NTabs, NTabPane, NIcon, useMessage, NProgress, NInput } from 'naive-ui'
 import { Plus, Trash, Refresh } from '@vicons/tabler'
 import EmptyState from '@/components/EmptyState.vue'
+import ListSkeleton from '@/components/ListSkeleton.vue'
 import ModalForm, { type FieldDef } from '@/components/ModalForm.vue'
 import { serversRepo, domainsRepo, opsFlowsRepo, opsChangesRepo, opsSecChecksRepo, opsSecretsRepo, opsDnsRepo } from '@/db'
 import { diskSpace, portUsage, healthCheck, proxyDetect, wslStatus, schtasksList, backupVerify, type DiskInfo, type PortInfo, type HealthResult, type ProxyInfo, type WslDistro, type ScheduledTask, type BackupVerifyInfo } from '@/composables/useTauri'
@@ -49,6 +50,30 @@ const expiringCount = computed(() => {
   }
   return n
 })
+
+// ---- 列表搜索 ----
+// 每张表只按「人认得出来的那几列」匹配，不逐字段全扫。
+const serverKw = ref('')
+const domainKw = ref('')
+const flowKw = ref('')
+const changeKw = ref('')
+const secKw = ref('')
+const secretKw = ref('')
+const dnsKw = ref('')
+
+function matchKw(kw: string, ...vals: unknown[]): boolean {
+  const k = kw.trim().toLowerCase()
+  if (!k) return true
+  return vals.some((v) => String(v ?? '').toLowerCase().includes(k))
+}
+
+const filteredServers = computed(() => servers.value.filter((s) => matchKw(serverKw.value, s.name, s.ip, s.region, s.note)))
+const filteredDomains = computed(() => domains.value.filter((d) => matchKw(domainKw.value, d.name, d.registrar, d.dnsProvider, d.note)))
+const filteredFlows = computed(() => flows.value.filter((f) => matchKw(flowKw.value, f.name, f.metric, f.status, f.note)))
+const filteredChanges = computed(() => changes.value.filter((c) => matchKw(changeKw.value, c.title, c.env, c.category, c.operator, c.detail)))
+const filteredSecChecks = computed(() => secChecks.value.filter((s) => matchKw(secKw.value, s.title, s.category, s.result, s.detail)))
+const filteredSecrets = computed(() => secrets.value.filter((s) => matchKw(secretKw.value, s.name, s.provider, s.account, s.note)))
+const filteredDnsRecords = computed(() => dnsRecords.value.filter((d) => matchKw(dnsKw.value, d.name, d.recordType, d.host, d.value)))
 
 // ---- 域名↔服务器关联 / 一键复制 SSH（F-OPS-05/06） ----
 const serverName = (id?: number | null) => (id ? servers.value.find((x) => x.id === id)?.name || `#${id}` : '—')
@@ -165,7 +190,9 @@ const filteredTasks = computed(() =>
     : tasks.value.slice(0, 200),
 )
 
+const loading = ref(false)
 async function load() {
+  loading.value = true
   try {
     const [ss, ds, fl, ch, sc, sk, dn] = await Promise.all([
       serversRepo.listAll(), domainsRepo.listAll(), opsFlowsRepo.listAll(), opsChangesRepo.listAll(),
@@ -188,6 +215,7 @@ async function load() {
   try {
     ports.value = await portUsage()
   } catch { ports.value = [] }
+  loading.value = false
 }
 watch(refreshTick, () => load())
 onMounted(load)
@@ -492,14 +520,16 @@ async function removeDns(d: OpsDnsRecord) {
     <n-tabs type="line" class="wb-tabs">
       <!-- 服务器清单 -->
       <n-tab-pane name="servers" tab="服务器">
-        <div class="toolbar">
+        <div class="toolbar toolbar-split">
+          <NInput v-if="servers.length" v-model:value="serverKw" size="small" placeholder="搜索服务器（名称 / IP / 区域）…" clearable class="toolbar-search" />
           <NButton size="small" type="primary" ghost @click="serverFormShow = true">
             <template #icon><NIcon :component="Plus" /></template>
             登记服务器
           </NButton>
         </div>
-        <div v-if="servers.length" class="server-grid">
-          <div v-for="s in servers" :key="s.id" class="server-card wb-card">
+        <ListSkeleton v-if="loading" :rows="6" />
+        <div v-else-if="filteredServers.length" class="server-grid">
+          <div v-for="s in filteredServers" :key="s.id" class="server-card wb-card">
             <div class="sc-head">
               <span class="sc-name">{{ s.name }}</span>
               <NTag size="tiny" :bordered="false" :type="serverStatus(s).color as any">{{ serverStatus(s).label }}</NTag>
@@ -521,22 +551,24 @@ async function removeDns(d: OpsDnsRecord) {
             </div>
           </div>
         </div>
-        <EmptyState v-else text="暂无服务器" />
+        <EmptyState v-else :text="servers.length ? '没有匹配的服务器' : '暂无服务器'" />
       </n-tab-pane>
 
       <!-- 域名清单 -->
       <n-tab-pane name="domains" tab="域名">
-        <div class="toolbar">
+        <div class="toolbar toolbar-split">
+          <NInput v-if="domains.length" v-model:value="domainKw" size="small" placeholder="搜索域名（域名 / 注册商）…" clearable class="toolbar-search" />
           <NButton size="small" type="primary" ghost @click="domainFormShow = true">
             <template #icon><NIcon :component="Plus" /></template>
             登记域名
           </NButton>
         </div>
-        <div v-if="domains.length" class="domain-table">
+        <ListSkeleton v-if="loading" :rows="6" />
+        <div v-else-if="filteredDomains.length" class="domain-table">
           <div class="d-row head">
             <span>域名</span><span>注册商</span><span>DNS</span><span>域名到期</span><span>SSL 到期</span><span>关联服务器</span><span>剩余</span><span></span>
           </div>
-          <div v-for="d in domains" :key="d.id" class="d-row">
+          <div v-for="d in filteredDomains" :key="d.id" class="d-row">
             <span class="mono d-name">{{ d.name }}</span>
             <span>{{ d.registrar || '—' }}</span>
             <span>{{ d.dnsProvider || '—' }}</span>
@@ -554,7 +586,7 @@ async function removeDns(d: OpsDnsRecord) {
             </span>
           </div>
         </div>
-        <EmptyState v-else text="暂无域名" />
+        <EmptyState v-else :text="domains.length ? '没有匹配的域名' : '暂无域名'" />
       </n-tab-pane>
 
       <!-- 磁盘 -->
@@ -731,17 +763,19 @@ async function removeDns(d: OpsDnsRecord) {
 
       <!-- 流量预警台账（F-OPS-13） -->
       <n-tab-pane name="flows" tab="流量预警">
-        <div class="toolbar">
+        <div class="toolbar toolbar-split">
+          <NInput v-if="flows.length" v-model:value="flowKw" size="small" placeholder="搜索指标（名称 / 类型）…" clearable class="toolbar-search" />
           <NButton size="small" type="primary" ghost @click="flowFormShow = true">
             <template #icon><NIcon :component="Plus" /></template>
             登记指标
           </NButton>
         </div>
-        <div v-if="flows.length" class="domain-table">
+        <ListSkeleton v-if="loading" :rows="4" />
+        <div v-else-if="filteredFlows.length" class="domain-table">
           <div class="d-row head">
             <span>指标</span><span>类型</span><span>当前值</span><span>阈值</span><span>状态</span><span>备注</span><span></span>
           </div>
-          <div v-for="f in flows" :key="f.id" class="d-row">
+          <div v-for="f in filteredFlows" :key="f.id" class="d-row">
             <span class="mono d-name">{{ f.name }}</span>
             <span>{{ f.metric }}</span>
             <span class="mono" :style="f.current >= f.threshold && f.threshold > 0 ? 'color: var(--wb-danger); font-weight: 600' : ''">{{ f.current }}</span>
@@ -751,22 +785,24 @@ async function removeDns(d: OpsDnsRecord) {
             <span style="text-align: right"><NButton size="tiny" text type="error" @click="removeFlow(f)"><template #icon><NIcon :component="Trash" /></template></NButton></span>
           </div>
         </div>
-        <EmptyState v-else text="暂无流量指标，登记后按阈值自动标红预警" />
+        <EmptyState v-else :text="flows.length ? '没有匹配的指标' : '暂无流量指标，登记后按阈值自动标红预警'" />
       </n-tab-pane>
 
       <!-- 配置变更台账（F-OPS-14） -->
       <n-tab-pane name="changes" tab="配置变更">
-        <div class="toolbar">
+        <div class="toolbar toolbar-split">
+          <NInput v-if="changes.length" v-model:value="changeKw" size="small" placeholder="搜索变更（标题 / 环境 / 操作人）…" clearable class="toolbar-search" />
           <NButton size="small" type="primary" ghost @click="changeFormShow = true">
             <template #icon><NIcon :component="Plus" /></template>
             记录变更
           </NButton>
         </div>
-        <div v-if="changes.length" class="domain-table">
+        <ListSkeleton v-if="loading" :rows="5" />
+        <div v-else-if="filteredChanges.length" class="domain-table">
           <div class="d-row head">
             <span>变更</span><span>环境</span><span>类型</span><span>操作人</span><span>时间</span><span>状态</span><span></span>
           </div>
-          <div v-for="c in changes" :key="c.id" class="d-row">
+          <div v-for="c in filteredChanges" :key="c.id" class="d-row">
             <span class="d-name">{{ c.title }}</span>
             <span class="mono">{{ c.env }}</span>
             <span>{{ c.category }}</span>
@@ -776,22 +812,24 @@ async function removeDns(d: OpsDnsRecord) {
             <span style="text-align: right"><NButton size="tiny" text type="error" @click="removeChange(c)"><template #icon><NIcon :component="Trash" /></template></NButton></span>
           </div>
         </div>
-        <EmptyState v-else text="暂无配置变更记录" />
+        <EmptyState v-else :text="changes.length ? '没有匹配的变更' : '暂无配置变更记录'" />
       </n-tab-pane>
 
       <!-- 安全巡检台账（F-OPS-15） -->
       <n-tab-pane name="secchecks" tab="安全巡检">
-        <div class="toolbar">
+        <div class="toolbar toolbar-split">
+          <NInput v-if="secChecks.length" v-model:value="secKw" size="small" placeholder="搜索巡检项（名称 / 结果）…" clearable class="toolbar-search" />
           <NButton size="small" type="primary" ghost @click="secFormShow = true">
             <template #icon><NIcon :component="Plus" /></template>
             记录巡检
           </NButton>
         </div>
-        <div v-if="secChecks.length" class="domain-table">
+        <ListSkeleton v-if="loading" :rows="5" />
+        <div v-else-if="filteredSecChecks.length" class="domain-table">
           <div class="d-row head">
             <span>巡检项</span><span>分类</span><span>级别</span><span>结果</span><span>日期</span><span>详情</span><span></span>
           </div>
-          <div v-for="s in secChecks" :key="s.id" class="d-row">
+          <div v-for="s in filteredSecChecks" :key="s.id" class="d-row">
             <span class="d-name">{{ s.title }}</span>
             <span>{{ s.category }}</span>
             <span><NTag size="tiny" :bordered="false" :type="secSeverity(s).color as any">{{ secSeverity(s).label }}</NTag></span>
@@ -801,22 +839,24 @@ async function removeDns(d: OpsDnsRecord) {
             <span style="text-align: right"><NButton size="tiny" text type="error" @click="removeSec(s)"><template #icon><NIcon :component="Trash" /></template></NButton></span>
           </div>
         </div>
-        <EmptyState v-else text="暂无安全巡检记录" />
+        <EmptyState v-else :text="secChecks.length ? '没有匹配的巡检项' : '暂无安全巡检记录'" />
       </n-tab-pane>
 
       <!-- 密钥管理台账（F-OPS-16） -->
       <n-tab-pane name="secrets" tab="密钥管理">
-        <div class="toolbar">
+        <div class="toolbar toolbar-split">
+          <NInput v-if="secrets.length" v-model:value="secretKw" size="small" placeholder="搜索密钥（名称 / 提供方）…" clearable class="toolbar-search" />
           <NButton size="small" type="primary" ghost @click="secretFormShow = true">
             <template #icon><NIcon :component="Plus" /></template>
             登记密钥
           </NButton>
         </div>
-        <div v-if="secrets.length" class="domain-table">
+        <ListSkeleton v-if="loading" :rows="5" />
+        <div v-else-if="filteredSecrets.length" class="domain-table">
           <div class="d-row head">
             <span>密钥</span><span>提供方</span><span>账号</span><span>状态</span><span>过期</span><span>备注</span><span></span>
           </div>
-          <div v-for="s in secrets" :key="s.id" class="d-row">
+          <div v-for="s in filteredSecrets" :key="s.id" class="d-row">
             <span class="mono d-name">{{ s.name }}</span>
             <span>{{ s.provider || '—' }}</span>
             <span class="mono">{{ s.account || '—' }}</span>
@@ -826,22 +866,24 @@ async function removeDns(d: OpsDnsRecord) {
             <span style="text-align: right"><NButton size="tiny" text type="error" @click="removeSecret(s)"><template #icon><NIcon :component="Trash" /></template></NButton></span>
           </div>
         </div>
-        <EmptyState v-else text="暂无密钥记录（仅登记元信息，不存储密钥内容）" />
+        <EmptyState v-else :text="secrets.length ? '没有匹配的密钥' : '暂无密钥记录（仅登记元信息，不存储密钥内容）'" />
       </n-tab-pane>
 
       <!-- DNS 记录台账（F-OPS-17） -->
       <n-tab-pane name="dns" tab="DNS 记录">
-        <div class="toolbar">
+        <div class="toolbar toolbar-split">
+          <NInput v-if="dnsRecords.length" v-model:value="dnsKw" size="small" placeholder="搜索 DNS（域名 / 主机 / 记录值）…" clearable class="toolbar-search" />
           <NButton size="small" type="primary" ghost @click="dnsFormShow = true">
             <template #icon><NIcon :component="Plus" /></template>
             登记记录
           </NButton>
         </div>
-        <div v-if="dnsRecords.length" class="domain-table">
+        <ListSkeleton v-if="loading" :rows="5" />
+        <div v-else-if="filteredDnsRecords.length" class="domain-table">
           <div class="d-row head">
             <span>域名</span><span>类型</span><span>主机</span><span>记录值</span><span>TTL</span><span>状态</span><span></span>
           </div>
-          <div v-for="d in dnsRecords" :key="d.id" class="d-row">
+          <div v-for="d in filteredDnsRecords" :key="d.id" class="d-row">
             <span class="mono d-name">{{ d.name }}</span>
             <span class="mono">{{ d.recordType }}</span>
             <span class="mono">{{ d.host }}</span>
@@ -851,7 +893,7 @@ async function removeDns(d: OpsDnsRecord) {
             <span style="text-align: right"><NButton size="tiny" text type="error" @click="removeDns(d)"><template #icon><NIcon :component="Trash" /></template></NButton></span>
           </div>
         </div>
-        <EmptyState v-else text="暂无 DNS 记录" />
+        <EmptyState v-else :text="dnsRecords.length ? '没有匹配的 DNS 记录' : '暂无 DNS 记录'" />
       </n-tab-pane>
     </n-tabs>
 
@@ -868,6 +910,8 @@ async function removeDns(d: OpsDnsRecord) {
 <style scoped>
 .wb-tabs :deep(.n-tabs-nav) { margin-bottom: 14px; }
 .toolbar { display: flex; justify-content: flex-end; margin-bottom: 12px; }
+.toolbar-split { justify-content: space-between; align-items: center; gap: 10px; }
+.toolbar-search { max-width: 280px; }
 .expire-alert {
   display: flex; align-items: center; gap: 8px;
   background: color-mix(in srgb, var(--wb-warning) 14%, transparent);

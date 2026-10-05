@@ -4,6 +4,7 @@ import { refreshTick } from '@/stores/ui'
 import { NButton, NTag, NInput, NTabs, NTabPane, NIcon, useMessage, NEmpty, NDropdown, NModal } from 'naive-ui'
 import { Plus, Trash, Edit, Check, Book2, Code, Refresh } from '@vicons/tabler'
 import EmptyState from '@/components/EmptyState.vue'
+import ListSkeleton from '@/components/ListSkeleton.vue'
 import ModalForm, { type FieldDef } from '@/components/ModalForm.vue'
 import { projectsRepo, tasksRepo, snippetsRepo, deploymentsRepo, envVarsRepo, techDebtsRepo, cmdSnippetsRepo } from '@/db'
 import type { Project, Task, Snippet, Deployment, EnvVar, TechDebt, CmdSnippet } from '../../drizzle/schema'
@@ -69,7 +70,9 @@ const envFormShow = ref(false)
 const debtFormShow = ref(false)
 const cmdFormShow = ref(false)
 
+const loading = ref(false)
 async function load() {
+  loading.value = true
   try {
     const [ps, ts, ss, ds, ev, td, cs] = await Promise.all([
       projectsRepo.listAll(), tasksRepo.listAll(), snippetsRepo.listAll(),
@@ -89,6 +92,8 @@ async function load() {
   } catch (e) {
     message.warning('数据加载失败（浏览器降级为演示模式）')
     console.warn(e)
+  } finally {
+    loading.value = false
   }
 }
 watch(refreshTick, () => load())
@@ -165,12 +170,6 @@ async function setProjectStatus(p: Project, status: string) {
     p.status = status as Project['status']
   } catch { message.error('更新失败') }
 }
-
-const boardColumns = computed(() => [
-  { key: 'todo', label: '待办', items: tasks.value.filter((t) => t.status === 'todo') },
-  { key: 'doing', label: '进行中', items: tasks.value.filter((t) => t.status === 'doing') },
-  { key: 'done', label: '已完成', items: tasks.value.filter((t) => t.status === 'done') },
-])
 
 async function moveTask(t: Task, status: string) {
   try {
@@ -487,6 +486,35 @@ const healthScore = computed(() => {
   return { score, items }
 })
 
+// ---- 列表搜索 ----
+// 每张表只按「人认得出来的那几列」匹配，不逐字段全扫。
+const taskKw = ref('')
+const snippetKw = ref('')
+const deployKw = ref('')
+const envKw = ref('')
+const debtKw = ref('')
+const cmdKw = ref('')
+
+function matchKw(kw: string, ...vals: unknown[]): boolean {
+  const k = kw.trim().toLowerCase()
+  if (!k) return true
+  return vals.some((v) => String(v ?? '').toLowerCase().includes(k))
+}
+
+const filteredTasks = computed(() => tasks.value.filter((t) => matchKw(taskKw.value, t.title, t.type, t.priority, t.status, t.scope, t.note)))
+const filteredSnippets = computed(() => snippets.value.filter((s) => matchKw(snippetKw.value, s.title, s.language, s.description, s.tags, s.code)))
+const filteredDeployments = computed(() => deployments.value.filter((d) => matchKw(deployKw.value, d.project, d.env, d.version, d.status, d.operator, d.note)))
+const filteredEnvVars = computed(() => envVars.value.filter((e) => matchKw(envKw.value, e.key, e.value, e.scope, e.note)))
+const filteredTechDebts = computed(() => techDebts.value.filter((d) => matchKw(debtKw.value, d.title, d.category, d.severity, d.project, d.status, d.detail)))
+const filteredCmdSnippets = computed(() => cmdSnippets.value.filter((c) => matchKw(cmdKw.value, c.title, c.category, c.command, c.note)))
+
+const filteredSysEnvVars = computed(() => sysEnvVars.value.filter(([k, v]) => matchKw(envKw.value, k, v)))
+
+const boardColumns = computed(() => [
+  { key: 'todo', label: '待办', items: filteredTasks.value.filter((t) => t.status === 'todo') },
+  { key: 'doing', label: '进行中', items: filteredTasks.value.filter((t) => t.status === 'doing') },
+  { key: 'done', label: '已完成', items: filteredTasks.value.filter((t) => t.status === 'done') },
+])
 </script>
 
 <template>
@@ -495,13 +523,15 @@ const healthScore = computed(() => {
     <n-tabs v-model:value="tab" type="line" class="wb-tabs">
       <!-- 项目看板 -->
       <n-tab-pane name="board" tab="项目看板">
-        <div class="board-toolbar">
+        <div class="board-toolbar toolbar-split">
+          <NInput v-if="tasks.length" v-model:value="taskKw" size="small" placeholder="搜索任务（标题 / 领域 / 优先级）…" clearable class="toolbar-search" />
           <NButton size="small" type="primary" ghost @click="projectFormShow = true">
             <template #icon><NIcon :component="Plus" /></template>
             新建项目
           </NButton>
         </div>
-        <div v-if="projects.length || tasks.length" class="board">
+        <ListSkeleton v-if="loading" :rows="5" />
+        <div v-else-if="projects.length || tasks.length" class="board">
           <section v-for="col in boardColumns" :key="col.key" class="board-col">
             <header class="col-head">
               <span>{{ col.label }}</span>
@@ -536,7 +566,8 @@ const healthScore = computed(() => {
 
       <!-- 任务列表 -->
       <n-tab-pane name="tasks" tab="任务列表">
-        <div class="board-toolbar">
+        <div class="board-toolbar toolbar-split">
+          <NInput v-if="tasks.length" v-model:value="taskKw" size="small" placeholder="搜索任务（标题 / 领域 / 优先级）…" clearable class="toolbar-search" />
           <NButton size="small" type="primary" ghost @click="taskFormShow = true">
             <template #icon><NIcon :component="Plus" /></template>
             新建任务
@@ -545,11 +576,12 @@ const healthScore = computed(() => {
         <div v-if="estCalib" class="est-calib wb-card">
           <span class="dim" style="font-size: 12px">估时校准：近 {{ estCalib.count }} 个已完成任务平均周期约 {{ estCalib.avgHours.toFixed(1) }} 小时/个（按 createdAt→updatedAt 推算）</span>
         </div>
-        <div v-if="tasks.length" class="task-table">
+        <ListSkeleton v-if="loading" :rows="6" />
+        <div v-else-if="filteredTasks.length" class="task-table">
           <div class="task-row head">
             <span>标题</span><span>领域</span><span>优先级</span><span>截止</span><span>状态</span><span>操作</span>
           </div>
-          <div v-for="t in tasks" :key="t.id" class="task-row">
+          <div v-for="t in filteredTasks" :key="t.id" class="task-row">
             <span class="tt">
               <span v-if="t.focusDate" class="focus-star">★</span>
               {{ t.title }}
@@ -573,19 +605,21 @@ const healthScore = computed(() => {
             </span>
           </div>
         </div>
-        <EmptyState v-else text="暂无任务" />
+        <EmptyState v-else :text="tasks.length ? '没有匹配的任务' : '暂无任务'" />
       </n-tab-pane>
 
       <!-- 代码片段 -->
       <n-tab-pane name="snippets" tab="代码片段">
-        <div class="board-toolbar">
+        <div class="board-toolbar toolbar-split">
+          <NInput v-if="snippets.length" v-model:value="snippetKw" size="small" placeholder="搜索片段（标题 / 语言 / 标签）…" clearable class="toolbar-search" />
           <NButton size="small" type="primary" ghost @click="snippetFormShow = true">
             <template #icon><NIcon :component="Plus" /></template>
             新建片段
           </NButton>
         </div>
-        <div v-if="snippets.length" class="snippet-grid">
-          <div v-for="s in snippets" :key="s.id" class="snippet-card wb-card hoverable" @click="activeSnippet = s">
+        <ListSkeleton v-if="loading" :rows="4" />
+        <div v-else-if="filteredSnippets.length" class="snippet-grid">
+          <div v-for="s in filteredSnippets" :key="s.id" class="snippet-card wb-card hoverable" @click="activeSnippet = s">
             <div class="snippet-head">
               <span class="snippet-title"><NIcon :component="Code" style="margin-right: 6px" />{{ s.title }}</span>
               <NTag size="tiny" :bordered="false" :type="langColor(s.language)">{{ s.language }}</NTag>
@@ -594,7 +628,7 @@ const healthScore = computed(() => {
             <div v-if="s.tags" class="snippet-tags mono">{{ s.tags }}</div>
           </div>
         </div>
-        <EmptyState v-else text="暂无片段" />
+        <EmptyState v-else :text="snippets.length ? '没有匹配的片段' : '暂无片段'" />
         <div v-if="activeSnippet" class="snippet-detail wb-card" style="margin-top: 12px">
           <div class="snippet-head">
             <span class="snippet-title"><NIcon :component="Code" style="margin-right: 6px" />{{ activeSnippet.title }}</span>
@@ -667,17 +701,19 @@ const healthScore = computed(() => {
 
       <!-- 部署台账 F-DEV-09 -->
       <n-tab-pane name="deploys" tab="部署台账">
-        <div class="board-toolbar">
+        <div class="board-toolbar toolbar-split">
+          <NInput v-if="deployments.length" v-model:value="deployKw" size="small" placeholder="搜索部署记录（项目 / 环境 / 版本）…" clearable class="toolbar-search" />
           <NButton size="small" type="primary" ghost @click="deployFormShow = true">
             <template #icon><NIcon :component="Plus" /></template>
             记录部署
           </NButton>
         </div>
-        <div v-if="deployments.length" class="task-table">
+        <ListSkeleton v-if="loading" :rows="5" />
+        <div v-else-if="filteredDeployments.length" class="task-table">
           <div class="task-row head">
             <span>项目</span><span>环境</span><span>版本</span><span>状态</span><span>时间</span><span>操作人</span><span>操作</span>
           </div>
-          <div v-for="d in deployments" :key="d.id" class="task-row">
+          <div v-for="d in filteredDeployments" :key="d.id" class="task-row">
             <span class="tt">{{ d.project }}</span>
             <span><NTag size="tiny" :bordered="false" type="info">{{ d.env }}</NTag></span>
             <span class="mono">{{ d.version || '—' }}</span>
@@ -689,26 +725,30 @@ const healthScore = computed(() => {
             </span>
           </div>
         </div>
-        <EmptyState v-else text="暂无部署记录" />
+        <EmptyState v-else :text="deployments.length ? '没有匹配的部署记录' : '暂无部署记录'" />
       </n-tab-pane>
 
       <!-- 环境变量 F-DEV-11 -->
       <n-tab-pane name="envs" tab="环境变量">
-        <div class="board-toolbar">
-          <NButton size="small" ghost :loading="false" @click="loadSysEnv()">
-            <template #icon><NIcon :component="Refresh" /></template>
-            读取系统变量
-          </NButton>
-          <NButton size="small" type="primary" ghost style="margin-left: 8px" @click="envFormShow = true">
-            <template #icon><NIcon :component="Plus" /></template>
-            登记变量
-          </NButton>
+        <div class="board-toolbar toolbar-split">
+          <NInput v-if="envVars.length || sysEnvVars.length" v-model:value="envKw" size="small" placeholder="搜索环境变量（变量名 / 值）…" clearable class="toolbar-search" />
+          <div>
+            <NButton size="small" ghost :loading="false" @click="loadSysEnv()">
+              <template #icon><NIcon :component="Refresh" /></template>
+              读取系统变量
+            </NButton>
+            <NButton size="small" type="primary" ghost style="margin-left: 8px" @click="envFormShow = true">
+              <template #icon><NIcon :component="Plus" /></template>
+              登记变量
+            </NButton>
+          </div>
         </div>
-        <div v-if="envVars.length || sysEnvVars.length" class="task-table">
+        <ListSkeleton v-if="loading" :rows="5" />
+        <div v-else-if="filteredEnvVars.length || filteredSysEnvVars.length" class="task-table">
           <div class="task-row head">
             <span>变量名</span><span>值</span><span>范围</span><span>操作</span>
           </div>
-          <div v-for="e in envVars" :key="e.id" class="task-row">
+          <div v-for="e in filteredEnvVars" :key="e.id" class="task-row">
             <span class="tt mono">{{ e.key }}</span>
             <span class="tt mono dim">{{ e.value || '—' }}</span>
             <span><NTag size="tiny" :bordered="false" type="default">{{ e.scope }}</NTag></span>
@@ -716,29 +756,31 @@ const healthScore = computed(() => {
               <NButton size="tiny" text type="error" @click="removeEnv(e)"><template #icon><NIcon :component="Trash" /></template></NButton>
             </span>
           </div>
-          <div v-for="([k, v], i) in sysEnvVars" :key="'sys-' + i" class="task-row" style="opacity: 0.85">
+          <div v-for="([k, v], i) in filteredSysEnvVars" :key="'sys-' + i" class="task-row" style="opacity: 0.85">
             <span class="tt mono">{{ k }}</span>
             <span class="tt mono dim" :title="v">{{ v.length > 60 ? v.slice(0, 60) + '…' : v }}</span>
             <span><NTag size="tiny" :bordered="false" type="info">系统</NTag></span>
             <span class="row-ops"></span>
           </div>
         </div>
-        <EmptyState v-else text="暂无环境变量记录，点击「读取系统变量」拉取本机清单" />
+        <EmptyState v-else :text="envVars.length || sysEnvVars.length ? '没有匹配的环境变量' : '暂无环境变量记录，点击「读取系统变量」拉取本机清单'" />
       </n-tab-pane>
 
       <!-- 技术债 F-DEV-12 -->
       <n-tab-pane name="debts" tab="技术债">
-        <div class="board-toolbar">
+        <div class="board-toolbar toolbar-split">
+          <NInput v-if="techDebts.length" v-model:value="debtKw" size="small" placeholder="搜索技术债（标题 / 分类 / 项目）…" clearable class="toolbar-search" />
           <NButton size="small" type="primary" ghost @click="debtFormShow = true">
             <template #icon><NIcon :component="Plus" /></template>
             记录技术债
           </NButton>
         </div>
-        <div v-if="techDebts.length" class="task-table">
+        <ListSkeleton v-if="loading" :rows="5" />
+        <div v-else-if="filteredTechDebts.length" class="task-table">
           <div class="task-row head">
             <span>标题</span><span>分类</span><span>级别</span><span>项目</span><span>状态</span><span>操作</span>
           </div>
-          <div v-for="d in techDebts" :key="d.id" class="task-row">
+          <div v-for="d in filteredTechDebts" :key="d.id" class="task-row">
             <span class="tt">{{ d.title }}</span>
             <span><NTag size="tiny" :bordered="false" type="default">{{ d.category }}</NTag></span>
             <span><NTag size="tiny" :bordered="false" :type="debtSeverity(d).color">{{ debtSeverity(d).label }}</NTag></span>
@@ -749,19 +791,21 @@ const healthScore = computed(() => {
             </span>
           </div>
         </div>
-        <EmptyState v-else text="暂无技术债记录" />
+        <EmptyState v-else :text="techDebts.length ? '没有匹配的技术债' : '暂无技术债记录'" />
       </n-tab-pane>
 
       <!-- 命令速查 F-DEV-13 -->
       <n-tab-pane name="cmds" tab="命令速查">
-        <div class="board-toolbar">
+        <div class="board-toolbar toolbar-split">
+          <NInput v-if="cmdSnippets.length" v-model:value="cmdKw" size="small" placeholder="搜索命令（标题 / 分类 / 命令）…" clearable class="toolbar-search" />
           <NButton size="small" type="primary" ghost @click="cmdFormShow = true">
             <template #icon><NIcon :component="Plus" /></template>
             保存命令
           </NButton>
         </div>
-        <div v-if="cmdSnippets.length" class="cmd-grid">
-          <div v-for="c in cmdSnippets" :key="c.id" class="cmd-card wb-card">
+        <ListSkeleton v-if="loading" :rows="4" />
+        <div v-else-if="filteredCmdSnippets.length" class="cmd-grid">
+          <div v-for="c in filteredCmdSnippets" :key="c.id" class="cmd-card wb-card">
             <div class="cmd-head">
               <span class="cmd-title">{{ c.title }}</span>
               <NTag size="tiny" :bordered="false" type="info">{{ c.category }}</NTag>
@@ -775,7 +819,7 @@ const healthScore = computed(() => {
             </div>
           </div>
         </div>
-        <EmptyState v-else text="暂无命令片段，把高频命令存进来" />
+        <EmptyState v-else :text="cmdSnippets.length ? '没有匹配的命令片段' : '暂无命令片段，把高频命令存进来'" />
       </n-tab-pane>
 
       <!-- 仓库体检 F-DEV-15 + Git 可视化 F-DEV-17 + 代码统计 -->
@@ -901,6 +945,8 @@ const healthScore = computed(() => {
   justify-content: flex-end;
   margin-bottom: 12px;
 }
+.toolbar-split { justify-content: space-between; align-items: center; gap: 10px; }
+.toolbar-search { max-width: 280px; }
 .board {
   display: grid;
   grid-template-columns: repeat(3, 1fr);

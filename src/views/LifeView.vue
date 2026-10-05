@@ -4,6 +4,7 @@ import { refreshTick } from '@/stores/ui'
 import { NButton, NTag, NTabs, NTabPane, NIcon, useMessage, NInputNumber, NSelect, NInput, NSlider, NDatePicker } from 'naive-ui'
 import { Plus, Trash, Check } from '@vicons/tabler'
 import EmptyState from '@/components/EmptyState.vue'
+import ListSkeleton from '@/components/ListSkeleton.vue'
 import ModalForm, { type FieldDef } from '@/components/ModalForm.vue'
 import { useConfirm } from '@/composables/useConfirm'
 import { habitsRepo, habitLogsRepo, ledgerRepo, pomodorosRepo, healthLogsRepo, fixedBillsRepo, deadlinesRepo, tasksRepo } from '@/db'
@@ -24,7 +25,9 @@ const chores = ref<Task[]>([])
 const today = new Date()
 const todayStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`
 
+const loading = ref(false)
 async function load() {
+  loading.value = true
   try {
     const [hs, hsLogs, ls, bs, dls, ts] = await Promise.all([
       habitsRepo.listAll(), habitLogsRepo.listAll(), ledgerRepo.listAll(),
@@ -36,11 +39,12 @@ async function load() {
     bills.value = bs
     deadlines.value = dls
     chores.value = ts.filter((t) => t.scope === 'life' || t.type === 'life')
-    loadPomos()
-    loadHealth()
+    await Promise.all([loadPomos(), loadHealth()])
   } catch (e) {
     message.warning('数据加载失败（浏览器降级为演示模式）')
     console.warn(e)
+  } finally {
+    loading.value = false
   }
 }
 watch(refreshTick, () => load())
@@ -467,6 +471,24 @@ const costBars = computed(() => {
 })
 const maxCost = computed(() => Math.max(1, ...costBars.value.map(([, v]) => Math.max(v.expense, v.income))))
 
+// ---- 列表搜索 ----
+// 每张表只按「人认得出来的那几列」匹配，不逐字段全扫。
+const ledgerKw = ref('')
+const pomoKw = ref('')
+const healthKw = ref('')
+const billKw = ref('')
+
+function matchKw(kw: string, ...vals: unknown[]): boolean {
+  const k = kw.trim().toLowerCase()
+  if (!k) return true
+  return vals.some((v) => String(v ?? '').toLowerCase().includes(k))
+}
+
+const filteredLedger = computed(() => recentLedger.value.filter((e) => matchKw(ledgerKw.value, e.category, e.note, e.type, e.date, e.amount)))
+const filteredPomoRecords = computed(() => pomoRecords.value.filter((p) => matchKw(pomoKw.value, p.task, p.startedAt, p.minutes)))
+const filteredHealthRecords = computed(() => healthRecords.value.filter((h) => matchKw(healthKw.value, h.date, h.note, h.sleepHours, h.exerciseMin, h.mood, h.weight)))
+const filteredBills = computed(() => bills.value.filter((b) => matchKw(billKw.value, b.name, b.category, b.cycle, b.payMethod, b.note, b.amount)))
+
 // ---- 提醒聚合 ----
 const remindItems = computed(() => {
   const items: { kind: string; text: string; color: 'warning' | 'error' | 'info' | 'default' }[] = []
@@ -490,7 +512,8 @@ const remindItems = computed(() => {
             新建习惯
           </NButton>
         </div>
-        <div v-if="habits.length" class="habit-grid">
+        <ListSkeleton v-if="loading" :rows="3" />
+        <div v-else-if="habits.length" class="habit-grid">
           <div v-for="h in habits" :key="h.id" class="habit-card wb-card">
             <div class="hc-top">
               <span class="hc-name" :style="{ color: h.color }">{{ h.name }}</span>
@@ -533,17 +556,19 @@ const remindItems = computed(() => {
             <div class="ls-value mono" :style="balance >= 0 ? 'color: var(--wb-success)' : 'color: var(--wb-danger)'">¥{{ balance.toFixed(2) }}</div>
           </div>
         </div>
-        <div class="toolbar">
+        <div class="toolbar toolbar-split">
+          <NInput v-if="recentLedger.length" v-model:value="ledgerKw" size="small" placeholder="搜索记账（分类 / 备注 / 金额）…" clearable class="toolbar-search" />
           <NButton size="small" type="primary" ghost @click="ledgerFormShow = true">
             <template #icon><NIcon :component="Plus" /></template>
             记一笔
           </NButton>
         </div>
-        <div v-if="recentLedger.length" class="ledger-table">
+        <ListSkeleton v-if="loading" :rows="5" />
+        <div v-else-if="filteredLedger.length" class="ledger-table">
           <div class="l-row head">
             <span>日期</span><span>类型</span><span>分类</span><span>金额</span><span>备注</span><span></span>
           </div>
-          <div v-for="e in recentLedger" :key="e.id" class="l-row">
+          <div v-for="e in filteredLedger" :key="e.id" class="l-row">
             <span class="mono">{{ e.date }}</span>
             <span><NTag size="tiny" :bordered="false" :type="e.type === 'income' ? 'success' : 'default'">{{ e.type === 'income' ? '收入' : '支出' }}</NTag></span>
             <span>{{ e.category }}</span>
@@ -556,7 +581,7 @@ const remindItems = computed(() => {
             </span>
           </div>
         </div>
-        <EmptyState v-else text="暂无记账记录" />
+        <EmptyState v-else :text="recentLedger.length ? '没有匹配的记账记录' : '暂无记账记录'" />
       </n-tab-pane>
 
       <!-- 番茄钟 -->
@@ -588,16 +613,18 @@ const remindItems = computed(() => {
         </div>
         <div class="sec-head" style="margin-top: 12px">
           <span class="sec-title">专注记录</span>
+          <NInput v-if="pomoRecords.length" v-model:value="pomoKw" size="small" placeholder="搜索专注记录（任务 / 开始时间）…" clearable class="toolbar-search" />
           <NButton size="tiny" secondary @click="openPomoAdd()">
             <template #icon><NIcon :component="Plus" /></template>
             手动添加
           </NButton>
         </div>
-        <div v-if="pomoRecords.length" class="pomo-records">
+        <ListSkeleton v-if="loading" :rows="4" />
+        <div v-else-if="filteredPomoRecords.length" class="pomo-records">
           <div class="pr-row head">
             <span>任务</span><span>时长</span><span>开始时间</span><span>状态</span><span>操作</span>
           </div>
-          <div v-for="p in pomoRecords" :key="p.id" class="pr-row">
+          <div v-for="p in filteredPomoRecords" :key="p.id" class="pr-row">
             <span>{{ p.task || '专注' }}</span>
             <span class="mono">{{ p.minutes }} 分钟</span>
             <span class="mono">{{ p.startedAt || '—' }}</span>
@@ -613,7 +640,7 @@ const remindItems = computed(() => {
             <NButton size="tiny" quaternary @click="showMorePomos()">加载更多</NButton>
           </div>
         </div>
-        <EmptyState v-else text="暂无专注记录，可跑一个番茄钟或手动添加" />
+        <EmptyState v-else :text="pomoRecords.length ? '没有匹配的专注记录' : '暂无专注记录，可跑一个番茄钟或手动添加'" />
         <ModalForm
           v-model:show="pomoFormShow"
           :title="pomoEditing ? '编辑专注记录' : '添加专注记录'"
@@ -651,11 +678,15 @@ const remindItems = computed(() => {
           </div>
           <NButton size="small" type="primary" ghost @click="saveHealth()">保存今日记录</NButton>
         </div>
-        <div v-if="healthRecords.length" class="health-table">
+        <div class="toolbar toolbar-split">
+          <NInput v-if="healthRecords.length" v-model:value="healthKw" size="small" placeholder="搜索健康记录（日期 / 备注）…" clearable class="toolbar-search" />
+        </div>
+        <ListSkeleton v-if="loading" :rows="5" />
+        <div v-else-if="filteredHealthRecords.length" class="health-table">
           <div class="ht-row head">
             <span>日期</span><span>睡眠</span><span>运动</span><span>心情</span><span>体重</span><span>备注</span>
           </div>
-          <div v-for="h in healthRecords" :key="h.id" class="ht-row">
+          <div v-for="h in filteredHealthRecords" :key="h.id" class="ht-row">
             <span class="mono">{{ h.date }}</span>
             <span class="mono">{{ h.sleepHours ?? '—' }}</span>
             <span class="mono">{{ h.exerciseMin ?? '—' }}</span>
@@ -664,7 +695,7 @@ const remindItems = computed(() => {
             <span class="ht-note">{{ h.note || '—' }}</span>
           </div>
         </div>
-        <EmptyState v-else text="暂无健康记录" />
+        <EmptyState v-else :text="healthRecords.length ? '没有匹配的健康记录' : '暂无健康记录'" />
       </n-tab-pane>
 
       <!-- 打卡热力图 F-LIFE-02 -->
@@ -690,7 +721,8 @@ const remindItems = computed(() => {
 
       <!-- 固定账单 F-LIFE-04 -->
       <n-tab-pane name="bills" tab="固定账单">
-        <div class="toolbar">
+        <div class="toolbar toolbar-split">
+          <NInput v-if="bills.length" v-model:value="billKw" size="small" placeholder="搜索固定账单（名称 / 分类 / 周期）…" clearable class="toolbar-search" />
           <NButton size="small" type="primary" ghost @click="billFormShow = true">
             <template #icon><NIcon :component="Plus" /></template>
             添加固定账单
@@ -721,11 +753,12 @@ const remindItems = computed(() => {
             <span>{{ b.name }} · {{ b.dueDay }} 日 · ¥{{ b.amount.toFixed(2) }}</span>
           </div>
         </div>
-        <div v-if="bills.length" class="ledger-table">
+        <ListSkeleton v-if="loading" :rows="4" />
+        <div v-else-if="filteredBills.length" class="ledger-table">
           <div class="l-row head">
             <span>名称</span><span>分类</span><span>金额</span><span>周期</span><span>扣款日</span><span>状态</span><span></span>
           </div>
-          <div v-for="b in bills" :key="b.id" class="l-row">
+          <div v-for="b in filteredBills" :key="b.id" class="l-row">
             <span>{{ b.name }}</span>
             <span><NTag size="tiny" :bordered="false" :type="b.status === 'active' ? 'info' : 'default'">{{ b.category }}</NTag></span>
             <span class="mono">¥{{ b.amount.toFixed(2) }}</span>
@@ -737,7 +770,7 @@ const remindItems = computed(() => {
             </span>
           </div>
         </div>
-        <EmptyState v-else text="暂无固定账单" />
+        <EmptyState v-else :text="bills.length ? '没有匹配的固定账单' : '暂无固定账单'" />
       </n-tab-pane>
 
       <!-- 生活看板 F-LIFE-05/07/09 -->
@@ -823,6 +856,8 @@ const remindItems = computed(() => {
 <style scoped>
 .wb-tabs :deep(.n-tabs-nav) { margin-bottom: 14px; }
 .toolbar { display: flex; justify-content: flex-end; margin-bottom: 12px; }
+.toolbar-split { justify-content: space-between; align-items: center; gap: 10px; }
+.toolbar-search { max-width: 280px; }
 .habit-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));

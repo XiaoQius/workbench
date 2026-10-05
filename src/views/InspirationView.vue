@@ -4,6 +4,7 @@ import { NIcon, NTag, NTooltip, useMessage } from 'naive-ui'
 import { Bulb, Star, Search, Trash, MoodSmile, MoodNeutral, MoodSad } from '@vicons/tabler'
 import PageHeader from '@/components/PageHeader.vue'
 import EmptyState from '@/components/EmptyState.vue'
+import ListSkeleton from '@/components/ListSkeleton.vue'
 import { inspirationsRepo } from '@/db'
 import type { Inspiration } from '../../drizzle/schema'
 import { parseInspiration } from '@/composables/inspiration'
@@ -185,7 +186,8 @@ onMounted(() => {
     </div>
 
     <!-- 列表 -->
-    <div v-if="filtered.length" class="cards">
+    <ListSkeleton v-if="loading" :rows="5" />
+    <div v-else-if="filtered.length" class="cards">
       <div v-for="r in filtered" :key="r.id" class="card" :class="{ starred: r.starred }">
         <div class="card-main">
           <p class="card-content">{{ r.content }}</p>

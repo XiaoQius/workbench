@@ -1,9 +1,10 @@
 <script setup lang="ts">
 import { watch, ref, onMounted, computed } from 'vue'
 import { refreshTick } from '@/stores/ui'
-import { NButton, NTag, NTabs, NTabPane, NIcon, useMessage, NSelect, NDatePicker } from 'naive-ui'
+import { NButton, NTag, NTabs, NTabPane, NIcon, useMessage, NSelect, NDatePicker, NInput } from 'naive-ui'
 import { Plus, Trash, Check, Checkbox } from '@vicons/tabler'
 import EmptyState from '@/components/EmptyState.vue'
+import ListSkeleton from '@/components/ListSkeleton.vue'
 import ModalForm, { type FieldDef } from '@/components/ModalForm.vue'
 import { useConfirm } from '@/composables/useConfirm'
 import { coursesRepo, assignmentsRepo, notesRepo, gradesRepo, flashcardsRepo, pitfallsRepo, readQueueRepo, feynmanLogsRepo, tasksRepo, pomodorosRepo } from '@/db'
@@ -34,10 +35,42 @@ const readFormShow = ref(false)
 const feynmanFormShow = ref(false)
 const activeNote = ref<Note | null>(null)
 
+// ---- 列表搜索 ----
+// 每张表只按「人认得出来的那几列」匹配，不逐字段全扫。
+const courseKw = ref('')
+const assignmentKw = ref('')
+const noteKw = ref('')
+const gradeKw = ref('')
+const cardKw = ref('')
+const goalKw = ref('')
+const focusKw = ref('')
+const pitfallKw = ref('')
+const readKw = ref('')
+const feynmanKw = ref('')
+
+function matchKw(kw: string, ...vals: unknown[]): boolean {
+  const k = kw.trim().toLowerCase()
+  if (!k) return true
+  return vals.some((v) => String(v ?? '').toLowerCase().includes(k))
+}
+
+const filteredCourses = computed(() => courses.value.filter((c) => matchKw(courseKw.value, c.name, c.teacher, c.location)))
+const filteredAssignments = computed(() => assignments.value.filter((a) => matchKw(assignmentKw.value, a.title, a.status, a.dueDate, a.note)))
+const filteredNotes = computed(() => notes.value.filter((n) => matchKw(noteKw.value, n.title, n.content, n.tags)))
+const filteredGrades = computed(() => grades.value.filter((g) => matchKw(gradeKw.value, g.courseName, g.examType, g.date, g.note)))
+const filteredCards = computed(() => dueCards.value.filter((c) => matchKw(cardKw.value, c.front, c.back, c.deck)))
+const filteredGoals = computed(() => studyGoals.value.filter((g) => matchKw(goalKw.value, g.title, g.status, g.dueDate, g.note)))
+const filteredFocus = computed(() => focusRecords.value.filter((p) => matchKw(focusKw.value, p.task, p.startedAt, p.minutes)))
+const filteredPitfalls = computed(() => pitfalls.value.filter((p) => matchKw(pitfallKw.value, p.title, p.category, p.problem, p.solution, p.tags)))
+const filteredReadQueue = computed(() => readQueue.value.filter((r) => matchKw(readKw.value, r.title, r.author, r.category, r.note)))
+const filteredFeynmanLogs = computed(() => feynmanLogs.value.filter((f) => matchKw(feynmanKw.value, f.topic, f.explanation, f.gap, f.source)))
+
 const weekdayNames = ['周一', '周二', '周三', '周四', '周五', '周六', '周日']
 const weekdayMap: Record<string, number> = { 一: 0, 二: 1, 三: 2, 四: 3, 五: 4, 六: 5, 日: 6 }
 
+const loading = ref(false)
 async function load() {
+  loading.value = true
   try {
     const [cs, as, ns, gs, fcs, ts, ps, pits, rq, fys] = await Promise.all([
       coursesRepo.listAll(), assignmentsRepo.listAll(), notesRepo.listAll(),
@@ -61,6 +94,8 @@ async function load() {
   } catch (e) {
     message.warning('数据加载失败（浏览器降级为演示模式）')
     console.warn(e)
+  } finally {
+    loading.value = false
   }
 }
 watch(refreshTick, () => load())
@@ -109,7 +144,7 @@ const periodCount = computed(() => Math.min(12, maxPeriod.value))
 // filter + sort 一遍全部课程，改为一次分桶后 O(1) 取用。
 const coursesByDay = computed(() => {
   const m = new Map<number, Course[]>()
-  for (const c of courses.value) {
+  for (const c of filteredCourses.value) {
     const day = weekdayMap[c.weekday]
     const arr = m.get(day)
     if (arr) arr.push(c)
@@ -538,7 +573,8 @@ async function removeFocus(p: Pomodoro) {
     <n-tabs type="line" class="wb-tabs">
       <!-- 课程表 -->
       <n-tab-pane name="schedule" tab="课程表">
-        <div class="toolbar">
+        <div class="toolbar toolbar-split">
+          <NInput v-if="courses.length" v-model:value="courseKw" size="small" placeholder="搜索课程（名称 / 教师 / 地点）…" clearable class="toolbar-search" />
           <NButton size="small" type="primary" ghost @click="courseFormShow = true">
             <template #icon><NIcon :component="Plus" /></template>
             添加课程
@@ -558,7 +594,8 @@ async function removeFocus(p: Pomodoro) {
             {{ g.date }}（{{ g.titles.join('、') }}）
           </span>
         </div>
-        <div v-if="courses.length" class="schedule">
+        <ListSkeleton v-if="loading" :rows="5" />
+        <div v-else-if="filteredCourses.length" class="schedule">
           <div v-for="(day, i) in weekdayNames" :key="day" class="schedule-col">
             <div class="sc-day">{{ day }}</div>
             <div class="sc-cells">
@@ -576,12 +613,13 @@ async function removeFocus(p: Pomodoro) {
             </div>
           </div>
         </div>
-        <EmptyState v-else text="暂无课程，添加第一门课吧" />
+        <EmptyState v-else :text="courses.length ? '没有匹配的课程' : '暂无课程，添加第一门课吧'" />
       </n-tab-pane>
 
       <!-- 作业双轨 -->
       <n-tab-pane name="assignments" tab="作业双轨">
-        <div class="toolbar">
+        <div class="toolbar toolbar-split">
+          <NInput v-if="assignments.length" v-model:value="assignmentKw" size="small" placeholder="搜索作业（标题 / 状态 / 截止）…" clearable class="toolbar-search" />
           <NButton size="small" type="primary" ghost @click="assignmentFormShow = true">
             <template #icon><NIcon :component="Plus" /></template>
             新建作业
@@ -597,11 +635,12 @@ async function removeFocus(p: Pomodoro) {
             {{ w.week }}<b>{{ w.count }}</b>
           </span>
         </div>
-        <div v-if="assignments.length" class="assignment-table">
+        <ListSkeleton v-if="loading" :rows="5" />
+        <div v-else-if="filteredAssignments.length" class="assignment-table">
           <div class="a-row head">
             <span>作业</span><span>课程</span><span>截止</span><span>写完</span><span>提交</span><span></span>
           </div>
-          <div v-for="a in assignments" :key="a.id" class="a-row">
+          <div v-for="a in filteredAssignments" :key="a.id" class="a-row">
             <span class="a-title">{{ a.title }}</span>
             <span>{{ courseName(a.courseId) }}</span>
             <span class="mono" :style="a.dueDate && a.dueDate < new Date().toISOString().slice(0, 10) && a.status !== 'submitted' ? 'color: var(--wb-danger)' : ''">
@@ -630,31 +669,34 @@ async function removeFocus(p: Pomodoro) {
             </span>
           </div>
         </div>
-        <EmptyState v-else text="暂无作业" />
+        <EmptyState v-else :text="assignments.length ? '没有匹配的作业' : '暂无作业'" />
       </n-tab-pane>
 
       <!-- 学习笔记 -->
       <n-tab-pane name="notes" tab="学习笔记">
-        <div class="toolbar">
+        <div class="toolbar toolbar-split">
+          <NInput v-if="notes.length" v-model:value="noteKw" size="small" placeholder="搜索笔记（标题 / 正文 / 标签）…" clearable class="toolbar-search" />
           <NButton size="small" type="primary" ghost @click="noteFormShow = true">
             <template #icon><NIcon :component="Plus" /></template>
             新建笔记
           </NButton>
         </div>
-        <div v-if="notes.length" class="note-grid">
-          <div v-for="n in notes" :key="n.id" class="note-card wb-card hoverable" @click="activeNote = n">
+        <ListSkeleton v-if="loading" :rows="4" />
+        <div v-else-if="filteredNotes.length" class="note-grid">
+          <div v-for="n in filteredNotes" :key="n.id" class="note-card wb-card hoverable" @click="activeNote = n">
             <div class="note-title">{{ n.title }}</div>
             <div class="note-preview">{{ (n.content || '').slice(0, 120) }}</div>
             <div v-if="n.tags" class="note-tags mono">{{ n.tags }}</div>
             <div class="note-date mono">{{ n.updatedAt || n.createdAt }}</div>
           </div>
         </div>
-        <EmptyState v-else text="暂无笔记" />
+        <EmptyState v-else :text="notes.length ? '没有匹配的笔记' : '暂无笔记'" />
       </n-tab-pane>
 
       <!-- 成绩单 F-STU-04 -->
       <n-tab-pane name="grades" tab="成绩单">
-        <div class="toolbar">
+        <div class="toolbar toolbar-split">
+          <NInput v-if="grades.length" v-model:value="gradeKw" size="small" placeholder="搜索成绩（课程 / 类型 / 日期）…" clearable class="toolbar-search" />
           <NButton size="small" type="primary" ghost @click="gradeFormShow = true">
             <template #icon><NIcon :component="Plus" /></template>
             记录成绩
@@ -670,11 +712,12 @@ async function removeFocus(p: Pomodoro) {
             <span class="mono gpa-num">{{ grades.length }} 条</span>
           </div>
         </div>
-        <div v-if="grades.length" class="grade-table">
+        <ListSkeleton v-if="loading" :rows="5" />
+        <div v-else-if="filteredGrades.length" class="grade-table">
           <div class="g-row head">
             <span>课程</span><span>类型</span><span>得分</span><span>满分</span><span>权重</span><span>日期</span><span></span>
           </div>
-          <div v-for="g in grades" :key="g.id" class="g-row">
+          <div v-for="g in filteredGrades" :key="g.id" class="g-row">
             <span>{{ g.courseName }} <span v-if="courseGradeAvg(g.courseName) !== null" class="mono dim">(均 {{ courseGradeAvg(g.courseName) }})</span></span>
             <span><NTag size="tiny" :bordered="false">{{ g.examType }}</NTag></span>
             <span class="mono" :style="g.total && g.score / g.total >= 0.6 ? 'color: var(--wb-success)' : 'color: var(--wb-danger)'">{{ g.score }}</span>
@@ -686,12 +729,13 @@ async function removeFocus(p: Pomodoro) {
             </span>
           </div>
         </div>
-        <EmptyState v-else text="暂无成绩记录" />
+        <EmptyState v-else :text="grades.length ? '没有匹配的成绩记录' : '暂无成绩记录'" />
       </n-tab-pane>
 
       <!-- 闪卡 F-STU-09 -->
       <n-tab-pane name="cards" tab="闪卡">
-        <div class="toolbar">
+        <div class="toolbar toolbar-split">
+          <NInput v-if="dueCards.length" v-model:value="cardKw" size="small" placeholder="搜索闪卡（正面 / 背面 / 卡组）…" clearable class="toolbar-search" />
           <NButton size="small" type="primary" ghost @click="cardFormShow = true">
             <template #icon><NIcon :component="Plus" /></template>
             添加闪卡
@@ -707,8 +751,9 @@ async function removeFocus(p: Pomodoro) {
             <span class="mono deck-num">{{ s.total }} 张 · 待复习 {{ s.due }} · 已掌握 {{ s.mastered }}</span>
           </div>
         </div>
-        <div v-if="dueCards.length" class="card-list">
-          <div v-for="(c, i) in dueCards" :key="c.id" class="flash-card wb-card" :class="{ flipped: flipIndex === i }">
+        <ListSkeleton v-if="loading" :rows="4" />
+        <div v-else-if="filteredCards.length" class="card-list">
+          <div v-for="(c, i) in filteredCards" :key="c.id" class="flash-card wb-card" :class="{ flipped: flipIndex === i }">
             <div class="fc-head">
               <NTag size="tiny" :bordered="false">{{ c.deck || '默认' }}</NTag>
               <NTag size="tiny" :bordered="false" :type="(c.level || 0) >= 3 ? 'success' : (c.level || 0) >= 2 ? 'info' : 'default'">{{ cardLevelLabel(c.level) }}</NTag>
@@ -727,12 +772,13 @@ async function removeFocus(p: Pomodoro) {
             </NButton>
           </div>
         </div>
-        <EmptyState v-else text="暂无待复习闪卡，添加一张或稍后回来" />
+        <EmptyState v-else :text="dueCards.length ? '没有匹配的闪卡' : '暂无待复习闪卡，添加一张或稍后回来'" />
       </n-tab-pane>
 
       <!-- 学习目标 F-STU-07 -->
       <n-tab-pane name="goals" tab="学习目标">
-        <div class="toolbar">
+        <div class="toolbar toolbar-split">
+          <NInput v-if="studyGoals.length" v-model:value="goalKw" size="small" placeholder="搜索目标（标题 / 状态 / 截止）…" clearable class="toolbar-search" />
           <NButton size="small" type="primary" ghost @click="goalFormShow = true">
             <template #icon><NIcon :component="Plus" /></template>
             新建目标
@@ -743,8 +789,9 @@ async function removeFocus(p: Pomodoro) {
           <span class="mono gp-num">{{ goalProgress }}%</span>
           <div class="gp-track"><div class="gp-bar" :style="{ width: goalProgress + '%' }"></div></div>
         </div>
-        <div v-if="studyGoals.length" class="goal-list">
-          <div v-for="g in studyGoals" :key="g.id" class="goal-row wb-card">
+        <ListSkeleton v-if="loading" :rows="4" />
+        <div v-else-if="filteredGoals.length" class="goal-list">
+          <div v-for="g in filteredGoals" :key="g.id" class="goal-row wb-card">
             <span :style="g.status === 'done' ? 'text-decoration: line-through; color: var(--wb-text-3)' : ''">{{ g.title }}</span>
             <span class="mono dim">{{ g.dueDate || '' }}</span>
             <span style="display: flex; gap: 4px">
@@ -753,7 +800,7 @@ async function removeFocus(p: Pomodoro) {
             </span>
           </div>
         </div>
-        <EmptyState v-else text="暂无学习目标" />
+        <EmptyState v-else :text="studyGoals.length ? '没有匹配的学习目标' : '暂无学习目标'" />
       </n-tab-pane>
 
       <!-- 专注统计 F-STU-11 -->
@@ -777,16 +824,18 @@ async function removeFocus(p: Pomodoro) {
         </div>
         <div class="sec-head" style="margin-top: 14px">
           <span class="sec-title">专注明细</span>
+          <NInput v-if="focusRecords.length" v-model:value="focusKw" size="small" placeholder="搜索专注记录（任务 / 开始时间）…" clearable class="toolbar-search" />
           <NButton size="tiny" secondary @click="focusFormShow = true">
             <template #icon><NIcon :component="Plus" /></template>
             添加记录
           </NButton>
         </div>
-        <div v-if="focusRecords.length" class="pr-records">
+        <ListSkeleton v-if="loading" :rows="5" />
+        <div v-else-if="filteredFocus.length" class="pr-records">
           <div class="pr-row head">
             <span>任务</span><span>时长</span><span>开始时间</span><span>状态</span><span>操作</span>
           </div>
-          <div v-for="p in focusRecords.slice(0, focusLimit)" :key="p.id" class="pr-row">
+          <div v-for="p in filteredFocus.slice(0, focusLimit)" :key="p.id" class="pr-row">
             <span>{{ p.task || '专注' }}</span>
             <span class="mono">{{ p.minutes }} 分钟</span>
             <span class="mono">{{ p.startedAt || '—' }}</span>
@@ -798,11 +847,11 @@ async function removeFocus(p: Pomodoro) {
               </NButton>
             </span>
           </div>
-          <div v-if="focusRecords.length > focusLimit" class="pr-more">
+          <div v-if="filteredFocus.length > focusLimit" class="pr-more">
             <NButton size="tiny" quaternary @click="focusLimit += 50">加载更多</NButton>
           </div>
         </div>
-        <EmptyState v-else text="暂无专注记录" />
+        <EmptyState v-else :text="focusRecords.length ? '没有匹配的专注记录' : '暂无专注记录'" />
         <ModalForm
           v-model:show="focusFormShow"
           :title="focusEditing ? '编辑专注记录' : '添加专注记录'"
@@ -814,14 +863,16 @@ async function removeFocus(p: Pomodoro) {
 
       <!-- 错题本 F-STU-10 -->
       <n-tab-pane name="pitfalls" tab="错题本">
-        <div class="toolbar">
+        <div class="toolbar toolbar-split">
+          <NInput v-if="pitfalls.length" v-model:value="pitfallKw" size="small" placeholder="搜索错题（标题 / 分类 / 错因 / 解法）…" clearable class="toolbar-search" />
           <NButton size="small" type="primary" ghost @click="pitfallFormShow = true">
             <template #icon><NIcon :component="Plus" /></template>
             收录错题
           </NButton>
         </div>
-        <div v-if="pitfalls.length" class="pitfall-list">
-          <div v-for="p in pitfalls" :key="p.id" class="pitfall-row wb-card">
+        <ListSkeleton v-if="loading" :rows="5" />
+        <div v-else-if="filteredPitfalls.length" class="pitfall-list">
+          <div v-for="p in filteredPitfalls" :key="p.id" class="pitfall-row wb-card">
             <div class="pf-head">
               <span class="pf-title">{{ p.title }}</span>
               <NTag v-if="p.category" size="tiny" :bordered="false">{{ p.category }}</NTag>
@@ -835,19 +886,21 @@ async function removeFocus(p: Pomodoro) {
             </span>
           </div>
         </div>
-        <EmptyState v-else text="暂无错题，收录一道开始吧" />
+        <EmptyState v-else :text="pitfalls.length ? '没有匹配的错题' : '暂无错题，收录一道开始吧'" />
       </n-tab-pane>
 
       <!-- 阅读队列 F-STU-08 -->
       <n-tab-pane name="readQueue" tab="阅读队列">
-        <div class="toolbar">
+        <div class="toolbar toolbar-split">
+          <NInput v-if="readQueue.length" v-model:value="readKw" size="small" placeholder="搜索阅读（书名 / 作者 / 分类）…" clearable class="toolbar-search" />
           <NButton size="small" type="primary" ghost @click="readFormShow = true">
             <template #icon><NIcon :component="Plus" /></template>
             加入队列
           </NButton>
         </div>
-        <div v-if="readQueue.length" class="read-list">
-          <div v-for="r in readQueue" :key="r.id" class="read-row wb-card">
+        <ListSkeleton v-if="loading" :rows="5" />
+        <div v-else-if="filteredReadQueue.length" class="read-list">
+          <div v-for="r in filteredReadQueue" :key="r.id" class="read-row wb-card">
             <div class="rd-info">
               <span class="rd-title">{{ r.title }}</span>
               <span class="dim">{{ r.author || '' }} {{ r.category ? '· ' + r.category : '' }}</span>
@@ -863,19 +916,21 @@ async function removeFocus(p: Pomodoro) {
             </span>
           </div>
         </div>
-        <EmptyState v-else text="阅读队列为空" />
+        <EmptyState v-else :text="readQueue.length ? '没有匹配的阅读项' : '阅读队列为空'" />
       </n-tab-pane>
 
       <!-- 费曼输出 F-STU-12 -->
       <n-tab-pane name="feynman" tab="费曼输出">
-        <div class="toolbar">
+        <div class="toolbar toolbar-split">
+          <NInput v-if="feynmanLogs.length" v-model:value="feynmanKw" size="small" placeholder="搜索费曼记录（主题 / 讲解 / 卡壳点）…" clearable class="toolbar-search" />
           <NButton size="small" type="primary" ghost @click="feynmanFormShow = true">
             <template #icon><NIcon :component="Plus" /></template>
             记录讲解
           </NButton>
         </div>
-        <div v-if="feynmanLogs.length" class="feynman-list">
-          <div v-for="f in feynmanLogs" :key="f.id" class="feynman-row wb-card">
+        <ListSkeleton v-if="loading" :rows="4" />
+        <div v-else-if="filteredFeynmanLogs.length" class="feynman-list">
+          <div v-for="f in filteredFeynmanLogs" :key="f.id" class="feynman-row wb-card">
             <div class="pf-head">
               <span class="pf-title">{{ f.topic }}</span>
               <NTag size="tiny" :bordered="false" :type="f.status === 'done' ? 'success' : 'default'">{{ f.status === 'done' ? '已讲通' : '待复盘' }}</NTag>
@@ -891,7 +946,7 @@ async function removeFocus(p: Pomodoro) {
             </span>
           </div>
         </div>
-        <EmptyState v-else text="暂无费曼记录" />
+        <EmptyState v-else :text="feynmanLogs.length ? '没有匹配的费曼记录' : '暂无费曼记录'" />
       </n-tab-pane>
     </n-tabs>
 
@@ -932,6 +987,8 @@ async function removeFocus(p: Pomodoro) {
 <style scoped>
 .wb-tabs :deep(.n-tabs-nav) { margin-bottom: 14px; }
 .toolbar { display: flex; justify-content: flex-end; margin-bottom: 12px; }
+.toolbar-split { justify-content: space-between; align-items: center; gap: 10px; }
+.toolbar-search { max-width: 280px; }
 .schedule {
   display: grid;
   grid-template-columns: repeat(7, 1fr);

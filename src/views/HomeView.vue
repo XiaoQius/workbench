@@ -4,6 +4,7 @@ import { useRouter } from 'vue-router'
 import { NButton, NIcon, NTag, NInput, useMessage } from 'naive-ui'
 import { ArrowRight, Bulb } from '@vicons/tabler'
 import EmptyState from '@/components/EmptyState.vue'
+import ListSkeleton from '@/components/ListSkeleton.vue'
 import { refreshTick, settingsOpen, settingsTab } from '@/stores/ui'
 import { useThemeStore } from '@/stores/theme'
 import { moduleColor } from '@/theme/tokens'
@@ -524,7 +525,7 @@ async function saveInspiration() {
           <h2>今日焦点</h2>
           <span class="mono head-meta">{{ todayLabel }}</span>
         </header>
-        <div v-if="loading" class="load-strip">数据加载中…</div>
+        <ListSkeleton v-if="loading" :rows="5" />
         <div v-else-if="focusRows.length" class="focus-list">
           <div v-for="row in focusRows" :key="row.uid" class="focus-item">
             <button

@@ -4,6 +4,7 @@ import { refreshTick } from '@/stores/ui'
 import { NButton, NTag, NInput, NSelect, NModal, NForm, NFormItem, NSpace, useMessage, NIcon } from 'naive-ui'
 import { Plus, Trash, Rocket, Refresh } from '@vicons/tabler'
 import EmptyState from '@/components/EmptyState.vue'
+import ListSkeleton from '@/components/ListSkeleton.vue'
 import ModalForm, { type FieldDef } from '@/components/ModalForm.vue'
 import { toolsRepo, agentsRepo } from '@/db'
 import type { Tool, Agent } from '../../drizzle/schema'
@@ -834,7 +835,8 @@ function loadRollbackPoints() {
             <NButton size="tiny" type="warning" ghost @click="quickEnd()">收工</NButton>
           </div>
           <div class="tool-hint mono">热键：Alt+1..9 启动前 9 个工具 · F-LP-04/05/06/08</div>
-          <div v-if="orderedTools.length" class="tool-grid">
+          <ListSkeleton v-if="loading" :rows="6" />
+          <div v-else-if="orderedTools.length" class="tool-grid">
             <div v-for="(t, idx) in orderedTools" :key="t.id" class="tool-item">
               <div class="tool-main" @click="launchTool(t)">
                 <span class="tool-dot" :style="{ background: 'var(--wb-module-workspace)' }"></span>
@@ -879,7 +881,8 @@ function loadRollbackPoints() {
           </NButton>
         </header>
         <div class="card-body">
-          <div v-if="agents.length" class="agent-list">
+          <ListSkeleton v-if="loading" :rows="4" />
+          <div v-else-if="agents.length" class="agent-list">
             <div v-for="a in agents" :key="a.id" class="agent-item">
               <div class="agent-row">
                 <span class="agent-name">{{ a.name }}</span>
