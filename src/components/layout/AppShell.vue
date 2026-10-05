@@ -128,6 +128,8 @@ function openDownload() {
   openSettings('version')
 }
 onSyncStatus((st) => { syncStatus.value = st })
+// 冲突需要用户裁决，否则「待同步」会一直挂着——顶栏做成醒目警示色并直达裁决入口
+const hasConflicts = computed(() => syncStatus.value.conflicts > 0)
 const syncLabel = computed(() => {
   if (!useSettings().cloudToken) return ''
   if (syncStatus.value.state === 'syncing') return '同步中'
@@ -136,6 +138,10 @@ const syncLabel = computed(() => {
   if (syncStatus.value.conflicts > 0) return syncStatus.value.conflicts + ' 处冲突'
   return syncStatus.value.pending > 0 ? '待同步 ' + syncStatus.value.pending : '已同步'
 })
+/** 点顶栏同步状态：有冲突时直达云同步页的冲突裁决区，否则打开设置首页 */
+function openSyncPanel() {
+  openSettings(hasConflicts.value ? 'cloud' : undefined)
+}
 
 onMounted(() => {
   refreshSysStatus()
@@ -242,8 +248,8 @@ onMounted(() => {
               <div class="quick-insp-tip">Enter 保存 · 自动解析 #标签</div>
             </div>
           </NPopover>
-          <div v-if="syncLabel" class="sync-chip" :class="{ err: syncStatus.state === 'error', busy: syncStatus.state === 'syncing' }"
-              title="云同步状态，点击管理" @click="openSettings()">
+          <div v-if="syncLabel" class="sync-chip" :class="{ err: syncStatus.state === 'error', busy: syncStatus.state === 'syncing', conflict: hasConflicts }"
+              :title="hasConflicts ? `${syncStatus.conflicts} 处数据冲突待裁决，点击处理` : '云同步状态，点击管理'" @click="openSyncPanel()">
             <span class="sync-dot"></span>{{ syncLabel }}
           </div>
           <NButton size="small" quaternary circle title="刷新当前页" @click="requestRefresh()">
@@ -462,6 +468,23 @@ img.user-avatar {
   background: var(--wb-danger);
   box-shadow: 0 0 0 2px color-mix(in srgb, var(--wb-danger) 20%, transparent);
 }
+/* 冲突待裁决：比普通状态更醒目，避免用户长期忽略导致「待同步」不归零 */
+.sync-chip.conflict {
+  color: var(--wb-warning, #d97706);
+  border-color: var(--wb-warning, #d97706);
+  font-weight: 600;
+}
+.sync-chip.conflict .sync-dot {
+  background: var(--wb-warning, #d97706);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--wb-warning, #d97706) 25%, transparent);
+  animation: wb-pulse 1.4s ease-in-out infinite;
+}
+@keyframes wb-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: .35; }
+}
+/* 开启「减少动效」时不闪烁 */
+:global(.wb-reduced-motion) .sync-chip.conflict .sync-dot { animation: none; }
 .kbd {
   font-family: var(--wb-font-mono);
   font-size: 11px;

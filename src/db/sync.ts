@@ -543,10 +543,14 @@ export async function syncNow(): Promise<void> {
     // 此前一律标红「同步异常」，会让离线用户误以为数据丢了。
     const offline = !navigator.onLine || /fetch|network|Failed to fetch|timeou/i.test(msg)
     const pend = await query<{ n: number }>(`SELECT COUNT(*) AS n FROM _sync_state WHERE pending = 1`).catch(() => [{ n: 0 }])
+    // 同步失败/离线时也要刷新冲突数：setStatus 是部分合并，
+    // 不传 conflicts 会保留上一次的值，导致冲突已解决（或新产生）时顶栏数字不更新。
+    const cnErr = await query<{ n: number }>(`SELECT COUNT(*) AS n FROM _sync_state WHERE conflict = 1`).catch(() => [{ n: 0 }])
     setStatus({
       state: offline ? 'offline' : 'error',
       message: offline ? '离线，改动已保存在本地，联网后自动上传' : msg,
       pending: pend[0]?.n ?? 0,
+      conflicts: cnErr[0]?.n ?? 0,
     })
   } finally {
     syncing = false
