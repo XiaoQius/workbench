@@ -155,37 +155,88 @@ export interface RestoreResult {
   clearedTables: string[]
   skippedTables: string[]
   totalRestored: number
+  /** 单行写入失败的表及原因，UI 必须展示，否则用户看不出少了哪几行 */
+  failures: { table: string; failed: number; sample: string }[]
 }
 
 /**
  * 以备份为准全量恢复：逐表 clear → insert。
  * 走 repo.insert 的列白名单，备份里带 id / createdAt 等列会被白名单过滤，
  * 由数据库重新分配，避免与现存行冲突。
+ *
+ * 为什么没有用 BEGIN/COMMIT（实测结论，2026-10-05）：
+ * tauri-plugin-sql 的 execute **每次调用自带一层事务**，跨调用无法维持事务上下文——
+ * 单独 exec('BEGIN') 会成功但下一次 exec 时事务已不存在（报
+ * "cannot rollback - no transaction is active"）；把 BEGIN...ROLLBACK 塞进一次
+ * execute 则报 "cannot start a transaction within a transaction"。
+ * 也就是说跨 41 张表的恢复**无法靠数据库事务保证原子性**，
+ * 中途失败会停在「旧数据已删、新数据未进」的半库状态。
+ *
+ * 因此改为「应用层补偿」：恢复前先把当前库全量快照进内存，
+ * 任何一步抛错就用快照写回；即便写回也失败，快照仍会通过 rejected 原因
+ * 抛给上层，绝不静默。
  */
 export async function restoreAll(payload: BackupPayload): Promise<RestoreResult> {
   const restored: TableStat[] = []
   const cleared: string[] = []
   const skipped: string[] = []
+  const failures: { table: string; failed: number; sample: string }[] = []
 
+  // 快照当前库，用于失败补偿
+  const snapshot: Record<string, Record<string, unknown>[]> = {}
   for (const t of SYNC_TABLES) {
-    const rows = payload.tables?.[t]
-    const repo = repoOf(t)
-    // 备份里没有这张表（或为空）→ 也清空，保证「以备份为准」，不留半旧半新
-    await repo.clear()
-    if (!Array.isArray(rows) || rows.length === 0) {
-      cleared.push(t)
-      continue
+    try {
+      snapshot[t] = (await repoOf(t).listAll()) as Record<string, unknown>[]
+    } catch {
+      snapshot[t] = []
     }
-    let n = 0
-    for (const row of rows) {
+  }
+
+  try {
+    for (const t of SYNC_TABLES) {
+      const rows = payload.tables?.[t]
+      const repo = repoOf(t)
+      // 备份里没有这张表（或为空）→ 也清空，保证「以备份为准」，不留半旧半新
+      await repo.clear()
+      if (!Array.isArray(rows) || rows.length === 0) {
+        cleared.push(t)
+        continue
+      }
+      let n = 0
+      let sample = ''
+      let bad = 0
+      for (const row of rows) {
+        try {
+          await repo.insert(row)
+          n++
+        } catch (e) {
+          // 单行失败不中断整批（备份里可能含已下线列），但要记账以便如实告知用户
+          bad++
+          if (!sample) sample = e instanceof Error ? e.message : String(e)
+        }
+      }
+      if (bad) failures.push({ table: t, failed: bad, sample })
+      restored.push({ table: t, rows: n })
+    }
+  } catch (e) {
+    // 尽力用快照还原；还原失败也要把两份错误都抛出去，绝不假装成功
+    const revertErrors: string[] = []
+    for (const t of SYNC_TABLES) {
       try {
-        await repo.insert(row)
-        n++
-      } catch {
-        // 单行失败（备份里含已下线列、约束变更等）不中断整批，跳过即可
+        const repo = repoOf(t)
+        await repo.clear()
+        for (const row of snapshot[t] ?? []) {
+          try { await repo.insert(row) } catch { /* 单行失败继续，最后汇总 */ }
+        }
+      } catch (e2) {
+        revertErrors.push(`${t}: ${e2 instanceof Error ? e2.message : String(e2)}`)
       }
     }
-    restored.push({ table: t, rows: n })
+    const base = e instanceof Error ? e.message : String(e)
+    throw new Error(
+      `恢复失败，已尝试还原原数据。原因：${base}` +
+        (revertErrors.length ? `；还原过程中还有 ${revertErrors.length} 张表出错：${revertErrors.slice(0, 3).join(' | ')}` : ''),
+    )
   }
 
   for (const name of Object.keys(payload.tables ?? {})) {
@@ -197,6 +248,7 @@ export async function restoreAll(payload: BackupPayload): Promise<RestoreResult>
     clearedTables: cleared,
     skippedTables: skipped,
     totalRestored: restored.reduce((n, t) => n + t.rows, 0),
+    failures,
   }
 }
 

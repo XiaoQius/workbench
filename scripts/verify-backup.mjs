@@ -90,6 +90,21 @@ else ok('destructive 仅统计当前非空表，避免误报')
 if (!/export async function summarizeBackup/.test(backupSrc)) bad('backup.ts 缺少 summarizeBackup')
 else ok('parseBackup 与 summarizeBackup 职责分离')
 if (!/destructiveAck/.test(panelSrc)) bad('SettingsPanel.vue 缺少 destructiveAck 显式确认')
+
+// ---- 8. 恢复必须有失败补偿（实测：数据库事务跨调用不可用） ----
+// tauri-plugin-sql 每次 execute 自带事务，跨 41 张表的恢复无法用 BEGIN/COMMIT 保证原子性，
+// 一旦中途失败就是「旧数据已删、新数据未进」的半库。因此必须在应用层先快照再补偿。
+if (!/snapshot\[t\]/.test(backupSrc)) bad('backup.ts 恢复前未做快照，中途失败无法还原')
+else ok('恢复前先快照当前库')
+if (!/已尝试还原原数据/.test(backupSrc)) bad('backup.ts 失败时未尝试用快照还原')
+else ok('恢复失败会用快照还原')
+// 不要误用 BEGIN/COMMIT：实测插件已自带事务，嵌套会报 cannot start a transaction within a transaction
+if (/await exec\('BEGIN'\)/.test(backupSrc)) {
+  bad('backup.ts 用了 BEGIN——实测插件自带事务，跨调用无效且嵌套会报错')
+} else {
+  ok('未误用跨调用 BEGIN 事务')
+}
+if (!/destructiveAck/.test(panelSrc)) bad('SettingsPanel.vue 缺少 destructiveAck 显式确认')
 else ok('破坏性恢复需显式勾选确认')
 if (!/:disabled="restoreSummary\.destructive && !destructiveAck"/.test(panelSrc)) {
   bad('破坏性恢复未禁用按钮（未确认也能点）')
