@@ -1,7 +1,7 @@
 {
   "name": "workbench",
   "private": true,
-  "version": "0.3.4",
+  "version": "0.3.5",
   "type": "module",
   "description": "个人工作台 WORKBENCH - Tauri 2 + Vue 3 桌面效率工具",
   "scripts": {
