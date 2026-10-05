@@ -11,7 +11,7 @@
     "tauri": "tauri",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "drizzle-kit migrate",
-    "verify:sync": "node scripts/verify-sync-triggers.mjs && node scripts/verify-conflict-logic.js && node scripts/verify-migrate.mjs"
+    "verify:sync": "node scripts/verify-sync-triggers.mjs && node scripts/verify-conflict-logic.js && node scripts/verify-migrate.mjs && node scripts/verify-repo-columns.mjs"
   },
   "dependencies": {
     "@tauri-apps/api": "^2.4.0",
