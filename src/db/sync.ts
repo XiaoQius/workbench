@@ -460,6 +460,10 @@ async function cloudAuth(serverUrl: string, path: string, username: string, pass
   s.cloudToken = data.token
   s.cloudEnabled = true
   s.deviceName = deviceName
+  // 服务端 login/register 返回的是 userId（数字），不是用户名。
+  // 历史版本曾把 userId 存进 cloudUser，侧栏展示名从此显示成「1」。
+  // 登录时我们手里就有用户名，直接存对。
+  s.cloudUser = username
 }
 
 export function cloudRegister(serverUrl: string, username: string, password: string, deviceName: string): Promise<void> {
@@ -673,6 +677,24 @@ export async function resolveConflict(table: string, rowId: number, choice: 'loc
 export async function initSync(): Promise<void> {
   const s = useSettings()
   await initSyncSchema()
+  // 旧数据自愈：cloudUser 为空或被存成了 userId（纯数字）时，
+  // 用 token 向服务端换回真实用户名。失败不阻塞同步，仅保持现状。
+  if (s.cloudToken && (!s.cloudUser.trim() || /^\d+$/.test(s.cloudUser.trim()))) {
+    try {
+      const base = s.cloudUrl.replace(/\/+$/, '')
+      const res = await fetch(`${base}/api/auth/verify`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ token: s.cloudToken }),
+      })
+      if (res.ok) {
+        const data = await res.json() as { username?: string }
+        if (data.username) s.cloudUser = data.username
+      }
+    } catch {
+      /* 离线等情况忽略，下次启动再试 */
+    }
+  }
   // 断网期间的本地改动本来就留在 pending 队列里，这里保证网络一恢复就补传，
   // 不必等下一次 5 分钟轮询或 WS 重连。
   if (typeof window !== 'undefined' && !onlineHooked) {
