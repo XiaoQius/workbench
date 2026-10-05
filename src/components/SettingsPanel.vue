@@ -324,6 +324,10 @@ function commitFontScale(v: number) {
             <NButton v-if="s.avatarColor" size="tiny" quaternary @click="s.avatarColor = ''">恢复自动配色</NButton>
           </div>
           <div class="sp-dim">可上传图片作为头像（自动裁成方形并压缩）；未上传图片时，点选色块自定义底色，再点一次取消；未设置时按登录用户名自动配色。</div>
+          <div class="sp-row" style="margin-top: 10px">
+            <span class="sp-dim" style="width: 88px; flex-shrink: 0">显示名称</span>
+            <NInput v-model:value="s.displayName" placeholder="自定义侧栏名称（留空则显示登录用户名）" maxlength="20" style="flex: 1" />
+          </div>
         </div>
 
         <div class="sp-sec">

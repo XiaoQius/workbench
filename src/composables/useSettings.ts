@@ -62,6 +62,7 @@ function defaults() {
     cloudUrl: 'https://testapi.xusn.cn',
     cloudToken: '',
     cloudUser: '',
+    displayName: '',
     deviceName: '',
     avatarText: '',
     avatarColor: '',
@@ -85,6 +86,8 @@ export interface WbSettings {
   cloudUrl: string
   cloudToken: string
   cloudUser: string
+  /** 用户自定义展示名（侧栏）；空则回退用户名/设备名 */
+  displayName: string
   deviceName: string
   avatarText: string
   avatarColor: string
@@ -113,6 +116,7 @@ function load(): WbSettings {
       cloudUrl: typeof p.cloudUrl === 'string' && p.cloudUrl ? p.cloudUrl : d.cloudUrl,
       cloudToken: typeof p.cloudToken === 'string' ? p.cloudToken : '',
       cloudUser: typeof p.cloudUser === 'string' ? p.cloudUser : '',
+      displayName: typeof p.displayName === 'string' ? p.displayName : '',
       deviceName: typeof p.deviceName === 'string' ? p.deviceName : '',
       avatarText: typeof p.avatarText === 'string' ? p.avatarText : '',
       avatarColor: typeof p.avatarColor === 'string' ? p.avatarColor : '',
