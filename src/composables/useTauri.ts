@@ -1,4 +1,5 @@
 import { invoke } from '@tauri-apps/api/core'
+import { homeDir } from '@tauri-apps/api/path'
 
 export interface DiskInfo {
   mount: string
@@ -88,9 +89,14 @@ export function portUsage(): Promise<PortInfo[]> {
   return invoke<PortInfo[]>('port_usage')
 }
 
-/** 项目扫描（Rust 命令，默认 E:\CODEX） */
-export function scanProjects(root = 'E:\\CODEX'): Promise<ProjectInfo[]> {
-  return invoke<ProjectInfo[]>('scan_projects', { root, maxDepth: 3 })
+/**
+ * 项目扫描（Rust 命令）。
+ * root 省略时默认用户主目录：原先硬编码作者本机的 'E:\\CODEX'，
+ * 既暴露了个人磁盘结构（源码在公开仓库里），别的机器上一个都不命中。
+ */
+export async function scanProjects(root?: string): Promise<ProjectInfo[]> {
+  const start = root ?? (await homeDir()).replace(/[\\/]+$/, '')
+  return invoke<ProjectInfo[]>('scan_projects', { root: start, maxDepth: 3 })
 }
 
 /** 数据导出（系统底座：Rust 命令） */

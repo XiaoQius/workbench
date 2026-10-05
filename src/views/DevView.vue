@@ -3,6 +3,7 @@ import { watch, ref, onMounted, computed } from 'vue'
 import { refreshTick } from '@/stores/ui'
 import { NButton, NTag, NInput, NTabs, NTabPane, NIcon, useMessage, NEmpty, NDropdown, NModal } from 'naive-ui'
 import { Plus, Trash, Edit, Check, Book2, Code, Refresh } from '@vicons/tabler'
+import { homeDir } from '@tauri-apps/api/path'
 import EmptyState from '@/components/EmptyState.vue'
 import ListSkeleton from '@/components/ListSkeleton.vue'
 import ModalForm, { type FieldDef } from '@/components/ModalForm.vue'
@@ -25,10 +26,10 @@ const cmdSnippets = ref<CmdSnippet[]>([])
 const activeSnippet = ref<Snippet | null>(null)
 
 // ---- 能力层：项目雷达 / Git 清洁度（F-DEV-02/03） ----
-const radarRoot = ref('E:\\CODEX')
+const radarRoot = ref('')
 const radarProjects = ref<ProjectInfo[]>([])
 const radarLoading = ref(false)
-const gitRepoPath = ref('E:\\CODEX\\workbench')
+const gitRepoPath = ref('')
 const gitInfo = ref<GitStatus | null>(null)
 const gitLoading = ref(false)
 
@@ -98,6 +99,20 @@ async function load() {
 }
 watch(refreshTick, () => load())
 onMounted(load)
+
+// 三个路径输入框原先硬编码作者本机的 E:\CODEX / E:\CODEX\workbench，
+// 公开仓库里既暴露个人磁盘结构，别的机器上又是无效默认值。
+// 改为挂载时填当前用户的主目录（跨平台有效），用户可自行改成任意路径。
+onMounted(async () => {
+  try {
+    const home = (await homeDir()).replace(/[\\/]+$/, '')
+    if (!radarRoot.value) radarRoot.value = home
+    if (!gitRepoPath.value) gitRepoPath.value = home
+    if (!healthRepoPath.value) healthRepoPath.value = home
+  } catch {
+    /* 拿不到主目录就留空，由用户手填 */
+  }
+})
 
 // ---- F-DEV-07 片段变量占位符：识别 {{var}} 并提示 ----
 const snippetVars = computed(() => {
@@ -432,7 +447,7 @@ async function copyCmd(c: CmdSnippet) {
 const repoHealthInfo = ref<RepoHealth | null>(null)
 const gitHistory = ref<GitCommitInfo[]>([])
 const codeStatList = ref<LangStat[]>([])
-const healthRepoPath = ref('E:\\CODEX\\workbench')
+const healthRepoPath = ref('')
 const healthLoading = ref(false)
 
 async function runRepoHealth() {

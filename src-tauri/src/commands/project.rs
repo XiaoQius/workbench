@@ -105,7 +105,8 @@ fn walk(dir: &Path, depth: usize, max_depth: usize, out: &mut Vec<ProjectInfo>) 
     }
 }
 
-/// 项目扫描命令：扫描 root（默认 E:\CODEX）下含 .git 的项目目录，探测技术栈。
+/// 项目扫描命令：扫描 root 下含 .git 的项目目录，探测技术栈。
+/// root 由前端传入（默认用户主目录，见 useTauri.scanProjects）。
 #[tauri::command]
 pub async fn scan_projects(root: String, max_depth: Option<usize>) -> Result<Vec<ProjectInfo>, String> {
     tauri::async_runtime::spawn_blocking(move || {
