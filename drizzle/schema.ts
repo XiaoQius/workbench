@@ -141,6 +141,8 @@ export const domains = sqliteTable('domains', {
   expireDate: text('expireDate'),
   serverId: integer('serverId'), // 域名↔服务器关联
   sslExpireDate: text('sslExpireDate'),
+  cost: real('cost'), // 单次续费/购买成本（元）
+  renewCycle: text('renewCycle'), // yearly | monthly | once —— 用于折算年成本
   note: text('note'),
   createdAt: text('createdAt'),
 })

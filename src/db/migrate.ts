@@ -108,10 +108,12 @@ const MIGRATIONS_V1: string[] = [
     registrar TEXT,
     dnsProvider TEXT,
     expireDate TEXT,
-    serverId INTEGER,
-    sslExpireDate TEXT,
-    note TEXT,
-    createdAt TEXT
+  serverId INTEGER,
+  sslExpireDate TEXT,
+  cost REAL,
+  renewCycle TEXT,
+  note TEXT,
+  createdAt TEXT
   )`,
   `CREATE TABLE IF NOT EXISTS backups (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -475,6 +477,27 @@ const INDEXES_V1: string[] = [
 ]
 
 /**
+ * 老库升级：后加的业务列。
+ * CREATE TABLE IF NOT EXISTS 对已存在的表不会补列，所以每一列都要在这里再补一次；
+ * 否则老用户升级后新字段永远读不到（写入报 no such column，且同步时该列被静默丢弃）。
+ * ALTER 已存在同名列会抛错，逐条 try/catch 忽略。
+ */
+const ALTERS_V1: Array<[table: string, col: string, def: string]> = [
+  ['domains', 'cost', 'REAL'],
+  ['domains', 'renewCycle', 'TEXT'],
+]
+
+async function applyAlters(): Promise<void> {
+  for (const [table, col, def] of ALTERS_V1) {
+    try {
+      await exec(`ALTER TABLE ${table} ADD COLUMN ${col} ${def}`)
+    } catch {
+      /* 列已存在 */
+    }
+  }
+}
+
+/**
  * 单条 SQL 的失败信息。
  */
 export interface BatchFailure {
@@ -519,6 +542,7 @@ export async function runBatch(sqls: string[]): Promise<BatchFailure[]> {
  */
 export async function initDb(): Promise<void> {
   await runBatch(MIGRATIONS_V1)
+  await applyAlters()
   // 索引含 _sync_state 相关项，该表由 initSyncSchema 创建；此处失败不影响主流程
   try {
     await runBatch(INDEXES_V1)

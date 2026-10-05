@@ -69,6 +69,31 @@ function matchKw(kw: string, ...vals: unknown[]): boolean {
 
 const filteredServers = computed(() => servers.value.filter((s) => matchKw(serverKw.value, s.name, s.ip, s.region, s.note)))
 const filteredDomains = computed(() => domains.value.filter((d) => matchKw(domainKw.value, d.name, d.registrar, d.dnsProvider, d.note)))
+
+/**
+ * 域名年成本合计：按续费周期折算成年成本后求和。
+ * monthly ×12、yearly ×1、once 不摊入年成本（一次性买入不算年度支出）。
+ */
+const domainYearCost = computed(() => {
+  let sum = 0
+  for (const d of domains.value) {
+    const c = Number((d as { cost?: number | null }).cost ?? 0)
+    if (!Number.isFinite(c) || c <= 0) continue
+    const cycle = String((d as { renewCycle?: string | null }).renewCycle || 'yearly')
+    if (cycle === 'monthly') sum += c * 12
+    else if (cycle === 'yearly') sum += c
+  }
+  return sum
+})
+/** 单条域名的年成本（列表展示用），一次性返回 null */
+function yearlyCost(d: Domain): number | null {
+  const c = Number((d as { cost?: number | null }).cost ?? 0)
+  if (!Number.isFinite(c) || c <= 0) return null
+  const cycle = String((d as { renewCycle?: string | null }).renewCycle || 'yearly')
+  if (cycle === 'monthly') return c * 12
+  if (cycle === 'yearly') return c
+  return null
+}
 const filteredFlows = computed(() => flows.value.filter((f) => matchKw(flowKw.value, f.name, f.metric, f.status, f.note)))
 const filteredChanges = computed(() => changes.value.filter((c) => matchKw(changeKw.value, c.title, c.env, c.category, c.operator, c.detail)))
 const filteredSecChecks = computed(() => secChecks.value.filter((s) => matchKw(secKw.value, s.title, s.category, s.result, s.detail)))
@@ -277,6 +302,10 @@ const domainFields: FieldDef[] = [
   { key: 'expireDate', label: '域名到期', type: 'date' },
   { key: 'sslExpireDate', label: 'SSL 到期', type: 'date' },
   { key: 'serverId', label: '关联服务器 ID', type: 'number' },
+  { key: 'cost', label: '成本(元)', type: 'number' },
+  { key: 'renewCycle', label: '续费周期', type: 'select', options: [
+    { label: '按年', value: 'yearly' }, { label: '按月', value: 'monthly' }, { label: '一次性', value: 'once' },
+  ] },
   { key: 'note', label: '备注', type: 'textarea', span: 2 },
 ]
 
@@ -287,6 +316,8 @@ async function addDomain(v: Record<string, unknown>) {
       expireDate: v.expireDate ? String(v.expireDate) : undefined,
       sslExpireDate: v.sslExpireDate ? String(v.sslExpireDate) : undefined,
       serverId: v.serverId ? Number(v.serverId) : undefined, note: String(v.note || ''),
+      cost: v.cost === null || v.cost === undefined || v.cost === '' ? undefined : Number(v.cost),
+      renewCycle: v.renewCycle ? String(v.renewCycle) : undefined,
     })
     message.success('域名已登记')
     load()
@@ -558,6 +589,7 @@ async function removeDns(d: OpsDnsRecord) {
       <n-tab-pane name="domains" tab="域名">
         <div class="toolbar toolbar-split">
           <NInput v-if="domains.length" v-model:value="domainKw" size="small" placeholder="搜索域名（域名 / 注册商）…" clearable class="toolbar-search" />
+          <span v-if="domainYearCost > 0" class="dim mono" style="white-space: nowrap">年成本合计 ¥{{ domainYearCost.toFixed(2) }}</span>
           <NButton size="small" type="primary" ghost @click="domainFormShow = true">
             <template #icon><NIcon :component="Plus" /></template>
             登记域名
@@ -565,16 +597,17 @@ async function removeDns(d: OpsDnsRecord) {
         </div>
         <ListSkeleton v-if="loading" :rows="6" />
         <div v-else-if="filteredDomains.length" class="domain-table">
-          <div class="d-row head">
-            <span>域名</span><span>注册商</span><span>DNS</span><span>域名到期</span><span>SSL 到期</span><span>关联服务器</span><span>剩余</span><span></span>
+          <div class="d-row d-row-domain head">
+            <span>域名</span><span>注册商</span><span>DNS</span><span>域名到期</span><span>SSL 到期</span><span>关联服务器</span><span>年成本</span><span>剩余</span><span></span>
           </div>
-          <div v-for="d in filteredDomains" :key="d.id" class="d-row">
+          <div v-for="d in filteredDomains" :key="d.id" class="d-row d-row-domain">
             <span class="mono d-name">{{ d.name }}</span>
             <span>{{ d.registrar || '—' }}</span>
             <span>{{ d.dnsProvider || '—' }}</span>
             <span class="mono" :style="d.expireDate && d.expireDate < new Date().toISOString().slice(0, 10) ? 'color: var(--wb-danger)' : ''">{{ d.expireDate || '—' }}</span>
             <span class="mono" :style="d.sslExpireDate && d.sslExpireDate < new Date().toISOString().slice(0, 10) ? 'color: var(--wb-danger)' : ''">{{ d.sslExpireDate || '—' }}</span>
             <span>{{ serverName(d.serverId) }}</span>
+            <span class="mono">{{ yearlyCost(d) === null ? '—' : '¥' + yearlyCost(d)!.toFixed(2) }}</span>
             <span>
               <NTag v-if="dueTag(d.expireDate) || dueTag(d.sslExpireDate)" size="tiny" :bordered="false" :type="(dueTag(d.expireDate) || dueTag(d.sslExpireDate))!.color as any">
                 {{ (dueTag(d.expireDate) || dueTag(d.sslExpireDate))!.text }}
@@ -957,6 +990,8 @@ async function removeDns(d: OpsDnsRecord) {
   font-size: 12.5px;
 }
 .d-row { grid-template-columns: 2fr 1fr 1fr 1.2fr 1.2fr 1fr 0.7fr 0.4fr; }
+/* 域名表比其它 .d-row 多一列「年成本」；单独覆盖，不动共用栅格 */
+.d-row-domain { grid-template-columns: 1.8fr 1fr 1fr 1.1fr 1.1fr 1fr 0.8fr 0.6fr 0.4fr; }
 .p-row { grid-template-columns: 0.7fr 0.8fr 1.2fr 0.8fr 2fr; }
 .d-row:last-child, .p-row:last-child { border-bottom: none; }
 .d-row.head, .p-row.head {
