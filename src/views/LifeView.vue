@@ -128,13 +128,22 @@ const ledgerFields: FieldDef[] = [
     { label: '支出', value: 'expense' }, { label: '收入', value: 'income' },
   ] },
   { key: 'amount', label: '金额', type: 'number' },
-  { key: 'category', label: '分类', options: [
+  // 分类随「类型」联动：支出类与收入类是两套语义，混着选会出现「收入-购物」。
+  // options 列出全量（旧数据里有这些取值），optionsBy 控制按类型显示的档位。
+  { key: 'category', label: '分类', dependsOn: 'type', options: [
     { label: '餐饮', value: '餐饮' }, { label: '交通', value: '交通' },
     { label: '购物', value: '购物' }, { label: '居住', value: '居住' },
     { label: '学习', value: '学习' }, { label: '娱乐', value: '娱乐' },
-    { label: '医疗', value: '医疗' }, { label: '工资', value: '工资' },
+    { label: '医疗', value: '医疗' }, { label: '订阅', value: '订阅' },
     { label: '其他', value: '其他' },
-  ] },
+    { label: '工资', value: '工资' }, { label: '奖金', value: '奖金' },
+    { label: '理财', value: '理财' }, { label: '兼职', value: '兼职' },
+    { label: '报销', value: '报销' }, { label: '红包', value: '红包' },
+    { label: '其他收入', value: '其他收入' },
+  ], optionsBy: {
+    expense: ['餐饮', '交通', '购物', '居住', '学习', '娱乐', '医疗', '订阅', '其他'],
+    income: ['工资', '奖金', '理财', '兼职', '报销', '红包', '其他收入'],
+  } },
   { key: 'date', label: '日期', type: 'date' },
   { key: 'note', label: '备注', span: 2 },
 ]
