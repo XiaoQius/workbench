@@ -130,6 +130,8 @@ async function addCourse(v: Record<string, unknown>) {
 }
 
 async function removeCourse(c: Course) {
+  const ok = await confirm({ title: `删除课程《${c.name}》？`, content: `${c.weekday} ${c.startPeriod}-${c.endPeriod} 节${c.location ? ' · ' + c.location : ''}${c.teacher ? ' · ' + c.teacher : ''}` })
+  if (!ok) return
   try {
     await coursesRepo.remove(c.id)
     message.success('已删除')
@@ -208,6 +210,8 @@ async function addAssignment(v: Record<string, unknown>) {
 }
 
 async function removeAssignment(a: Assignment) {
+  const ok = await confirm({ title: `删除作业《${a.title}》？`, content: `当前状态：${{ todo: '待办', written: '已写', submitted: '已交' }[a.status] || a.status}${a.dueDate ? ' · 截止 ' + a.dueDate : ''}` })
+  if (!ok) return
   try {
     await assignmentsRepo.remove(a.id)
     message.success('已删除')
@@ -295,6 +299,8 @@ async function addNote(v: Record<string, unknown>) {
 }
 
 async function removeNote(n: Note) {
+  const ok = await confirm({ title: `删除笔记《${n.title}》？`, content: '笔记内容不可再生，删除后无法恢复。' })
+  if (!ok) return
   try {
     await notesRepo.remove(n.id)
     if (activeNote.value?.id === n.id) activeNote.value = null
@@ -334,6 +340,8 @@ async function addGrade(v: Record<string, unknown>) {
   } catch { message.error('保存失败（请通过 npm run tauri dev 启动）') }
 }
 async function removeGrade(g: Grade) {
+  const ok = await confirm({ title: `删除《${g.courseName}》的${g.examType}成绩？`, content: `${g.score} / ${g.total}${g.date ? ' · ' + g.date : ''}` })
+  if (!ok) return
   try { await gradesRepo.remove(g.id); message.success('已删除'); load() } catch { message.error('删除失败') }
 }
 const gradeAverage = computed(() => {
@@ -365,6 +373,8 @@ async function addPitfall(v: Record<string, unknown>) {
   } catch { message.error('保存失败（请通过 npm run tauri dev 启动）') }
 }
 async function removePitfall(p: Pitfall) {
+  const ok = await confirm({ title: `删除踩坑《${p.title}》？`, content: `${p.category}${p.tags ? ' · ' + p.tags : ''}` })
+  if (!ok) return
   try { await pitfallsRepo.remove(p.id); message.success('已删除'); load() } catch { message.error('删除失败') }
 }
 
@@ -392,6 +402,8 @@ async function markRead(r: ReadQueueItem, done: boolean) {
   } catch { message.error('更新失败') }
 }
 async function removeRead(r: ReadQueueItem) {
+  const ok = await confirm({ title: `从阅读队列移除《${r.title}》？`, content: `${r.author || '未署名'}${r.category ? ' · ' + r.category : ''}` })
+  if (!ok) return
   try { await readQueueRepo.remove(r.id); message.success('已删除'); load() } catch { message.error('删除失败') }
 }
 
@@ -410,6 +422,8 @@ async function addFeynman(v: Record<string, unknown>) {
   } catch { message.error('保存失败（请通过 npm run tauri dev 启动）') }
 }
 async function removeFeynman(f: FeynmanLog) {
+  const ok = await confirm({ title: `删除费曼记录《${f.topic}》？`, content: '讲解内容删除后无法恢复。' })
+  if (!ok) return
   try { await feynmanLogsRepo.remove(f.id); message.success('已删除'); load() } catch { message.error('删除失败') }
 }
 
@@ -430,6 +444,8 @@ async function addCard(v: Record<string, unknown>) {
   } catch { message.error('保存失败（请通过 npm run tauri dev 启动）') }
 }
 async function removeCard(c: Flashcard) {
+  const ok = await confirm({ title: '删除这张闪卡？', content: `${c.deck} · ${c.front}` })
+  if (!ok) return
   try { await flashcardsRepo.remove(c.id); message.success('已删除'); load() } catch { message.error('删除失败') }
 }
 const todayStr2 = new Date().toISOString().slice(0, 10)
@@ -489,6 +505,8 @@ async function toggleGoal(g: Task) {
   try { await tasksRepo.update(g.id, { status: g.status === 'done' ? 'todo' : 'done' }); g.status = g.status === 'done' ? 'todo' : 'done' } catch { message.error('更新失败') }
 }
 async function removeGoal(g: Task) {
+  const ok = await confirm({ title: `删除学习目标《${g.title}》？`, content: `当前状态：${g.status}${g.dueDate ? ' · 截止 ' + g.dueDate : ''}` })
+  if (!ok) return
   try { await tasksRepo.remove(g.id); message.success('已删除'); load() } catch { message.error('删除失败') }
 }
 const goalProgress = computed(() => {

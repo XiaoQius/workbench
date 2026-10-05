@@ -10,6 +10,7 @@ import { pitfallsRepo, resourcesRepo, decisionsRepo, skillTreeRepo, learningPath
 import type { Pitfall, Resource, Decision, SkillNode, LearningPath, ThreeDProject, Portfolio, ContentCalendar, Link } from '../../drizzle/schema'
 import { scanAssets, type AssetInfo } from '@/composables/useTauri'
 import { useConfirm } from '@/composables/useConfirm'
+import { pitfallFields, decisionFields, pathFields, threeDFields, portfolioFields } from './knowledge/formSchemas'
 
 const message = useMessage()
 const { confirm } = useConfirm()
@@ -147,17 +148,6 @@ watch(refreshTick, () => load())
 onMounted(load)
 
 // ---- 踩坑库 ----
-const pitfallFields: FieldDef[] = [
-  { key: 'title', label: '标题', required: true, span: 2 },
-  { key: 'category', label: '分类', options: [
-    { label: '前端', value: '前端' }, { label: '后端', value: '后端' },
-    { label: '数据库', value: '数据库' }, { label: '运维', value: '运维' },
-    { label: '工具', value: '工具' }, { label: '其他', value: '其他' },
-  ] },
-  { key: 'tags', label: '标签 (逗号分隔)', span: 2 },
-  { key: 'problem', label: '问题描述', type: 'textarea', span: 2 },
-  { key: 'solution', label: '解决方案', type: 'textarea', span: 2 },
-]
 
 async function addPitfall(v: Record<string, unknown>) {
   try {
@@ -225,17 +215,6 @@ const linkColor = (c: string) =>
   ({ dev: 'success', study: 'info', life: 'warning', tool: 'default', favorite: 'error', other: 'default' })[c] ?? 'default'
 
 // ---- F-KNW-02 决策日志（轻 ADR） ----
-const decisionFields: FieldDef[] = [
-  { key: 'title', label: '决策标题', required: true, span: 2 },
-  { key: 'context', label: '背景', type: 'textarea', span: 2 },
-  { key: 'decision', label: '决策内容', type: 'textarea', span: 2 },
-  { key: 'alternatives', label: '备选方案', type: 'textarea', span: 2 },
-  { key: 'status', label: '状态', type: 'select', options: [
-    { label: '提案中', value: 'proposed' }, { label: '已采纳', value: 'accepted' },
-    { label: '已否决', value: 'rejected' }, { label: '被取代', value: 'superseded' },
-  ] },
-  { key: 'decidedAt', label: '决策日期', type: 'date' },
-]
 async function addDecision(v: Record<string, unknown>) {
   try {
     await decisionsRepo.insert({
@@ -314,15 +293,6 @@ function escHtml(s: string): string {
 const skillTreeHtml = computed(() => `<div class="st-tree">${skillTreeComputed.value || '<p class="dim">暂无技能节点</p>'}</div>`)
 
 // ---- F-KNW-06 学习路径 ----
-const pathFields: FieldDef[] = [
-  { key: 'title', label: '步骤标题', required: true },
-  { key: 'goal', label: '目标说明', span: 2 },
-  { key: 'step', label: '阶段序号' },
-  { key: 'resource', label: '参考资源' },
-  { key: 'status', label: '状态', type: 'select', options: [
-    { label: '待开始', value: 'todo' }, { label: '进行中', value: 'doing' }, { label: '已完成', value: 'done' },
-  ] },
-]
 async function addPath(v: Record<string, unknown>) {
   try {
     const nextOrder = paths.value.length ? Math.max(...paths.value.map((p) => p.orderIndex || 0)) + 1 : 0
@@ -345,34 +315,6 @@ async function removePath(p: LearningPath) {
 }
 
 // ---- F-KNW-08/09/10 创作台账（3D / 作品集 / 内容日历） ----
-const threeDFields: FieldDef[] = [
-  { key: 'name', label: '项目名', required: true },
-  { key: 'tool', label: '工具', type: 'select', options: [
-    { label: 'Blender', value: 'blender' }, { label: 'C4D', value: 'c4d' }, { label: 'Maya', value: 'maya' },
-    { label: 'Unreal', value: 'unreal' }, { label: 'Unity', value: 'unity' }, { label: '其他', value: 'other' },
-  ] },
-  { key: 'category', label: '类别', type: 'select', options: [
-    { label: '模型', value: 'model' }, { label: '场景', value: 'scene' }, { label: '动画', value: 'animation' }, { label: '渲染', value: 'render' },
-  ] },
-  { key: 'status', label: '状态', type: 'select', options: [
-    { label: '规划中', value: 'planning' }, { label: '制作中', value: 'wip' }, { label: '已完成', value: 'done' }, { label: '归档', value: 'archived' },
-  ] },
-  { key: 'path', label: '文件路径' },
-  { key: 'note', label: '备注', span: 2 },
-]
-const portfolioFields: FieldDef[] = [
-  { key: 'title', label: '作品名', required: true },
-  { key: 'category', label: '类别', type: 'select', options: [
-    { label: '代码', value: 'code' }, { label: '设计', value: 'design' }, { label: '写作', value: 'writing' },
-    { label: '视频', value: 'video' }, { label: '其他', value: 'other' },
-  ] },
-  { key: 'url', label: '作品链接' },
-  { key: 'path', label: '本地路径' },
-  { key: 'status', label: '状态', type: 'select', options: [
-    { label: '草稿', value: 'draft' }, { label: '已发布', value: 'published' }, { label: '已归档', value: 'archived' },
-  ] },
-  { key: 'note', label: '备注', span: 2 },
-]
 const contentFields: FieldDef[] = [
   { key: 'title', label: '内容标题', required: true },
   { key: 'platform', label: '平台', options: [
