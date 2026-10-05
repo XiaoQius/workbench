@@ -230,6 +230,14 @@ async function pushPendingTable(t: string): Promise<void> {
       // 只能以云端为准。其余情况才交给用户挑。
       if (entry.ut > entry.baseUt && entry.del === 0) conflictIds.push(entry.rowId)
       else staleIds.push(entry.rowId)
+    } else if (entry.del === 1) {
+      // 墓碑被服务端硬拒（如 error: NOT NULL constraint ...）。
+      // 原先这里什么都不做：pending 永不清零，每次同步都重推同一批墓碑，
+      // 表现为「待同步 N」长期挂着不消失（线上实测 24 条卡了数天）。
+      // 墓碑代表的行本地已经不存在了，「保留我的」无处可取，只能以云端为准，
+      // 与 AGENTS.md 第六节「本地删除被拒 → 以云端为准」保持一致。
+      console.warn(`[sync] ${t}#${entry.rowId} 删除墓碑被服务端拒绝，按云端为准清理：${res.error ?? '未知原因'}`)
+      doneDeletes.push(entry.rowId)
     }
   }
   const stmts: string[] = []
