@@ -7,16 +7,12 @@ import { useSettings, UPDATE_SOURCE, type CustomCard } from '@/composables/useSe
 import { modules, tokens, COLOR_MODES, STYLE_MODES, comboKey, type ColorMode, type StyleMode } from '@/theme/tokens'
 import { AVATAR_PALETTE, avatarColor, avatarChar, avatarName, avatarSeed, resizeAvatarImage } from '@/composables/avatar'
 import { useThemeStore } from '@/stores/theme'
-import { exportBackupTo, checkUpdate, downloadUpdate, installUpdate, llmStatus, openPath } from '@/composables/useTauri'
+import { exportBackupTo, listBackups, readBackup, checkUpdate, downloadUpdate, installUpdate, llmStatus, openPath } from '@/composables/useTauri'
 import { APP_VERSION } from '@/composables/useSettings'
 import { llmConfigured, llmConfigLabel, llmChat } from '@/composables/llmClient'
 import { cloudRegister, cloudLogin, cloudLogout, syncNow, onSyncStatus, listConflicts, resolveConflict, type SyncStatus, type ConflictRow } from '@/db/sync'
+import { exportAll, parseBackup, summarizeBackup, restoreAll, currentCounts, type BackupSummary, type BackupPayload } from '@/db/backup'
 import { useConfirm } from '@/composables/useConfirm'
-import {
-  tasksRepo, deadlinesRepo, projectsRepo, snippetsRepo, habitsRepo, ledgerRepo,
-  coursesRepo, assignmentsRepo, notesRepo, pitfallsRepo, serversRepo, domainsRepo,
-  toolsRepo, agentsRepo,
-} from '@/db'
 
 const props = defineProps<{ show: boolean; initialTab?: string }>()
 const emit = defineEmits<{ (e: 'update:show', v: boolean): void }>()
@@ -144,8 +140,11 @@ async function testLlm() {
 }
 
 // ---- 数据备份（F-SYS-07）：导出全部数据为 JSON 到本地目录 ----
+// 表清单统一取自 SYNC_TABLES（41 张），不再手写，避免新增表后静默漏导。
 const syncing = ref(false)
 const syncMsg = ref('')
+const lastExportStat = ref<{ tables: number; rows: number } | null>(null)
+
 async function syncToGitDir() {
   syncMsg.value = ''
   syncing.value = true
@@ -155,26 +154,110 @@ async function syncToGitDir() {
       syncMsg.value = '请先填写本地备份目录'
       return
     }
-    const [tasks, deadlines, projects, snippets, habits, ledger, courses, assignments, notes, pitfalls, servers, domains, tools, agents] =
-      await Promise.all([
-        tasksRepo.listAll(), deadlinesRepo.listAll(), projectsRepo.listAll(),
-        snippetsRepo.listAll(), habitsRepo.listAll(), ledgerRepo.listAll(),
-        coursesRepo.listAll(), assignmentsRepo.listAll(), notesRepo.listAll(),
-        pitfallsRepo.listAll(), serversRepo.listAll(), domainsRepo.listAll(),
-        toolsRepo.listAll(), agentsRepo.listAll(),
-      ])
-    const payload = {
-      app: 'workbench',
-      version: 1,
-      exportedAt: new Date().toISOString(),
-      tables: { tasks, deadlines, projects, snippets, habits, ledger, courses, assignments, notes, pitfalls, servers, domains, tools, agents },
-    }
+    const payload = await exportAll()
     const target = await exportBackupTo(dir, JSON.stringify(payload))
-    syncMsg.value = `已导出备份：${target}\n将该目录接入网盘或 Git 即可实现多机同步`
+    const rows = Object.values(payload.tables).reduce((n, r) => n + r.length, 0)
+    lastExportStat.value = { tables: Object.keys(payload.tables).length, rows }
+    syncMsg.value = `已导出备份：${target}\n共 ${Object.keys(payload.tables).length} 张表、${rows} 行\n将该目录接入网盘或 Git 即可实现多机同步`
   } catch (e) {
     syncMsg.value = '备份失败：' + String(e)
   } finally {
     syncing.value = false
+  }
+}
+
+// ---- 从备份恢复：预览 → 二次确认 → 全量替换 ----
+const restoring = ref(false)
+const restoreMsg = ref('')
+const restoreSummary = ref<BackupSummary | null>(null)
+const restorePayload = ref<BackupPayload | null>(null)
+const restoreCurrent = ref<Record<string, number>>({})
+const backupFiles = ref<{ name: string; size: number; modified: number }[]>([])
+const destructiveAck = ref(false)
+
+function clearRestorePreview() {
+  restorePayload.value = null
+  restoreSummary.value = null
+  destructiveAck.value = false
+  restoreMsg.value = ''
+}
+
+async function refreshBackupList() {
+  try {
+    backupFiles.value = await listBackups()
+  } catch {
+    backupFiles.value = []
+  }
+}
+
+/** 读一份备份并汇总，只预览不写库 */
+async function loadBackupForPreview(raw: string) {
+  restoreMsg.value = ''
+  destructiveAck.value = false
+  try {
+    const payload = parseBackup(raw)
+    restorePayload.value = payload
+    restoreSummary.value = await summarizeBackup(payload)
+    restoreCurrent.value = await currentCounts()
+  } catch (e) {
+    restorePayload.value = null
+    restoreSummary.value = null
+    restoreMsg.value = '无法读取这份备份：' + String(e)
+  }
+}
+
+const backupFileInput = ref<HTMLInputElement | null>(null)
+
+async function pickAndPreviewBackup(ev: Event) {
+  restoreMsg.value = ''
+  const input = ev.target as HTMLInputElement
+  const file = input.files?.[0]
+  input.value = ''
+  if (!file) return
+  try {
+    const raw = await file.text()
+    await loadBackupForPreview(raw)
+  } catch (e) {
+    restoreMsg.value = '读取备份文件失败：' + String(e)
+  }
+}
+
+async function previewSavedBackup(name: string) {
+  try {
+    const raw = await readBackup(name)
+    await loadBackupForPreview(raw)
+  } catch (e) {
+    restoreMsg.value = '读取备份失败：' + String(e)
+  }
+}
+
+async function doRestore() {
+  const payload = restorePayload.value
+  const summary = restoreSummary.value
+  if (!payload || !summary) return
+  const when = summary.exportedAt ? new Date(summary.exportedAt).toLocaleString('zh-CN') : '未知时间'
+  const warn = summary.destructive
+    ? `\n\n注意：这份备份缺少 ${summary.destructiveTables.length} 张当前有数据的表（${summary.destructiveTables.slice(0, 8).join('、')}${summary.destructiveTables.length > 8 ? ' 等' : ''}），恢复后其中数据会被清空。`
+    : ''
+  const ok = await confirm({
+    title: '确认从备份恢复？',
+    content: `将用 ${when} 的备份覆盖当前全部数据：备份含 ${summary.totalRows} 行，现有数据会被清空后替换。此操作不可撤销。${warn}`,
+  })
+  if (!ok) return
+
+  restoring.value = true
+  restoreMsg.value = ''
+  try {
+    const r = await restoreAll(payload)
+    restoreMsg.value = `已恢复 ${r.totalRestored} 行（${r.restored.length} 张表）` +
+      (r.skippedTables.length ? `；跳过 ${r.skippedTables.length} 张未知表` : '')
+    clearRestorePreview()
+    // 恢复后重置同步游标，避免本地全量重写被当成冲突推回云端
+    window.location.reload()
+  } catch (e) {
+    restoreMsg.value = '恢复失败：' + String(e)
+  } finally {
+    restoring.value = false
   }
 }
 
@@ -482,7 +565,77 @@ function commitFontScale(v: number) {
             <NButton size="small" type="primary" ghost :loading="syncing" @click="syncToGitDir()">导出备份</NButton>
           </div>
           <div class="sp-dim" v-if="syncMsg" style="white-space: pre-line; color: var(--wb-success)">{{ syncMsg }}</div>
-          <div class="sp-dim">将工作台全部数据导出为 JSON 备份文件，可搭配网盘或 Git 实现多机同步。</div>
+          <div class="sp-dim">将工作台全部 41 张表导出为 JSON 备份文件，可搭配网盘或 Git 实现多机同步。</div>
+        </div>
+
+        <div class="sp-sec">
+          <div class="sp-label">从备份恢复</div>
+          <div class="sp-row" style="flex-wrap: wrap; gap: 8px">
+            <NButton size="small" @click="backupFileInput?.click()">选择备份文件…</NButton>
+            <input ref="backupFileInput" type="file" accept="application/json,.json" style="display: none" @change="pickAndPreviewBackup($event)" />
+            <NButton size="small" quaternary @click="refreshBackupList()">列出本机备份</NButton>
+          </div>
+          <div v-if="backupFiles.length" class="sp-row" style="flex-wrap: wrap; gap: 6px">
+            <NButton
+              v-for="f in backupFiles.slice(0, 8)"
+              :key="f.name"
+              size="tiny"
+              quaternary
+              @click="previewSavedBackup(f.name)"
+            >{{ f.name.replace('workbench-', '').replace('.json', '') }}</NButton>
+          </div>
+
+          <!-- 恢复前预览：让用户看清会覆盖什么 -->
+          <div v-if="restoreSummary" class="restore-preview">
+            <div class="sp-dim">
+              备份时间：{{ restoreSummary.exportedAt ? new Date(restoreSummary.exportedAt).toLocaleString('zh-CN') : '未知' }}
+              · 共 {{ restoreSummary.totalRows }} 行
+            </div>
+            <div v-if="restoreSummary.tables.length" class="rp-list">
+              <div v-for="t in restoreSummary.tables.slice(0, 10)" :key="t.table" class="rp-row">
+                <span class="rp-name">{{ t.table }}</span>
+                <span class="rp-num">{{ t.rows }} 行</span>
+                <span v-if="restoreCurrent[t.table]" class="rp-warn">当前有 {{ restoreCurrent[t.table] }} 行，将被覆盖</span>
+                <span v-else class="rp-dim">当前为空</span>
+              </div>
+              <div v-if="restoreSummary.tables.length > 10" class="sp-dim">…另有 {{ restoreSummary.tables.length - 10 }} 张表</div>
+            </div>
+            <div v-if="restoreSummary.unknownTables.length" class="sp-dim">
+              备份中 {{ restoreSummary.unknownTables.length }} 张表当前已不存在，将跳过：{{ restoreSummary.unknownTables.join('、') }}
+            </div>
+
+            <!-- 破坏性恢复：备份缺表意味着那些表会被清空，必须显式勾选才允许继续 -->
+            <div v-if="restoreSummary.destructive" class="rp-danger">
+              <div class="sp-dim" style="color: var(--wb-error, #dc2626); margin: 0">
+                这份备份缺少 {{ restoreSummary.destructiveTables.length }} 张当前有数据的表（可能来自旧版本）。
+                恢复后其中数据会被<b>清空</b>：
+                {{ restoreSummary.destructiveTables.slice(0, 12).join('、') }}<template v-if="restoreSummary.destructiveTables.length > 12"> 等</template>
+              </div>
+              <div class="sp-row" style="margin-top: 6px; margin-bottom: 0">
+                <NSwitch v-model:value="destructiveAck" size="small" />
+                <span class="sp-dim" style="margin: 0">我确认要清空这些表</span>
+              </div>
+            </div>
+
+            <div class="sp-row" style="margin-top: 8px">
+              <NButton
+                size="small"
+                type="error"
+                ghost
+                :loading="restoring"
+                :disabled="restoreSummary.destructive && !destructiveAck"
+                @click="doRestore()"
+              >
+                {{ restoring ? '恢复中…' : '覆盖恢复' }}
+              </NButton>
+              <NButton size="small" quaternary @click="clearRestorePreview()">取消</NButton>
+            </div>
+            <div class="sp-dim" style="color: var(--wb-warning, #d97706)">
+              恢复以备份为准：先清空各表再写入，现有数据会被替换，不可撤销。
+            </div>
+          </div>
+          <div class="sp-dim" v-if="restoreMsg" style="white-space: pre-line">{{ restoreMsg }}</div>
+          <div v-if="!restoreSummary" class="sp-dim">选择一个 JSON 备份文件，先预览再恢复。</div>
         </div>
       </NTabPane>
 
@@ -574,6 +727,34 @@ function commitFontScale(v: number) {
 .sp-switch .n-switch { margin-left: auto; }
 .sp-dim { font-size: 12px; color: var(--wb-text-3); margin-top: 4px; }
 .sp-k { width: 110px; flex: none; margin-top: 0; }
+/* 恢复预览：列出会被覆盖的表 */
+.restore-preview {
+  margin-top: 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--wb-border);
+  border-radius: var(--wb-radius-md);
+  background: var(--wb-card);
+}
+.rp-list { margin-top: 8px; max-height: 220px; overflow-y: auto; }
+.rp-row {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  font-size: 12px;
+  padding: 3px 0;
+}
+.rp-name { font-weight: 600; color: var(--wb-text-1); min-width: 110px; }
+.rp-num { color: var(--wb-text-2); }
+.rp-warn { color: var(--wb-warning, #d97706); }
+.rp-dim { color: var(--wb-text-3); }
+/* 破坏性恢复警示：缺表会导致那些表被清空 */
+.rp-danger {
+  margin-top: 8px;
+  padding: 8px 10px;
+  border: 1px solid var(--wb-error, #dc2626);
+  border-radius: var(--wb-radius-md);
+  background: color-mix(in srgb, var(--wb-error, #dc2626) 8%, transparent);
+}
 .theme-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
 .theme-item {
   display: flex;
