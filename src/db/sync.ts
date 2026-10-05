@@ -52,6 +52,8 @@ const BASE_RETRY_MS = 5_000
 const MAX_RETRY_MS = 5 * 60 * 1000
 /** 最近一次落库失败明细，供 pullTable 抛错时带给用户看 */
 let lastError = ''
+/** 本轮同步里「被服务端硬拒、已按云端为准丢弃」的普通行数 */
+let rejectedCount = 0
 
 export function onSyncStatus(fn: StatusListener): () => void {
   listeners.add(fn)
@@ -205,7 +207,19 @@ async function pushPendingTable(t: string): Promise<void> {
     method: 'POST',
     body: JSON.stringify({ rows }),
   })
-  
+
+  // 回写全靠「请求 rows[i] ↔ 返回 results[i]」下标对齐，这是隐含前提。
+  // 服务端返回的条数一旦对不上（漏返、去重、顺序重排），原先的 `if (!res) continue`
+  // 会让该行 pending 永不归零 —— 每次同步重推、永远失败；错位更会把 A 行的
+  // serverId 写到 B 行上（静默串数据，比失败更难发现）。
+  // 因此长度不符就整表判为失败：本批一行都不回写，交给 syncNow 计入 pushErrors，
+  // 状态栏也绝不会显示成「同步完成」。
+  if (!Array.isArray(r.results) || r.results.length !== rows.length) {
+    throw new Error(
+      `${t} 推送结果条数不符：请求 ${rows.length} 行，服务端返回 ${Array.isArray(r.results) ? r.results.length : '非数组'} 条（已放弃本批回写）`,
+    )
+  }
+
   // 结果回写：按「删除 / 标记已推送 / 放弃 stale」三类拼批，避免逐行 UPDATE
   const doneDeletes: number[] = []
   const doneUpdates: { rowId: number; serverId: number | null; ut: number }[] = []
@@ -218,10 +232,15 @@ async function pushPendingTable(t: string): Promise<void> {
   // 注意 baseUt=0 表示「从未与云端对齐过」（含离线新建的行），此时
   // ut 必 > 0，同样判为冲突——否则离线新建的记录会被云端无声吃掉。
   const conflictIds: number[] = []
+  // 普通行（del === 0）被服务端硬拒、且 reason 不是 stale：原先没有任何分支命中，
+  // 不重试、不清 pending、也不报冲突 → 这一行永久卡死，顶栏「待同步 N」长期不归零。
+  // 与真冲突要区分开：真冲突是「双方都有改动」，由上面 stale 分支按
+  // ut > baseUt && del === 0 判出并保留双方等用户裁决，这里不会碰它。
+  // 落到这里的都是服务端明确拒收、本地这份已不可能被接受的情形。
+  const rejectedIds: number[] = []
   for (let i = 0; i < entries.length; i++) {
     const entry = entries[i]
     const res = r.results[i]
-    if (!res) continue
     if (res.accepted) {
       if (entry.del === 1) doneDeletes.push(entry.rowId)
       else doneUpdates.push({ rowId: entry.rowId, serverId: res.id ?? entry.serverId, ut: entry.ut })
@@ -238,6 +257,12 @@ async function pushPendingTable(t: string): Promise<void> {
       // 与 AGENTS.md 第六节「本地删除被拒 → 以云端为准」保持一致。
       console.warn(`[sync] ${t}#${entry.rowId} 删除墓碑被服务端拒绝，按云端为准清理：${res.error ?? '未知原因'}`)
       doneDeletes.push(entry.rowId)
+    } else {
+      // 普通行被硬拒（NOT NULL 约束、类型不符、服务端校验不通过等）。
+      // 以云端为准：清 pending 让它不再重推，下次拉取用云端版本覆盖本地；
+      // 同时计数上报，避免顶栏显示「同步完成」把这次丢弃掩盖掉。
+      console.warn(`[sync] ${t}#${entry.rowId} 被服务端拒绝，按云端为准丢弃本地改动：${res.error ?? res.reason ?? '未知原因'}`)
+      rejectedIds.push(entry.rowId)
     }
   }
   const stmts: string[] = []
@@ -256,6 +281,16 @@ async function pushPendingTable(t: string): Promise<void> {
   }
   if (conflictIds.length > 0) {
     stmts.push(`UPDATE _sync_state SET pending = 0, conflict = 1 WHERE tableName = '${t}' AND rowId IN (${conflictIds.join(', ')})`)
+  }
+  if (rejectedIds.length > 0) {
+    // 与 resolveConflict('remote') 同款记账：baseUt 抬到 ut 表示这行已与云端对齐
+    // （本地那份被放弃了），以后再有改动才会重新判脏。
+    stmts.push(`UPDATE _sync_state SET pending = 0, baseUt = ut, conflict = 0 WHERE tableName = '${t}' AND rowId IN (${rejectedIds.join(', ')})`)
+    // 该行的云端版本可能早已越过本表游标，不回退的话下次拉取不会再带回它，
+    // 本地就永远停在「被拒的旧值」上 —— 等于丢了本地改动却没换回云端数据。
+    stmts.push(`INSERT INTO _sync_cursor (tableName, cursor) VALUES ('${t}', 0)
+      ON CONFLICT(tableName) DO UPDATE SET cursor = 0`)
+    rejectedCount += rejectedIds.length
   }
   if (stmts.length > 0) await runBatch(stmts)
 }
@@ -511,6 +546,7 @@ export async function syncNow(): Promise<void> {
   if (!s.cloudEnabled || !s.cloudUrl || !s.cloudToken) return
   syncing = true
   lastError = ''
+  rejectedCount = 0
   setStatus({ state: 'syncing', message: '同步中…' })
   try {
     // 本轮拉取开始：重建 id 占用快照（上一轮的快照可能已被本地写入改动）
@@ -530,9 +566,16 @@ export async function syncNow(): Promise<void> {
     const pend = await query<{ n: number }>(`SELECT COUNT(*) AS n FROM _sync_state WHERE pending = 1`)
     const conflicts = await query<{ n: number }>(`SELECT COUNT(*) AS n FROM _sync_state WHERE conflict = 1`)
     const cn = conflicts[0]?.n ?? 0
+    // 有行被服务端硬拒并按云端为准丢弃时，绝不能报「同步完成」：
+    // 那等于告诉用户数据都上云了，实际这一改动已被放弃。
+    const rn = rejectedCount
     setStatus({
       state: 'idle',
-      message: cn > 0 ? `${cn} 处改动与云端冲突，待你确认` : '同步完成',
+      message: cn > 0
+        ? `${cn} 处改动与云端冲突，待你确认`
+        : rn > 0
+          ? `${rn} 处改动被云端拒绝，已改为云端版本`
+          : '同步完成',
       lastSyncAt: Date.now(),
       pending: pend[0]?.n ?? 0,
       conflicts: cn,
