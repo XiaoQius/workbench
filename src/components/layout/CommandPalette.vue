@@ -9,6 +9,7 @@ import type { ModuleKey } from '@/theme/tokens'
 import { projectsRepo, tasksRepo, snippetsRepo, serversRepo, domainsRepo, notesRepo, toolsRepo, ledgerRepo, inspirationsRepo } from '@/db'
 import { refreshTick } from '@/stores/ui'
 import { parseInspiration } from '@/composables/inspiration'
+import { fuzzyScore } from '@/composables/fuzzyMatch'
 
 interface Command {
   id: string
@@ -167,19 +168,26 @@ const all = computed(() => {
   const hasSyntax = !!(pq.type || pq.status || pq.tag || pq.due || pq.scope)
   const hasPlain = !!pq.plain
   if (!hasSyntax && !hasPlain) return src
-  return src.filter((c) => {
-    const plainOk = !hasPlain || c.label.toLowerCase().includes(pq.plain) || c.hint.toLowerCase().includes(pq.plain) || c.group.toLowerCase().includes(pq.plain)
-    if (!plainOk) return false
+  // 模糊匹配：多关键词（空格分隔、顺序无关）+ 中文拼音首字母。
+  // 原先是 includes(pq.plain) 精确子串，「笔记本 待办」这类散词、
+  // 或想用 bjb 打首字母都搜不到。
+  const scored: Array<{ c: Command; score: number }> = []
+  for (const c of src) {
+    const plainScore = hasPlain ? fuzzyScore(pq.plain, [c.label, c.hint, c.group]) : 1
+    if (hasPlain && plainScore === 0) continue
     if (hasSyntax) {
       const m = c.meta || {}
-      if (pq.type && !c.label.toLowerCase().includes(`· ${pq.type}`) && !(m.type || '').toLowerCase().includes(pq.type)) return false
-      if (pq.status && !(m.status || '').toLowerCase().includes(pq.status)) return false
-      if (pq.tag && !(m.tags || '').toLowerCase().includes(pq.tag)) return false
-      if (pq.due && !dueMatch(m.dueDate, pq.due)) return false
-      if (pq.scope && !(m.scope || c.group).toLowerCase().includes(pq.scope)) return false
+      if (pq.type && !c.label.toLowerCase().includes(`· ${pq.type}`) && !(m.type || '').toLowerCase().includes(pq.type)) continue
+      if (pq.status && !(m.status || '').toLowerCase().includes(pq.status)) continue
+      if (pq.tag && !(m.tags || '').toLowerCase().includes(pq.tag)) continue
+      if (pq.due && !dueMatch(m.dueDate, pq.due)) continue
+      if (pq.scope && !(m.scope || c.group).toLowerCase().includes(pq.scope)) continue
     }
-    return true
-  })
+    scored.push({ c, score: plainScore })
+  }
+  // 按匹配度排序：越贴合输入的排越前，而不是只按数据源顺序
+  scored.sort((a, b) => b.score - a.score)
+  return scored.map((s) => s.c)
 })
 
 // ---- 跨表数据搜索（F-SYS-01）：打开时加载关键表为可执行命令 ----
