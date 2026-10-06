@@ -10,6 +10,7 @@ import { toolsRepo, agentsRepo } from '@/db'
 import type { Tool, Agent } from '../../drizzle/schema'
 import { scanAgents, portProbe, agentWorkflow, listInstalledApps, resolveShortcut, launchApp, type AgentSessionInfo, type AgentWorkflowResult, type InstalledApp } from '@/composables/useTauri'
 import { useConfirm } from '@/composables/useConfirm'
+import { useListNav } from '@/composables/useListNav'
 
 const message = useMessage()
 const { confirm } = useConfirm()
@@ -771,6 +772,107 @@ function loadRollbackPoints() {
     rollbackPoints.value = raw ? JSON.parse(raw) : []
   } catch { rollbackPoints.value = [] }
 }
+
+// ---- 列表键盘导航（↑↓ 选择 · Enter 执行行内最高频操作 · Esc 取消高亮）----
+// 本视图不分 Tab，各区块常驻，所以 enabled 只判 loading / 各自的 loading。
+// 铁律：Enter 绝不绑删除（删除必须二次确认）。
+
+// 工具启动台：Enter 启动工具（与点击工具名一致的最高动作）
+const toolGridEl = ref<HTMLElement>()
+useListNav(toolGridEl, {
+  rowSelector: '.tool-item',
+  enabled: () => !loading.value,
+  onEnter: (el) => {
+    const id = Number(el.getAttribute('data-row-id'))
+    const row = orderedTools.value.find((t) => t.id === id)
+    if (row) void launchTool(row)
+  },
+})
+
+// 扫描结果：Enter 把该程序加入工具列表（addInstalledApp 内部已做重复/失败保护）
+const scanListEl = ref<HTMLElement>()
+useListNav(scanListEl, {
+  rowSelector: '.scan-item',
+  enabled: () => !installedLoading.value && scanPanelShow.value,
+  onEnter: (el) => {
+    const name = el.getAttribute('data-row-id') || ''
+    const row = scanFiltered.value.find((a) => a.name === name)
+    if (row) void addInstalledApp(row)
+  },
+})
+
+// Agent 台账：唯一非破坏性操作只有状态下拉（要传具体状态值），没有安全的单一动作 → 仅导航
+const agentListEl = ref<HTMLElement>()
+useListNav(agentListEl, {
+  rowSelector: '.agent-item',
+  enabled: () => !loading.value,
+})
+
+// Agent 会话扫描：Enter → 卡死会话走自愈预案（healStalled），活跃会话无可执行动作时跳过
+const sessionListEl = ref<HTMLElement>()
+useListNav(sessionListEl, {
+  rowSelector: '.session-item',
+  enabled: () => !sessionLoading.value,
+  onEnter: (el) => {
+    const idx = Number(el.getAttribute('data-row-id'))
+    const row = sessions.value[idx]
+    if (row?.stalled) healStalled(row)
+  },
+})
+
+// 工作流子任务：无独立行内操作，仅 ↑↓ 导航
+const wfTasksEl = ref<HTMLElement>()
+useListNav(wfTasksEl, {
+  rowSelector: '.wf-task',
+  enabled: () => !wfLoading.value,
+})
+
+// 执行历史：Enter 续跑该历史目标（rerunHistory）
+const wfHistoryEl = ref<HTMLElement>()
+useListNav(wfHistoryEl, {
+  rowSelector: '.wf-history-item',
+  enabled: () => !wfLoading.value,
+  onEnter: (el) => {
+    const raw = el.getAttribute('data-row-id') || ''
+    const row = wfHistory.value.find((h) => h.at === raw && !!h.goal)
+    if (row) void rerunHistory(row.goal)
+  },
+})
+
+// 待审看板：Enter 把该任务向后推进一步（→ 按钮），已完成的则跳过
+const boardColsEl = ref<HTMLElement>()
+useListNav(boardColsEl, {
+  rowSelector: '.board-card',
+  enabled: () => !wfLoading.value,
+  onEnter: (el) => {
+    const id = el.getAttribute('data-row-id') || ''
+    const row = wfQueue.value.find((q) => q.id === id)
+    if (!row || row.status === 'done') return
+    setQueueStatus(row.id, row.status === 'todo' ? 'doing' : row.status === 'doing' ? 'review' : 'done')
+  },
+})
+
+// 完成通知：纯只读列表，仅 ↑↓ 导航
+const notifyListEl = ref<HTMLElement>()
+useListNav(notifyListEl, {
+  rowSelector: '.notify-item',
+  enabled: () => !wfLoading.value,
+})
+
+// Prompt 库：唯一按钮是删除 → 只做 ↑↓ 导航，不给 Enter
+const promptListEl = ref<HTMLElement>()
+useListNav(promptListEl, {
+  rowSelector: '.prompt-item',
+  enabled: () => !loading.value,
+})
+
+// 回滚点：行内「恢复点」= quickEnd()，作用范围是整个工作区而非该行，
+// 绑在单行 Enter 上语义不成立 → 仅 ↑↓ 导航
+const rollbackListEl = ref<HTMLElement>()
+useListNav(rollbackListEl, {
+  rowSelector: '.notify-item',
+  enabled: () => !wfLoading.value,
+})
 </script>
 
 <template>
@@ -804,8 +906,8 @@ function loadRollbackPoints() {
             </div>
             <div v-if="installedLoading" class="installed-tip">正在扫描开始菜单与注册表…</div>
             <template v-else-if="installedApps.length">
-              <div v-if="scanFiltered.length" class="scan-list">
-                <div v-for="a in scanFiltered" :key="a.name + a.source" class="scan-item">
+              <div v-if="scanFiltered.length" class="scan-list" ref="scanListEl" tabindex="0" :aria-label="'本机程序扫描结果，共 ' + scanFiltered.length + ' 行，↑↓ 选择、Enter 添加到工具台'">
+                <div v-for="a in scanFiltered" :key="a.name + a.source" class="scan-item" :data-row-id="a.name">
                   <span class="scan-name" :title="a.exe_path || a.lnk_path || ''">{{ a.name }}</span>
                   <NTag size="tiny" :bordered="false" type="default">{{ a.source === 'start-menu' ? '开始菜单' : '注册表' }}</NTag>
                   <NTag v-if="isSystemApp(a)" size="tiny" :bordered="false" type="warning">系统</NTag>
@@ -836,8 +938,8 @@ function loadRollbackPoints() {
           </div>
           <div class="tool-hint mono">热键：Alt+1..9 启动前 9 个工具 · F-LP-04/05/06/08</div>
           <ListSkeleton v-if="loading" :rows="6" />
-          <div v-else-if="orderedTools.length" class="tool-grid">
-            <div v-for="(t, idx) in orderedTools" :key="t.id" class="tool-item">
+          <div v-else-if="orderedTools.length" class="tool-grid" ref="toolGridEl" tabindex="0" :aria-label="'工具列表，共 ' + orderedTools.length + ' 行，↑↓ 选择、Enter 启动'">
+            <div v-for="(t, idx) in orderedTools" :key="t.id" class="tool-item" :data-row-id="t.id">
               <div class="tool-main" @click="launchTool(t)">
                 <span class="tool-dot" :style="{ background: 'var(--wb-module-workspace)' }"></span>
                 <div class="tool-info">
@@ -882,8 +984,8 @@ function loadRollbackPoints() {
         </header>
         <div class="card-body">
           <ListSkeleton v-if="loading" :rows="4" />
-          <div v-else-if="agents.length" class="agent-list">
-            <div v-for="a in agents" :key="a.id" class="agent-item">
+          <div v-else-if="agents.length" class="agent-list" ref="agentListEl" tabindex="0" :aria-label="'Agent 台账列表，共 ' + agents.length + ' 行，↑↓ 选择'">
+            <div v-for="a in agents" :key="a.id" class="agent-item" :data-row-id="a.id">
               <div class="agent-row">
                 <span class="agent-name">{{ a.name }}</span>
                 <NTag size="small" :type="agentStatusColor(a.status)" :bordered="false">{{ agentStatusLabel(a.status) }}</NTag>
@@ -923,8 +1025,8 @@ function loadRollbackPoints() {
           </NButton>
         </header>
         <div class="card-body">
-          <div v-if="sessions.length" class="session-list">
-            <div v-for="(s, i) in sessions" :key="`${s.vendor}-${s.session_file}-${i}`" class="session-item" :class="{ 'is-stalled': s.stalled }">
+          <div v-if="sessions.length" class="session-list" ref="sessionListEl" tabindex="0" :aria-label="'Agent 会话列表，共 ' + sessions.length + ' 行，↑↓ 选择、Enter 对卡死会话执行自愈预案'">
+            <div v-for="(s, i) in sessions" :key="`${s.vendor}-${s.session_file}-${i}`" class="session-item" :class="{ 'is-stalled': s.stalled }" :data-row-id="i">
               <div class="s-row">
                 <span class="s-vendor">{{ s.vendor }}</span>
                 <NTag size="tiny" :bordered="false" :type="s.stalled ? 'error' : 'success'">{{ s.stalled ? '卡死' : '活跃' }}</NTag>
@@ -964,8 +1066,8 @@ function loadRollbackPoints() {
             <div class="wf-meta mono">
               规模 {{ wfResult.estimated_effort }} · {{ wfResult.sub_tasks.length }} 个子任务 · 质量检查 {{ wfResult.quality_checks.length }} 项
             </div>
-            <div class="wf-tasks">
-              <div v-for="st in wfResult.sub_tasks" :key="st.seq" class="wf-task">
+            <div class="wf-tasks" ref="wfTasksEl" tabindex="0" :aria-label="'工作流子任务列表，共 ' + wfResult.sub_tasks.length + ' 行，↑↓ 选择'">
+              <div v-for="st in wfResult.sub_tasks" :key="st.seq" class="wf-task" :data-row-id="st.seq">
                 <div class="wf-seq mono">{{ st.seq }}</div>
                 <div class="wf-task-body">
                   <div class="wf-title">{{ st.title }}</div>
@@ -984,12 +1086,12 @@ function loadRollbackPoints() {
             </div>
           </template>
           <EmptyState v-else text="输入目标后点击拆解计划，生成可执行的子任务与质量护栏" />
-          <div v-if="wfHistory.length" class="wf-history">
+          <div v-if="wfHistory.length" class="wf-history" ref="wfHistoryEl" tabindex="0" :aria-label="'执行历史列表，共 ' + wfHistory.length + ' 行，↑↓ 选择、Enter 续跑'">
             <div class="wf-history-head">
               <span>执行历史</span>
               <NButton size="tiny" text type="warning" @click="clearWfHistory()">清空</NButton>
             </div>
-            <div v-for="(h, i) in wfHistory" :key="i" class="wf-history-item">
+            <div v-for="(h, i) in wfHistory" :key="i" class="wf-history-item" :data-row-id="h.at">
               <span class="wf-h-time mono">{{ h.at }}</span>
               <span class="wf-h-goal">{{ h.goal }}</span>
               <span class="wf-h-meta mono">{{ h.tasks }} 子任务 · 风险 {{ h.risks }} · {{ h.effort }}</span>
@@ -1029,10 +1131,10 @@ function loadRollbackPoints() {
 
           <!-- 待审队列 / 分派看板 -->
           <div class="wf-block-title">任务分派看板（待审队列）</div>
-          <div v-if="wfQueue.length" class="board-cols">
+          <div v-if="wfQueue.length" class="board-cols" ref="boardColsEl" tabindex="0" :aria-label="'待审任务看板，共 ' + wfQueue.length + ' 行，↑↓ 选择、Enter 推进到下一状态'">
             <div v-for="st in ['todo', 'doing', 'review', 'done']" :key="st" class="board-col">
               <div class="board-col-title mono">{{ { todo: '待办', doing: '执行中', review: '待审', done: '已完成' }[st as 'todo' | 'doing' | 'review' | 'done'] }}</div>
-              <div v-for="q in wfQueue.filter((x) => x.status === st)" :key="q.id" class="board-card">
+              <div v-for="q in wfQueue.filter((x) => x.status === st)" :key="q.id" class="board-card" :data-row-id="q.id">
                 <div class="board-title">{{ q.title }}</div>
                 <div class="board-goal mono">{{ q.goal }}</div>
                 <NSpace :size="2">
@@ -1047,8 +1149,8 @@ function loadRollbackPoints() {
 
           <!-- 完成通知 -->
           <div class="wf-block-title" style="margin-top: 14px">完成通知</div>
-          <div v-if="notifies.length" class="notify-list">
-            <div v-for="(n, i) in notifies" :key="i" class="notify-item"><span class="mono" style="color: var(--wb-text-3)">{{ n.at }}</span> {{ n.text }}</div>
+          <div v-if="notifies.length" class="notify-list" ref="notifyListEl" tabindex="0" :aria-label="'完成通知列表，共 ' + notifies.length + ' 行，↑↓ 选择'">
+            <div v-for="(n, i) in notifies" :key="i" class="notify-item" :data-row-id="i"><span class="mono" style="color: var(--wb-text-3)">{{ n.at }}</span> {{ n.text }}</div>
           </div>
           <EmptyState v-else text="暂无完成通知" />
 
@@ -1073,8 +1175,8 @@ function loadRollbackPoints() {
             <NInput v-model:value="promptText" size="small" placeholder="模板内容，可用 {{goal}} 占位" style="flex: 1" />
             <NButton size="small" type="primary" ghost @click="addPrompt()">保存</NButton>
           </div>
-          <div v-if="promptLib.length" class="prompt-list">
-            <div v-for="p in promptLib" :key="p.id" class="prompt-item">
+          <div v-if="promptLib.length" class="prompt-list" ref="promptListEl" tabindex="0" :aria-label="'Prompt 库列表，共 ' + promptLib.length + ' 行，↑↓ 选择'">
+            <div v-for="p in promptLib" :key="p.id" class="prompt-item" :data-row-id="p.id">
               <span class="prompt-name">{{ p.name }}</span>
               <span class="prompt-text mono">{{ p.text }}</span>
               <NButton size="tiny" text type="error" @click="removePrompt(p.id)">删除</NButton>
@@ -1090,8 +1192,8 @@ function loadRollbackPoints() {
 
           <!-- 回滚点（F-AGT-12） -->
           <div class="wf-block-title" style="margin-top: 14px">回滚点（自动记录）</div>
-          <div v-if="rollbackPoints.length" class="notify-list">
-            <div v-for="(r, i) in rollbackPoints" :key="i" class="notify-item">
+          <div v-if="rollbackPoints.length" class="notify-list" ref="rollbackListEl" tabindex="0" :aria-label="'回滚点列表，共 ' + rollbackPoints.length + ' 行，↑↓ 选择'">
+            <div v-for="(r, i) in rollbackPoints" :key="i" class="notify-item" :data-row-id="i">
               <span class="mono" style="color: var(--wb-text-3)">{{ r.at }}</span> {{ r.goal }}
               <NButton size="tiny" text type="primary" @click="quickEnd()">恢复点</NButton>
             </div>

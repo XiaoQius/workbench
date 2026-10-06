@@ -10,6 +10,7 @@ import type { Inspiration } from '../../drizzle/schema'
 import { parseInspiration } from '@/composables/inspiration'
 import { useConfirm } from '@/composables/useConfirm'
 import { refreshTick } from '@/stores/ui'
+import { useListNav } from '@/composables/useListNav'
 
 const message = useMessage()
 const { confirm } = useConfirm()
@@ -127,6 +128,19 @@ onMounted(() => {
   load()
   nextTick(() => inputEl.value?.focus())
 })
+
+// ---- 灵感列表键盘导航（↑↓ 选择 · Enter 星标 / 取消星标 · Esc 取消高亮）----
+// Enter 绑星标而不是删除：删除必须二次确认，且误触不可恢复。
+const cardsEl = ref<HTMLElement>()
+useListNav(cardsEl, {
+  rowSelector: '.card',
+  enabled: () => !loading.value,
+  onEnter: (el) => {
+    const id = Number(el.getAttribute('data-row-id'))
+    const row = filtered.value.find((r) => r.id === id)
+    if (row) void toggleStar(row)
+  },
+})
 </script>
 
 <template>
@@ -187,8 +201,8 @@ onMounted(() => {
 
     <!-- 列表 -->
     <ListSkeleton v-if="loading" :rows="5" />
-    <div v-else-if="filtered.length" class="cards">
-      <div v-for="r in filtered" :key="r.id" class="card" :class="{ starred: r.starred }">
+    <div v-else-if="filtered.length" class="cards" ref="cardsEl" tabindex="0" :aria-label="'灵感列表，共 ' + filtered.length + ' 行，↑↓ 选择、Enter 切换星标'">
+      <div v-for="r in filtered" :key="r.id" class="card" :class="{ starred: r.starred }" :data-row-id="r.id">
         <div class="card-main">
           <p class="card-content">{{ r.content }}</p>
           <div class="card-meta">

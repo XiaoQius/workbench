@@ -10,6 +10,8 @@ import { serversRepo, domainsRepo, opsFlowsRepo, opsChangesRepo, opsSecChecksRep
 import { diskSpace, portUsage, healthCheck, proxyDetect, wslStatus, schtasksList, backupVerify, type DiskInfo, type PortInfo, type HealthResult, type ProxyInfo, type WslDistro, type ScheduledTask, type BackupVerifyInfo } from '@/composables/useTauri'
 import type { Server, Domain, OpsFlow, OpsChange, OpsSecCheck, OpsSecret, OpsDnsRecord } from '../../drizzle/schema'
 import { useConfirm } from '@/composables/useConfirm'
+import { useListNav } from '@/composables/useListNav'
+import { matchKw } from '@/composables/match'
 
 const message = useMessage()
 const { confirm } = useConfirm()
@@ -61,11 +63,6 @@ const secKw = ref('')
 const secretKw = ref('')
 const dnsKw = ref('')
 
-function matchKw(kw: string, ...vals: unknown[]): boolean {
-  const k = kw.trim().toLowerCase()
-  if (!k) return true
-  return vals.some((v) => String(v ?? '').toLowerCase().includes(k))
-}
 
 const filteredServers = computed(() => servers.value.filter((s) => matchKw(serverKw.value, s.name, s.ip, s.region, s.note)))
 const filteredDomains = computed(() => domains.value.filter((d) => matchKw(domainKw.value, d.name, d.registrar, d.dnsProvider, d.note)))
@@ -538,6 +535,209 @@ async function removeDns(d: OpsDnsRecord) {
   if (!ok) return
   try { await opsDnsRepo.remove(d.id); message.success('已删除'); load() } catch { message.error('删除失败') }
 }
+
+// ============================================================
+// 列表键盘导航（↑↓ 选择 · Enter 触发该行主操作 · Esc 取消高亮）
+// ============================================================
+
+// OpsView 的 n-tabs 原先没有 v-model，激活的 tab 名只存在于 naive-ui 内部，
+// 组件外读不到；这里补一个 tab 变量接管它，enabled 才能写成
+// `!loading.value && tab.value === '<tab name>'`，与 DevView 的样板一致。
+// 初值取第一个面板的 name（'servers'），与未接管时的默认行为相同。
+const tab = ref('servers')
+
+// ---- 配置变更（changes）：Enter = 推进到下一状态 ----
+// 变更台账的主线就是「计划中 → 执行中 → 已完成」，行内唯一的按钮是删除（破坏性，
+// 按项目约定不能绑 Enter），所以把 Enter 绑到状态推进上：安全、可逆、最高频。
+const nextChangeStatus: Record<string, string> = { planned: 'doing', doing: 'done', done: 'planned', rollback: 'planned' }
+async function advanceChange(c: OpsChange) {
+  const next = nextChangeStatus[c.status] ?? 'planned'
+  try {
+    await opsChangesRepo.update(c.id, { status: next })
+    c.status = next as OpsChange['status']
+    message.success(`「${c.title}」→ ${changeStatus(c).label}`)
+  } catch {
+    message.error('更新失败')
+  }
+}
+
+// ---- 安全巡检（secchecks）：Enter = 在 通过/警告/失败 之间循环 ----
+// 巡检记录的核心字段就是结果，行内同样只有删除按钮，故把 Enter 绑到结果循环上。
+const nextSecResult: Record<string, string> = { pass: 'warn', warn: 'fail', fail: 'pass' }
+async function cycleSecResult(s: OpsSecCheck) {
+  const next = nextSecResult[s.result] ?? 'pass'
+  try {
+    await opsSecChecksRepo.update(s.id, { result: next })
+    s.result = next as OpsSecCheck['result']
+    message.success(`「${s.title}」→ ${secResult(s).label}`)
+  } catch {
+    message.error('更新失败')
+  }
+}
+
+// ---- 密钥管理（secrets）：Enter = 在 有效/已轮换/已过期 之间循环 ----
+const nextSecretStatus: Record<string, string> = { active: 'rotated', rotated: 'expired', expired: 'active' }
+async function cycleSecretStatus(s: OpsSecret) {
+  const next = nextSecretStatus[s.status] ?? 'active'
+  try {
+    await opsSecretsRepo.update(s.id, { status: next })
+    s.status = next as OpsSecret['status']
+    message.success(`「${s.name}」→ ${secretStatus(s).label}`)
+  } catch {
+    message.error('更新失败')
+  }
+}
+
+// ---- DNS 记录（dns）：Enter = 在 生效/待生效/停用 之间循环 ----
+// TTL / 记录值这类字段不适合盲改，但「启用/停用」是开关型操作，循环安全。
+const nextDnsStatus: Record<string, string> = { active: 'pending', pending: 'disabled', disabled: 'active' }
+async function cycleDnsStatus(d: OpsDnsRecord) {
+  const next = nextDnsStatus[d.status] ?? 'active'
+  try {
+    await opsDnsRepo.update(d.id, { status: next })
+    d.status = next as OpsDnsRecord['status']
+    message.success(`「${d.name}」→ ${dnsStatus(d).label}`)
+  } catch {
+    message.error('更新失败')
+  }
+}
+
+// ---- 流量预警（flows）：Enter = 在 正常/预警/严重 之间循环 ----
+// 状态是流量指标最常被手工修正的字段（阈值命中后要人工确认/升级）。
+const nextFlowStatus: Record<string, string> = { ok: 'warn', warn: 'critical', critical: 'ok' }
+async function cycleFlowStatus(f: OpsFlow) {
+  const next = nextFlowStatus[f.status] ?? 'ok'
+  try {
+    await opsFlowsRepo.update(f.id, { status: next })
+    f.status = next as OpsFlow['status']
+    message.success(`「${f.name}」→ ${flowStatus(f).label}`)
+  } catch {
+    message.error('更新失败')
+  }
+}
+
+// ---- 域名（domains）：Enter = 复制域名 ----
+// 域名行只有删除按钮（破坏性，按项目约定不绑 Enter），这里取「复制域名」——
+// 与 copySsh / copyWslCmd 同一套写法，是域名行最高频的非破坏性动作。
+async function copyDomain(d: Domain) {
+  try {
+    await navigator.clipboard.writeText(d.name)
+    message.success(`已复制：${d.name}`)
+  } catch {
+    message.error('复制失败')
+  }
+}
+
+// ---- 端口占用（ports）：Enter = 复制该端口/进程信息 ----
+// 端口表是系统只读数据，行内没有任何按钮；最高频的下游动作是
+// 「把这条记录带出去查进程 / 关端口」，所以 Enter 绑复制。
+async function copyPortInfo(p: PortInfo) {
+  const line = `${p.proto} ${p.port} ${p.state} pid=${p.pid} ${p.process || ''}`.trim()
+  try {
+    await navigator.clipboard.writeText(line)
+    message.success(`已复制：${line}`)
+  } catch {
+    message.error('复制失败')
+  }
+}
+
+// ============================================================
+// useListNav 接线：一个列表 = 一个容器 ref + 一次 useListNav 调用。
+// 全部照 DevView 的样板：rowSelector 用 :not(.head) 排除表头行，
+// enabled 用 !loading && 当前 tab，onEnter 用 data-row-id 回查数据数组。
+// ============================================================
+
+const domainTableEl = ref<HTMLElement>()
+useListNav(domainTableEl, {
+  rowSelector: '.d-row:not(.head)',
+  enabled: () => !loading.value && tab.value === 'domains',
+  onEnter: (el) => {
+    const id = Number(el.getAttribute('data-row-id'))
+    const row = filteredDomains.value.find((d) => d.id === id)
+    if (row) void copyDomain(row)
+  },
+})
+
+const portTableEl = ref<HTMLElement>()
+useListNav(portTableEl, {
+  rowSelector: '.p-row:not(.head)',
+  enabled: () => !loading.value && tab.value === 'ports',
+  onEnter: (el) => {
+    // 端口没有单一 id，沿用模板 :key 的复合键 proto-port-pid
+    const key = el.getAttribute('data-row-id')
+    const row = filteredPorts.value.find((p) => `${p.proto}-${p.port}-${p.pid}` === key)
+    if (row) void copyPortInfo(row)
+  },
+})
+
+const flowTableEl = ref<HTMLElement>()
+useListNav(flowTableEl, {
+  rowSelector: '.d-row:not(.head)',
+  enabled: () => !loading.value && tab.value === 'flows',
+  onEnter: (el) => {
+    const id = Number(el.getAttribute('data-row-id'))
+    const row = filteredFlows.value.find((f) => f.id === id)
+    if (row) void cycleFlowStatus(row)
+  },
+})
+
+const changeTableEl = ref<HTMLElement>()
+useListNav(changeTableEl, {
+  rowSelector: '.d-row:not(.head)',
+  enabled: () => !loading.value && tab.value === 'changes',
+  onEnter: (el) => {
+    const id = Number(el.getAttribute('data-row-id'))
+    const row = filteredChanges.value.find((c) => c.id === id)
+    if (row) void advanceChange(row)
+  },
+})
+
+const secTableEl = ref<HTMLElement>()
+useListNav(secTableEl, {
+  rowSelector: '.d-row:not(.head)',
+  enabled: () => !loading.value && tab.value === 'secchecks',
+  onEnter: (el) => {
+    const id = Number(el.getAttribute('data-row-id'))
+    const row = filteredSecChecks.value.find((s) => s.id === id)
+    if (row) void cycleSecResult(row)
+  },
+})
+
+const secretTableEl = ref<HTMLElement>()
+useListNav(secretTableEl, {
+  rowSelector: '.d-row:not(.head)',
+  enabled: () => !loading.value && tab.value === 'secrets',
+  onEnter: (el) => {
+    const id = Number(el.getAttribute('data-row-id'))
+    const row = filteredSecrets.value.find((s) => s.id === id)
+    if (row) void cycleSecretStatus(row)
+  },
+})
+
+const dnsTableEl = ref<HTMLElement>()
+useListNav(dnsTableEl, {
+  rowSelector: '.d-row:not(.head)',
+  enabled: () => !loading.value && tab.value === 'dns',
+  onEnter: (el) => {
+    const id = Number(el.getAttribute('data-row-id'))
+    const row = filteredDnsRecords.value.find((d) => d.id === id)
+    if (row) void cycleDnsStatus(row)
+  },
+})
+
+// 服务器是卡片网格（.server-grid > .server-card），不是 .d-row 表，
+// 但同样是平铺 DOM，一并接入；行内最高频的非破坏性动作是 copySsh。
+const serverGridEl = ref<HTMLElement>()
+useListNav(serverGridEl, {
+  rowSelector: '.server-card',
+  enabled: () => !loading.value && tab.value === 'servers',
+  onEnter: (el) => {
+    const id = Number(el.getAttribute('data-row-id'))
+    const row = filteredServers.value.find((s) => s.id === id)
+    if (row) void copySsh(row)
+  },
+})
+
 </script>
 
 <template>
@@ -548,7 +748,7 @@ async function removeDns(d: OpsDnsRecord) {
       共 {{ expiringCount }} 项资源将在 30 天内到期或已过期（服务器续费 / 域名 / SSL），请及时处理
     </div>
 
-    <n-tabs type="line" class="wb-tabs">
+    <n-tabs v-model:value="tab" type="line" class="wb-tabs">
       <!-- 服务器清单 -->
       <n-tab-pane name="servers" tab="服务器">
         <div class="toolbar toolbar-split">
@@ -559,8 +759,8 @@ async function removeDns(d: OpsDnsRecord) {
           </NButton>
         </div>
         <ListSkeleton v-if="loading" :rows="6" />
-        <div v-else-if="filteredServers.length" class="server-grid">
-          <div v-for="s in filteredServers" :key="s.id" class="server-card wb-card">
+        <div v-else-if="filteredServers.length" class="server-grid" ref="serverGridEl" tabindex="0" :aria-label="'服务器列表，共 ' + filteredServers.length + ' 行，↑↓ 选择、Enter 复制 SSH 命令'">
+          <div v-for="s in filteredServers" :key="s.id" class="server-card wb-card" :data-row-id="s.id">
             <div class="sc-head">
               <span class="sc-name">{{ s.name }}</span>
               <NTag size="tiny" :bordered="false" :type="serverStatus(s).color as any">{{ serverStatus(s).label }}</NTag>
@@ -596,11 +796,11 @@ async function removeDns(d: OpsDnsRecord) {
           </NButton>
         </div>
         <ListSkeleton v-if="loading" :rows="6" />
-        <div v-else-if="filteredDomains.length" class="domain-table">
+        <div v-else-if="filteredDomains.length" class="domain-table" ref="domainTableEl" tabindex="0" :aria-label="'域名列表，共 ' + filteredDomains.length + ' 行，↑↓ 选择、Enter 复制域名'">
           <div class="d-row d-row-domain head">
             <span>域名</span><span>注册商</span><span>DNS</span><span>域名到期</span><span>SSL 到期</span><span>关联服务器</span><span>年成本</span><span>剩余</span><span></span>
           </div>
-          <div v-for="d in filteredDomains" :key="d.id" class="d-row d-row-domain">
+          <div v-for="d in filteredDomains" :key="d.id" class="d-row d-row-domain" :data-row-id="d.id">
             <span class="mono d-name">{{ d.name }}</span>
             <span>{{ d.registrar || '—' }}</span>
             <span>{{ d.dnsProvider || '—' }}</span>
@@ -651,11 +851,11 @@ async function removeDns(d: OpsDnsRecord) {
         <div class="toolbar">
           <NInput v-model:value="portFilter" size="small" placeholder="按端口 / 进程名过滤…" clearable style="width: 240px" />
         </div>
-        <div v-if="ports.length" class="port-table">
+        <div v-if="ports.length" class="port-table" ref="portTableEl" tabindex="0" :aria-label="'端口列表，共 ' + filteredPorts.length + ' 行，↑↓ 选择、Enter 复制端口信息'">
           <div class="p-row head">
             <span>协议</span><span>端口</span><span>状态</span><span>PID</span><span>进程</span>
           </div>
-          <div v-for="p in filteredPorts" :key="`${p.proto}-${p.port}-${p.pid}`" class="p-row">
+          <div v-for="p in filteredPorts" :key="`${p.proto}-${p.port}-${p.pid}`" class="p-row" :data-row-id="`${p.proto}-${p.port}-${p.pid}`">
             <span class="mono">{{ p.proto }}</span>
             <span class="mono port">{{ p.port }}</span>
             <span><NTag size="tiny" :bordered="false" :type="p.state === 'LISTENING' ? 'warning' : 'default'">{{ p.state }}</NTag></span>
@@ -804,11 +1004,11 @@ async function removeDns(d: OpsDnsRecord) {
           </NButton>
         </div>
         <ListSkeleton v-if="loading" :rows="4" />
-        <div v-else-if="filteredFlows.length" class="domain-table">
+        <div v-else-if="filteredFlows.length" class="domain-table" ref="flowTableEl" tabindex="0" :aria-label="'流量预警列表，共 ' + filteredFlows.length + ' 行，↑↓ 选择、Enter 循环状态'">
           <div class="d-row head">
             <span>指标</span><span>类型</span><span>当前值</span><span>阈值</span><span>状态</span><span>备注</span><span></span>
           </div>
-          <div v-for="f in filteredFlows" :key="f.id" class="d-row">
+          <div v-for="f in filteredFlows" :key="f.id" class="d-row" :data-row-id="f.id">
             <span class="mono d-name">{{ f.name }}</span>
             <span>{{ f.metric }}</span>
             <span class="mono" :style="f.current >= f.threshold && f.threshold > 0 ? 'color: var(--wb-danger); font-weight: 600' : ''">{{ f.current }}</span>
@@ -831,11 +1031,11 @@ async function removeDns(d: OpsDnsRecord) {
           </NButton>
         </div>
         <ListSkeleton v-if="loading" :rows="5" />
-        <div v-else-if="filteredChanges.length" class="domain-table">
+        <div v-else-if="filteredChanges.length" class="domain-table" ref="changeTableEl" tabindex="0" :aria-label="'配置变更列表，共 ' + filteredChanges.length + ' 行，↑↓ 选择、Enter 推进状态'">
           <div class="d-row head">
             <span>变更</span><span>环境</span><span>类型</span><span>操作人</span><span>时间</span><span>状态</span><span></span>
           </div>
-          <div v-for="c in filteredChanges" :key="c.id" class="d-row">
+          <div v-for="c in filteredChanges" :key="c.id" class="d-row" :data-row-id="c.id">
             <span class="d-name">{{ c.title }}</span>
             <span class="mono">{{ c.env }}</span>
             <span>{{ c.category }}</span>
@@ -858,11 +1058,11 @@ async function removeDns(d: OpsDnsRecord) {
           </NButton>
         </div>
         <ListSkeleton v-if="loading" :rows="5" />
-        <div v-else-if="filteredSecChecks.length" class="domain-table">
+        <div v-else-if="filteredSecChecks.length" class="domain-table" ref="secTableEl" tabindex="0" :aria-label="'安全巡检列表，共 ' + filteredSecChecks.length + ' 行，↑↓ 选择、Enter 循环结果'">
           <div class="d-row head">
             <span>巡检项</span><span>分类</span><span>级别</span><span>结果</span><span>日期</span><span>详情</span><span></span>
           </div>
-          <div v-for="s in filteredSecChecks" :key="s.id" class="d-row">
+          <div v-for="s in filteredSecChecks" :key="s.id" class="d-row" :data-row-id="s.id">
             <span class="d-name">{{ s.title }}</span>
             <span>{{ s.category }}</span>
             <span><NTag size="tiny" :bordered="false" :type="secSeverity(s).color as any">{{ secSeverity(s).label }}</NTag></span>
@@ -885,11 +1085,11 @@ async function removeDns(d: OpsDnsRecord) {
           </NButton>
         </div>
         <ListSkeleton v-if="loading" :rows="5" />
-        <div v-else-if="filteredSecrets.length" class="domain-table">
+        <div v-else-if="filteredSecrets.length" class="domain-table" ref="secretTableEl" tabindex="0" :aria-label="'密钥列表，共 ' + filteredSecrets.length + ' 行，↑↓ 选择、Enter 循环状态'">
           <div class="d-row head">
             <span>密钥</span><span>提供方</span><span>账号</span><span>状态</span><span>过期</span><span>备注</span><span></span>
           </div>
-          <div v-for="s in filteredSecrets" :key="s.id" class="d-row">
+          <div v-for="s in filteredSecrets" :key="s.id" class="d-row" :data-row-id="s.id">
             <span class="mono d-name">{{ s.name }}</span>
             <span>{{ s.provider || '—' }}</span>
             <span class="mono">{{ s.account || '—' }}</span>
@@ -912,11 +1112,11 @@ async function removeDns(d: OpsDnsRecord) {
           </NButton>
         </div>
         <ListSkeleton v-if="loading" :rows="5" />
-        <div v-else-if="filteredDnsRecords.length" class="domain-table">
+        <div v-else-if="filteredDnsRecords.length" class="domain-table" ref="dnsTableEl" tabindex="0" :aria-label="'DNS 记录列表，共 ' + filteredDnsRecords.length + ' 行，↑↓ 选择、Enter 循环状态'">
           <div class="d-row head">
             <span>域名</span><span>类型</span><span>主机</span><span>记录值</span><span>TTL</span><span>状态</span><span></span>
           </div>
-          <div v-for="d in filteredDnsRecords" :key="d.id" class="d-row">
+          <div v-for="d in filteredDnsRecords" :key="d.id" class="d-row" :data-row-id="d.id">
             <span class="mono d-name">{{ d.name }}</span>
             <span class="mono">{{ d.recordType }}</span>
             <span class="mono">{{ d.host }}</span>

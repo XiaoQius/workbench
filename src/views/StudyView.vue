@@ -7,8 +7,10 @@ import EmptyState from '@/components/EmptyState.vue'
 import ListSkeleton from '@/components/ListSkeleton.vue'
 import ModalForm, { type FieldDef } from '@/components/ModalForm.vue'
 import { useConfirm } from '@/composables/useConfirm'
+import { useListNav } from '@/composables/useListNav'
 import { coursesRepo, assignmentsRepo, notesRepo, gradesRepo, flashcardsRepo, pitfallsRepo, readQueueRepo, feynmanLogsRepo, tasksRepo, pomodorosRepo } from '@/db'
 import type { Course, Assignment, Note, Grade, Flashcard, Pitfall, ReadQueueItem, FeynmanLog, Task, Pomodoro } from '../../drizzle/schema'
+import { matchKw } from '@/composables/match'
 
 const message = useMessage()
 const { confirm } = useConfirm()
@@ -34,6 +36,8 @@ const pitfallFormShow = ref(false)
 const readFormShow = ref(false)
 const feynmanFormShow = ref(false)
 const activeNote = ref<Note | null>(null)
+// 当前激活的页签，供列表键盘导航判断「哪个列表此刻可见」（同 DevView 的 tab 用法）
+const tab = ref('schedule')
 
 // ---- 列表搜索 ----
 // 每张表只按「人认得出来的那几列」匹配，不逐字段全扫。
@@ -48,11 +52,6 @@ const pitfallKw = ref('')
 const readKw = ref('')
 const feynmanKw = ref('')
 
-function matchKw(kw: string, ...vals: unknown[]): boolean {
-  const k = kw.trim().toLowerCase()
-  if (!k) return true
-  return vals.some((v) => String(v ?? '').toLowerCase().includes(k))
-}
 
 const filteredCourses = computed(() => courses.value.filter((c) => matchKw(courseKw.value, c.name, c.teacher, c.location)))
 const filteredAssignments = computed(() => assignments.value.filter((a) => matchKw(assignmentKw.value, a.title, a.status, a.dueDate, a.note)))
@@ -583,12 +582,106 @@ async function removeFocus(p: Pomodoro) {
     message.error('删除失败')
   }
 }
+
+// ---- 列表键盘导航（↑↓ 选择 · Enter 执行行首操作 · Esc 取消高亮）----
+// 与 DevView 任务表同一套写法：容器 ref + rowSelector，高亮态由 main.css 的
+// [data-wb-cursor='true'] 统一提供，这里不碰样式。
+// 约定：Enter 只绑非破坏性操作；删除一律保留给按钮（二次确认），不接 Enter。
+
+// 作业双轨：最高频操作是「未写 ↔ 已写」
+const assignmentTableEl = ref<HTMLElement>()
+useListNav(assignmentTableEl, {
+  rowSelector: '.a-row:not(.head)',
+  enabled: () => !loading.value && tab.value === 'assignments',
+  onEnter: (el) => {
+    const id = Number(el.getAttribute('data-row-id'))
+    const row = assignments.value.find((a) => a.id === id)
+    if (row) void setAssignmentStatus(row, row.status === 'todo' ? 'written' : 'todo')
+  },
+})
+
+// 学习笔记：Enter 打开详情弹窗（卡片整体 @click 就是这个行为）
+const noteGridEl = ref<HTMLElement>()
+useListNav(noteGridEl, {
+  rowSelector: '.note-card',
+  enabled: () => !loading.value && tab.value === 'notes',
+  onEnter: (el) => {
+    const id = Number(el.getAttribute('data-row-id'))
+    const row = notes.value.find((n) => n.id === id)
+    if (row) activeNote.value = row
+  },
+})
+
+// 成绩单：行级只有删除（需二次确认），只提供 ↑↓ 浏览
+const gradeTableEl = ref<HTMLElement>()
+useListNav(gradeTableEl, {
+  rowSelector: '.g-row:not(.head)',
+  enabled: () => !loading.value && tab.value === 'grades',
+})
+
+// 闪卡：Enter 翻面（先看题再对答案，是该 Tab 的主流程）
+const cardListEl = ref<HTMLElement>()
+useListNav(cardListEl, {
+  rowSelector: '.flash-card',
+  enabled: () => !loading.value && tab.value === 'cards',
+  onEnter: (_el, index) => flipCard(index),
+})
+
+// 学习目标：Enter 切换完成 / 待办
+const goalListEl = ref<HTMLElement>()
+useListNav(goalListEl, {
+  rowSelector: '.goal-row',
+  enabled: () => !loading.value && tab.value === 'goals',
+  onEnter: (el) => {
+    const id = Number(el.getAttribute('data-row-id'))
+    const row = studyGoals.value.find((g) => g.id === id)
+    if (row) void toggleGoal(row)
+  },
+})
+
+// 专注明细：Enter 打开编辑弹窗
+const focusRecordsEl = ref<HTMLElement>()
+useListNav(focusRecordsEl, {
+  rowSelector: '.pr-row:not(.head)',
+  enabled: () => !loading.value && tab.value === 'focus',
+  onEnter: (el) => {
+    const id = Number(el.getAttribute('data-row-id'))
+    const row = focusRecords.value.find((p) => p.id === id)
+    if (row) openFocusEdit(row)
+  },
+})
+
+// 错题本：只读列表，只提供 ↑↓ 浏览
+const pitfallListEl = ref<HTMLElement>()
+useListNav(pitfallListEl, {
+  rowSelector: '.pitfall-row',
+  enabled: () => !loading.value && tab.value === 'pitfalls',
+})
+
+// 阅读队列：Enter 标记「在读」（队列里推进阅读的主操作）
+const readListEl = ref<HTMLElement>()
+useListNav(readListEl, {
+  rowSelector: '.read-row',
+  enabled: () => !loading.value && tab.value === 'readQueue',
+  onEnter: (el) => {
+    const id = Number(el.getAttribute('data-row-id'))
+    const row = readQueue.value.find((r) => r.id === id)
+    if (row) void markRead(row, false)
+  },
+})
+
+// 费曼输出：只读列表，只提供 ↑↓ 浏览
+const feynmanListEl = ref<HTMLElement>()
+useListNav(feynmanListEl, {
+  rowSelector: '.feynman-row',
+  enabled: () => !loading.value && tab.value === 'feynman',
+})
 </script>
 
 <template>
   <div>
 
-    <n-tabs type="line" class="wb-tabs">
+    <n-tabs v-model:value="tab" type="line" class="wb-tabs">
       <!-- 课程表 -->
       <n-tab-pane name="schedule" tab="课程表">
         <div class="toolbar toolbar-split">
@@ -654,11 +747,11 @@ async function removeFocus(p: Pomodoro) {
           </span>
         </div>
         <ListSkeleton v-if="loading" :rows="5" />
-        <div v-else-if="filteredAssignments.length" class="assignment-table">
+        <div v-else-if="filteredAssignments.length" class="assignment-table" ref="assignmentTableEl" tabindex="0" :aria-label="'作业列表，共 ' + filteredAssignments.length + ' 行，↑↓ 选择、Enter 切换已写'">
           <div class="a-row head">
             <span>作业</span><span>课程</span><span>截止</span><span>写完</span><span>提交</span><span></span>
           </div>
-          <div v-for="a in filteredAssignments" :key="a.id" class="a-row">
+          <div v-for="a in filteredAssignments" :key="a.id" class="a-row" :data-row-id="a.id">
             <span class="a-title">{{ a.title }}</span>
             <span>{{ courseName(a.courseId) }}</span>
             <span class="mono" :style="a.dueDate && a.dueDate < new Date().toISOString().slice(0, 10) && a.status !== 'submitted' ? 'color: var(--wb-danger)' : ''">
@@ -700,8 +793,8 @@ async function removeFocus(p: Pomodoro) {
           </NButton>
         </div>
         <ListSkeleton v-if="loading" :rows="4" />
-        <div v-else-if="filteredNotes.length" class="note-grid">
-          <div v-for="n in filteredNotes" :key="n.id" class="note-card wb-card hoverable" @click="activeNote = n">
+        <div v-else-if="filteredNotes.length" class="note-grid" ref="noteGridEl" tabindex="0" :aria-label="'笔记列表，共 ' + filteredNotes.length + ' 行，↑↓ 选择、Enter 打开详情'">
+          <div v-for="n in filteredNotes" :key="n.id" class="note-card wb-card hoverable" :data-row-id="n.id" @click="activeNote = n">
             <div class="note-title">{{ n.title }}</div>
             <div class="note-preview">{{ (n.content || '').slice(0, 120) }}</div>
             <div v-if="n.tags" class="note-tags mono">{{ n.tags }}</div>
@@ -731,11 +824,11 @@ async function removeFocus(p: Pomodoro) {
           </div>
         </div>
         <ListSkeleton v-if="loading" :rows="5" />
-        <div v-else-if="filteredGrades.length" class="grade-table">
+        <div v-else-if="filteredGrades.length" class="grade-table" ref="gradeTableEl" tabindex="0" :aria-label="'成绩列表，共 ' + filteredGrades.length + ' 行，↑↓ 选择'">
           <div class="g-row head">
             <span>课程</span><span>类型</span><span>得分</span><span>满分</span><span>权重</span><span>日期</span><span></span>
           </div>
-          <div v-for="g in filteredGrades" :key="g.id" class="g-row">
+          <div v-for="g in filteredGrades" :key="g.id" class="g-row" :data-row-id="g.id">
             <span>{{ g.courseName }} <span v-if="courseGradeAvg(g.courseName) !== null" class="mono dim">(均 {{ courseGradeAvg(g.courseName) }})</span></span>
             <span><NTag size="tiny" :bordered="false">{{ g.examType }}</NTag></span>
             <span class="mono" :style="g.total && g.score / g.total >= 0.6 ? 'color: var(--wb-success)' : 'color: var(--wb-danger)'">{{ g.score }}</span>
@@ -770,8 +863,8 @@ async function removeFocus(p: Pomodoro) {
           </div>
         </div>
         <ListSkeleton v-if="loading" :rows="4" />
-        <div v-else-if="filteredCards.length" class="card-list">
-          <div v-for="(c, i) in filteredCards" :key="c.id" class="flash-card wb-card" :class="{ flipped: flipIndex === i }">
+        <div v-else-if="filteredCards.length" class="card-list" ref="cardListEl" tabindex="0" :aria-label="'闪卡列表，共 ' + filteredCards.length + ' 行，↑↓ 选择、Enter 翻面'">
+          <div v-for="(c, i) in filteredCards" :key="c.id" class="flash-card wb-card" :class="{ flipped: flipIndex === i }" :data-row-id="c.id">
             <div class="fc-head">
               <NTag size="tiny" :bordered="false">{{ c.deck || '默认' }}</NTag>
               <NTag size="tiny" :bordered="false" :type="(c.level || 0) >= 3 ? 'success' : (c.level || 0) >= 2 ? 'info' : 'default'">{{ cardLevelLabel(c.level) }}</NTag>
@@ -808,8 +901,8 @@ async function removeFocus(p: Pomodoro) {
           <div class="gp-track"><div class="gp-bar" :style="{ width: goalProgress + '%' }"></div></div>
         </div>
         <ListSkeleton v-if="loading" :rows="4" />
-        <div v-else-if="filteredGoals.length" class="goal-list">
-          <div v-for="g in filteredGoals" :key="g.id" class="goal-row wb-card">
+        <div v-else-if="filteredGoals.length" class="goal-list" ref="goalListEl" tabindex="0" :aria-label="'学习目标列表，共 ' + filteredGoals.length + ' 行，↑↓ 选择、Enter 切换完成'">
+          <div v-for="g in filteredGoals" :key="g.id" class="goal-row wb-card" :data-row-id="g.id">
             <span :style="g.status === 'done' ? 'text-decoration: line-through; color: var(--wb-text-3)' : ''">{{ g.title }}</span>
             <span class="mono dim">{{ g.dueDate || '' }}</span>
             <span style="display: flex; gap: 4px">
@@ -849,11 +942,11 @@ async function removeFocus(p: Pomodoro) {
           </NButton>
         </div>
         <ListSkeleton v-if="loading" :rows="5" />
-        <div v-else-if="filteredFocus.length" class="pr-records">
+        <div v-else-if="filteredFocus.length" class="pr-records" ref="focusRecordsEl" tabindex="0" :aria-label="'专注明细列表，共 ' + Math.min(filteredFocus.length, focusLimit) + ' 行，↑↓ 选择、Enter 编辑'">
           <div class="pr-row head">
             <span>任务</span><span>时长</span><span>开始时间</span><span>状态</span><span>操作</span>
           </div>
-          <div v-for="p in filteredFocus.slice(0, focusLimit)" :key="p.id" class="pr-row">
+          <div v-for="p in filteredFocus.slice(0, focusLimit)" :key="p.id" class="pr-row" :data-row-id="p.id">
             <span>{{ p.task || '专注' }}</span>
             <span class="mono">{{ p.minutes }} 分钟</span>
             <span class="mono">{{ p.startedAt || '—' }}</span>
@@ -889,8 +982,8 @@ async function removeFocus(p: Pomodoro) {
           </NButton>
         </div>
         <ListSkeleton v-if="loading" :rows="5" />
-        <div v-else-if="filteredPitfalls.length" class="pitfall-list">
-          <div v-for="p in filteredPitfalls" :key="p.id" class="pitfall-row wb-card">
+        <div v-else-if="filteredPitfalls.length" class="pitfall-list" ref="pitfallListEl" tabindex="0" :aria-label="'错题列表，共 ' + filteredPitfalls.length + ' 行，↑↓ 选择'">
+          <div v-for="p in filteredPitfalls" :key="p.id" class="pitfall-row wb-card" :data-row-id="p.id">
             <div class="pf-head">
               <span class="pf-title">{{ p.title }}</span>
               <NTag v-if="p.category" size="tiny" :bordered="false">{{ p.category }}</NTag>
@@ -917,8 +1010,8 @@ async function removeFocus(p: Pomodoro) {
           </NButton>
         </div>
         <ListSkeleton v-if="loading" :rows="5" />
-        <div v-else-if="filteredReadQueue.length" class="read-list">
-          <div v-for="r in filteredReadQueue" :key="r.id" class="read-row wb-card">
+        <div v-else-if="filteredReadQueue.length" class="read-list" ref="readListEl" tabindex="0" :aria-label="'阅读队列列表，共 ' + filteredReadQueue.length + ' 行，↑↓ 选择、Enter 标记在读'">
+          <div v-for="r in filteredReadQueue" :key="r.id" class="read-row wb-card" :data-row-id="r.id">
             <div class="rd-info">
               <span class="rd-title">{{ r.title }}</span>
               <span class="dim">{{ r.author || '' }} {{ r.category ? '· ' + r.category : '' }}</span>
@@ -947,8 +1040,8 @@ async function removeFocus(p: Pomodoro) {
           </NButton>
         </div>
         <ListSkeleton v-if="loading" :rows="4" />
-        <div v-else-if="filteredFeynmanLogs.length" class="feynman-list">
-          <div v-for="f in filteredFeynmanLogs" :key="f.id" class="feynman-row wb-card">
+        <div v-else-if="filteredFeynmanLogs.length" class="feynman-list" ref="feynmanListEl" tabindex="0" :aria-label="'费曼记录列表，共 ' + filteredFeynmanLogs.length + ' 行，↑↓ 选择'">
+          <div v-for="f in filteredFeynmanLogs" :key="f.id" class="feynman-row wb-card" :data-row-id="f.id">
             <div class="pf-head">
               <span class="pf-title">{{ f.topic }}</span>
               <NTag size="tiny" :bordered="false" :type="f.status === 'done' ? 'success' : 'default'">{{ f.status === 'done' ? '已讲通' : '待复盘' }}</NTag>

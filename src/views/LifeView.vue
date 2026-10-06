@@ -7,8 +7,10 @@ import EmptyState from '@/components/EmptyState.vue'
 import ListSkeleton from '@/components/ListSkeleton.vue'
 import ModalForm, { type FieldDef } from '@/components/ModalForm.vue'
 import { useConfirm } from '@/composables/useConfirm'
+import { useListNav } from '@/composables/useListNav'
 import { habitsRepo, habitLogsRepo, ledgerRepo, pomodorosRepo, healthLogsRepo, fixedBillsRepo, deadlinesRepo, tasksRepo } from '@/db'
 import type { Habit, HabitLog, LedgerEntry, Pomodoro, HealthLog, FixedBill, Deadline, Task } from '../../drizzle/schema'
+import { matchKw } from '@/composables/match'
 
 const message = useMessage()
 const { confirm } = useConfirm()
@@ -26,6 +28,8 @@ const today = new Date()
 const todayStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`
 
 const loading = ref(false)
+// 当前激活的页签，供列表键盘导航判断「哪个列表此刻可见」（同 DevView 的 tab 用法）
+const tab = ref('habits')
 async function load() {
   loading.value = true
   try {
@@ -487,11 +491,6 @@ const pomoKw = ref('')
 const healthKw = ref('')
 const billKw = ref('')
 
-function matchKw(kw: string, ...vals: unknown[]): boolean {
-  const k = kw.trim().toLowerCase()
-  if (!k) return true
-  return vals.some((v) => String(v ?? '').toLowerCase().includes(k))
-}
 
 const filteredLedger = computed(() => recentLedger.value.filter((e) => matchKw(ledgerKw.value, e.category, e.note, e.type, e.date, e.amount)))
 const filteredPomoRecords = computed(() => pomoRecords.value.filter((p) => matchKw(pomoKw.value, p.task, p.startedAt, p.minutes)))
@@ -507,12 +506,89 @@ const remindItems = computed(() => {
   if (pending) items.push({ kind: '杂事', text: `还有 ${pending} 件杂事待办`, color: 'default' })
   return items
 })
+
+// ---- 列表键盘导航（↑↓ 选择 · Enter 执行行首操作 · Esc 取消高亮）----
+// 与 DevView 任务表同一套写法：容器 ref + rowSelector，高亮态由 main.css 的
+// [data-wb-cursor='true'] 统一提供，这里不碰样式。
+// 约定：Enter 只绑非破坏性操作；删除一律保留给按钮（二次确认），不接 Enter。
+
+// 习惯卡片：最高频操作是「今天打卡 / 取消打卡」
+const habitGridEl = ref<HTMLElement>()
+useListNav(habitGridEl, {
+  rowSelector: '.habit-card',
+  enabled: () => !loading.value && tab.value === 'habits',
+  onEnter: (el) => {
+    const id = Number(el.getAttribute('data-row-id'))
+    const row = habits.value.find((h) => h.id === id)
+    if (row) void toggleHabit(row)
+  },
+})
+
+// 记账明细：行级只有删除（需二次确认），因此只提供 ↑↓ 浏览，不绑 Enter
+const ledgerTableEl = ref<HTMLElement>()
+useListNav(ledgerTableEl, {
+  rowSelector: '.l-row:not(.head)',
+  enabled: () => !loading.value && tab.value === 'ledger',
+})
+
+// 专注记录：Enter 打开编辑弹窗（行内有编辑/删除两个按钮，取非破坏性的那个）
+const pomoRecordsEl = ref<HTMLElement>()
+useListNav(pomoRecordsEl, {
+  rowSelector: '.pr-row:not(.head)',
+  enabled: () => !loading.value && tab.value === 'pomo',
+  onEnter: (el) => {
+    const id = Number(el.getAttribute('data-row-id'))
+    const row = pomoRecords.value.find((p) => p.id === id)
+    if (row) openPomoEdit(row)
+  },
+})
+
+// 健康记录：只读表格，行级无操作，只提供 ↑↓ 浏览
+const healthTableEl = ref<HTMLElement>()
+useListNav(healthTableEl, {
+  rowSelector: '.ht-row:not(.head)',
+  enabled: () => !loading.value && tab.value === 'health',
+})
+
+// 固定账单：行级只有删除（需二次确认），只提供 ↑↓ 浏览
+const billTableEl = ref<HTMLElement>()
+useListNav(billTableEl, {
+  rowSelector: '.l-row:not(.head)',
+  enabled: () => !loading.value && tab.value === 'bills',
+})
+
+// 杂事清单：Enter 切换完成 / 待办
+// （注意：同一 Tab 的「30 天内到期」卡片里也有 .bc-row，两个结合各自容器 ref 分隔，互不干扰）
+const choreListEl = ref<HTMLElement>()
+useListNav(choreListEl, {
+  rowSelector: '.bc-row',
+  enabled: () => !loading.value && tab.value === 'board',
+  onEnter: (el) => {
+    const id = Number(el.getAttribute('data-row-id'))
+    const row = chores.value.find((t) => t.id === id)
+    if (row) void toggleChore(row)
+  },
+})
+
+// 生活看板「30 天内到期」：只读聚合列表，只提供 ↑↓ 浏览
+const dueListEl = ref<HTMLElement>()
+useListNav(dueListEl, {
+  rowSelector: '.bc-row',
+  enabled: () => !loading.value && tab.value === 'board',
+})
+
+// 倒计时牌：只读卡片网格，只提供 ↑↓ 浏览
+const countdownGridEl = ref<HTMLElement>()
+useListNav(countdownGridEl, {
+  rowSelector: '.cd-card',
+  enabled: () => !loading.value && tab.value === 'countdown',
+})
 </script>
 
 <template>
   <div>
 
-    <n-tabs type="line" class="wb-tabs">
+    <n-tabs v-model:value="tab" type="line" class="wb-tabs">
       <!-- 习惯打卡 -->
       <n-tab-pane name="habits" tab="习惯打卡">
         <div class="toolbar">
@@ -522,8 +598,8 @@ const remindItems = computed(() => {
           </NButton>
         </div>
         <ListSkeleton v-if="loading" :rows="3" />
-        <div v-else-if="habits.length" class="habit-grid">
-          <div v-for="h in habits" :key="h.id" class="habit-card wb-card">
+        <div v-else-if="habits.length" class="habit-grid" ref="habitGridEl" tabindex="0" :aria-label="'习惯列表，共 ' + habits.length + ' 行，↑↓ 选择、Enter 打卡/取消打卡'">
+          <div v-for="h in habits" :key="h.id" class="habit-card wb-card" :data-row-id="h.id">
             <div class="hc-top">
               <span class="hc-name" :style="{ color: h.color }">{{ h.name }}</span>
               <span class="mono streak">连续 {{ habitStreak(h.id) }} 天</span>
@@ -573,11 +649,11 @@ const remindItems = computed(() => {
           </NButton>
         </div>
         <ListSkeleton v-if="loading" :rows="5" />
-        <div v-else-if="filteredLedger.length" class="ledger-table">
+        <div v-else-if="filteredLedger.length" class="ledger-table" ref="ledgerTableEl" tabindex="0" :aria-label="'记账明细列表，共 ' + filteredLedger.length + ' 行，↑↓ 选择'">
           <div class="l-row head">
             <span>日期</span><span>类型</span><span>分类</span><span>金额</span><span>备注</span><span></span>
           </div>
-          <div v-for="e in filteredLedger" :key="e.id" class="l-row">
+          <div v-for="e in filteredLedger" :key="e.id" class="l-row" :data-row-id="e.id">
             <span class="mono">{{ e.date }}</span>
             <span><NTag size="tiny" :bordered="false" :type="e.type === 'income' ? 'success' : 'default'">{{ e.type === 'income' ? '收入' : '支出' }}</NTag></span>
             <span>{{ e.category }}</span>
@@ -629,11 +705,11 @@ const remindItems = computed(() => {
           </NButton>
         </div>
         <ListSkeleton v-if="loading" :rows="4" />
-        <div v-else-if="filteredPomoRecords.length" class="pomo-records">
+        <div v-else-if="filteredPomoRecords.length" class="pomo-records" ref="pomoRecordsEl" tabindex="0" :aria-label="'专注记录列表，共 ' + filteredPomoRecords.length + ' 行，↑↓ 选择、Enter 编辑'">
           <div class="pr-row head">
             <span>任务</span><span>时长</span><span>开始时间</span><span>状态</span><span>操作</span>
           </div>
-          <div v-for="p in filteredPomoRecords" :key="p.id" class="pr-row">
+          <div v-for="p in filteredPomoRecords" :key="p.id" class="pr-row" :data-row-id="p.id">
             <span>{{ p.task || '专注' }}</span>
             <span class="mono">{{ p.minutes }} 分钟</span>
             <span class="mono">{{ p.startedAt || '—' }}</span>
@@ -691,11 +767,11 @@ const remindItems = computed(() => {
           <NInput v-if="healthRecords.length" v-model:value="healthKw" size="small" placeholder="搜索健康记录（日期 / 备注）…" clearable class="toolbar-search" />
         </div>
         <ListSkeleton v-if="loading" :rows="5" />
-        <div v-else-if="filteredHealthRecords.length" class="health-table">
+        <div v-else-if="filteredHealthRecords.length" class="health-table" ref="healthTableEl" tabindex="0" :aria-label="'健康记录列表，共 ' + filteredHealthRecords.length + ' 行，↑↓ 选择'">
           <div class="ht-row head">
             <span>日期</span><span>睡眠</span><span>运动</span><span>心情</span><span>体重</span><span>备注</span>
           </div>
-          <div v-for="h in filteredHealthRecords" :key="h.id" class="ht-row">
+          <div v-for="h in filteredHealthRecords" :key="h.id" class="ht-row" :data-row-id="h.id">
             <span class="mono">{{ h.date }}</span>
             <span class="mono">{{ h.sleepHours ?? '—' }}</span>
             <span class="mono">{{ h.exerciseMin ?? '—' }}</span>
@@ -763,11 +839,11 @@ const remindItems = computed(() => {
           </div>
         </div>
         <ListSkeleton v-if="loading" :rows="4" />
-        <div v-else-if="filteredBills.length" class="ledger-table">
+        <div v-else-if="filteredBills.length" class="ledger-table" ref="billTableEl" tabindex="0" :aria-label="'固定账单列表，共 ' + filteredBills.length + ' 行，↑↓ 选择'">
           <div class="l-row head">
             <span>名称</span><span>分类</span><span>金额</span><span>周期</span><span>扣款日</span><span>状态</span><span></span>
           </div>
-          <div v-for="b in filteredBills" :key="b.id" class="l-row">
+          <div v-for="b in filteredBills" :key="b.id" class="l-row" :data-row-id="b.id">
             <span>{{ b.name }}</span>
             <span><NTag size="tiny" :bordered="false" :type="b.status === 'active' ? 'info' : 'default'">{{ b.category }}</NTag></span>
             <span class="mono">¥{{ b.amount.toFixed(2) }}</span>
@@ -794,8 +870,8 @@ const remindItems = computed(() => {
         <div class="board-grid">
           <div class="wb-card board-card">
             <header class="bc-head"><span>30 天内到期（F-LIFE-05）</span></header>
-            <div v-if="dueAggregated.length" class="bc-list">
-              <div v-for="d in dueAggregated.slice(0, 10)" :key="d.id" class="bc-row">
+            <div v-if="dueAggregated.length" class="bc-list" ref="dueListEl" tabindex="0" :aria-label="'到期事项列表，共 ' + dueAggregated.slice(0, 10).length + ' 行，↑↓ 选择'">
+              <div v-for="d in dueAggregated.slice(0, 10)" :key="d.id" class="bc-row" :data-row-id="d.id">
                 <NTag size="tiny" :bordered="false" :type="d.days <= 3 ? 'error' : d.days <= 7 ? 'warning' : 'info'">{{ d.days }} 天</NTag>
                 <span>{{ d.title }}</span>
               </div>
@@ -806,8 +882,8 @@ const remindItems = computed(() => {
             <header class="bc-head"><span>杂事清单（F-LIFE-07）</span>
               <NButton size="tiny" type="primary" ghost @click="choreFormShow = true"><template #icon><NIcon :component="Plus" /></template>添加</NButton>
             </header>
-            <div v-if="chores.length" class="bc-list">
-              <div v-for="t in chores" :key="t.id" class="bc-row" style="justify-content: space-between">
+            <div v-if="chores.length" class="bc-list" ref="choreListEl" tabindex="0" :aria-label="'杂事清单，共 ' + chores.length + ' 行，↑↓ 选择、Enter 切换完成'">
+              <div v-for="t in chores" :key="t.id" class="bc-row" style="justify-content: space-between" :data-row-id="t.id">
                 <span :style="t.status === 'done' ? 'text-decoration: line-through; color: var(--wb-text-3)' : ''">
                   <NTag size="tiny" :bordered="false" :type="t.status === 'done' ? 'success' : 'default'" style="margin-right: 6px">{{ t.status === 'done' ? '完成' : '待办' }}</NTag>
                   {{ t.title }}
@@ -839,8 +915,8 @@ const remindItems = computed(() => {
 
       <!-- 倒计时牌 F-LIFE-06 -->
       <n-tab-pane name="countdown" tab="倒计时牌">
-        <div v-if="countdownList.length" class="cd-grid">
-          <div v-for="c in countdownList" :key="c.id" class="cd-card wb-card">
+        <div v-if="countdownList.length" class="cd-grid" ref="countdownGridEl" tabindex="0" :aria-label="'倒计时列表，共 ' + countdownList.length + ' 行，↑↓ 选择'">
+          <div v-for="c in countdownList" :key="c.id" class="cd-card wb-card" :data-row-id="c.id">
             <div class="cd-days" :style="{ color: cdColor(c.days) }">{{ c.days >= 0 ? c.days + ' 天' : '已超 ' + Math.abs(c.days) + ' 天' }}</div>
             <div class="cd-title">{{ c.title }}</div>
             <div class="cd-sub dim mono">{{ c.dueDate }}</div>

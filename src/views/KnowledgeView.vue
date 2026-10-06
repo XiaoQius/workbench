@@ -11,9 +11,12 @@ import type { Pitfall, Resource, Decision, SkillNode, LearningPath, ThreeDProjec
 import { scanAssets, type AssetInfo } from '@/composables/useTauri'
 import { useConfirm } from '@/composables/useConfirm'
 import { pitfallFields, decisionFields, pathFields, threeDFields, portfolioFields } from './knowledge/formSchemas'
+import { useListNav } from '@/composables/useListNav'
 
 const message = useMessage()
 const { confirm } = useConfirm()
+// 当前 Tab（n-tabs 受控后供键盘导航做启用判定）
+const tab = ref('pitfalls')
 const pitfalls = ref<Pitfall[]>([])
 const links = ref<Resource[]>([])
 const pitfallFormShow = ref(false)
@@ -117,6 +120,111 @@ const assetGroups = computed(() => {
     if (items.length) groups.push({ category: c, items })
   }
   return groups
+})
+
+// ---- 列表键盘导航（↑↓ 选择 · Enter 执行行内最高频操作 · Esc 取消高亮）----
+// 一律不绑定删除：删除必须二次确认（useConfirm），键盘误触代价太大。
+
+// 踩坑库：Enter 复制「问题 + 解决」全文，这是踩坑记录最常复用的动作
+const pitfallListEl = ref<HTMLElement>()
+useListNav(pitfallListEl, {
+  rowSelector: '.pitfall-card',
+  enabled: () => !loading.value && tab.value === 'pitfalls',
+  onEnter: (el) => {
+    const id = Number(el.getAttribute('data-row-id'))
+    const row = filteredPitfalls.value.find((p) => p.id === id)
+    if (!row) return
+    void navigator.clipboard
+      .writeText([row.title, row.problem, row.solution].filter(Boolean).join('\n'))
+      .then(() => message.success(`已复制：「${row.title}」`))
+      .catch(() => message.error('复制失败'))
+  },
+})
+
+// 学习资源：Enter 在浏览器打开该链接（行本身点击也是打开）
+const linkListEl = ref<HTMLElement>()
+useListNav(linkListEl, {
+  rowSelector: '.link-item',
+  enabled: () => !loading.value && tab.value === 'links',
+  onEnter: (el) => {
+    const id = Number(el.getAttribute('data-row-id'))
+    const row = links.value.find((l) => l.id === id)
+    if (row) openLink(row)
+  },
+})
+
+// 素材索引：无安全的高频动作（打开/复制路径都要新增逻辑），仅提供 ↑↓ 导航
+const assetSectionEl = ref<HTMLElement>()
+useListNav(assetSectionEl, {
+  rowSelector: '.asset-item',
+  enabled: () => !assetLoading.value && tab.value === 'assets',
+})
+
+// 复习计划：Enter 标记已复习（该行唯一的操作按钮）
+const reviewListEl = ref<HTMLElement>()
+useListNav(reviewListEl, {
+  rowSelector: '.review-item',
+  enabled: () => !loading.value && tab.value === 'review',
+  onEnter: (el) => {
+    const raw = el.getAttribute('data-row-id') || ''
+    const [kind, idStr] = raw.split(':')
+    const id = Number(idStr)
+    const row = reviewItems.value.find((r) => r.kind === kind && r.id === id)
+    if (row) markReviewed(row.kind, row.id)
+  },
+})
+
+// 决策日志：Enter 复制决策全文（标题 + 背景 + 结论），便于粘到 ADR / 讨论里
+const decisionListEl = ref<HTMLElement>()
+useListNav(decisionListEl, {
+  rowSelector: '.link-item',
+  enabled: () => !loading.value && tab.value === 'decisions',
+  onEnter: (el) => {
+    const id = Number(el.getAttribute('data-row-id'))
+    const row = decisions.value.find((d) => d.id === id)
+    if (!row) return
+    void navigator.clipboard
+      .writeText([row.title, row.context, row.decision].filter(Boolean).join('\n'))
+      .then(() => message.success('决策内容已复制'))
+      .catch(() => message.error('复制失败'))
+  },
+})
+
+// 学习路径：Enter 推进状态（todo → doing → done → 重置），与行内按钮一致
+const pathListEl = ref<HTMLElement>()
+useListNav(pathListEl, {
+  rowSelector: '.review-item',
+  enabled: () => !loading.value && tab.value === 'paths',
+  onEnter: (el) => {
+    const id = Number(el.getAttribute('data-row-id'))
+    const row = paths.value.find((p) => p.id === id)
+    if (row) void togglePathStatus(row)
+  },
+})
+
+// 创作台账 3D 项目 / 作品集 / 内容日历：都没有非破坏性的行内操作
+// （唯一的按钮是删除），因此只做 ↑↓ 导航，不提供 Enter。
+const threeDListEl = ref<HTMLElement>()
+useListNav(threeDListEl, {
+  rowSelector: '.review-item',
+  enabled: () => !loading.value && tab.value === 'creation',
+})
+const portfolioListEl = ref<HTMLElement>()
+useListNav(portfolioListEl, {
+  rowSelector: '.review-item',
+  enabled: () => !loading.value && tab.value === 'creation',
+})
+const contentListEl = ref<HTMLElement>()
+useListNav(contentListEl, {
+  rowSelector: '.review-item',
+  enabled: () => !loading.value && tab.value === 'creation',
+})
+
+// 关联图：关联条目没有任何行内操作，仅 ↑↓ 导航
+const graphLinkListEl = ref<HTMLElement>()
+useListNav(graphLinkListEl, {
+  rowSelector: '.link-item',
+  enabled: () => !loading.value && tab.value === 'graph',
 })
 
 const loading = ref(false)
@@ -486,7 +594,7 @@ async function shareSnapshot() {
 <template>
   <div>
 
-    <n-tabs type="line" class="wb-tabs">
+    <n-tabs v-model:value="tab" type="line" class="wb-tabs">
       <!-- 踩坑库 -->
       <n-tab-pane name="pitfalls" tab="踩坑库">
         <div class="toolbar">
@@ -497,8 +605,8 @@ async function shareSnapshot() {
           </NButton>
         </div>
         <ListSkeleton v-if="loading" :rows="5" />
-        <div v-else-if="filteredPitfalls.length" class="pitfall-list">
-          <div v-for="p in filteredPitfalls" :key="p.id" class="pitfall-card wb-card">
+        <div v-else-if="filteredPitfalls.length" class="pitfall-list" ref="pitfallListEl" tabindex="0" :aria-label="'踩坑记录列表，共 ' + filteredPitfalls.length + ' 行，↑↓ 选择、Enter 复制内容'">
+          <div v-for="p in filteredPitfalls" :key="p.id" class="pitfall-card wb-card" :data-row-id="p.id">
             <div class="pc-head">
               <span class="pc-title"><NIcon :component="AlertTriangle" style="color: var(--wb-warning); margin-right: 7px" />{{ p.title }}</span>
               <NTag size="tiny" :bordered="false" type="warning">{{ p.category }}</NTag>
@@ -528,8 +636,8 @@ async function shareSnapshot() {
           </NButton>
         </div>
         <ListSkeleton v-if="loading" :rows="5" />
-        <div v-else-if="links.length" class="link-list">
-          <div v-for="l in links" :key="l.id" class="link-item wb-card hoverable" @click="openLink(l)">
+        <div v-else-if="links.length" class="link-list" ref="linkListEl" tabindex="0" :aria-label="'学习资源列表，共 ' + links.length + ' 行，↑↓ 选择、Enter 打开链接'">
+          <div v-for="l in links" :key="l.id" class="link-item wb-card hoverable" :data-row-id="l.id" @click="openLink(l)">
             <div class="link-main">
               <span class="link-title">{{ l.title }}</span>
               <span class="mono link-url">{{ l.url }}</span>
@@ -557,14 +665,14 @@ async function shareSnapshot() {
             扫描
           </NButton>
         </div>
-        <div v-if="assetGroups.length" class="asset-section">
+        <div v-if="assetGroups.length" class="asset-section" ref="assetSectionEl" tabindex="0" aria-label="素材索引列表，↑↓ 选择">
           <section v-for="g in assetGroups" :key="g.category" class="asset-group">
             <header class="ag-head">
               <span class="ag-title">{{ CATEGORY_LABEL[g.category] }}</span>
               <span class="mono ag-count">{{ g.items.length }}</span>
             </header>
             <div class="asset-list">
-              <div v-for="(a, i) in g.items.slice(0, 24)" :key="`${a.path}-${i}`" class="asset-item wb-card">
+              <div v-for="(a, i) in g.items.slice(0, 24)" :key="`${a.path}-${i}`" class="asset-item wb-card" :data-row-id="a.path">
                 <div class="ai-head">
                   <span class="ai-name">{{ a.name }}</span>
                   <NTag size="tiny" :bordered="false" :type="categoryColor(a.category)">{{ a.ext }}</NTag>
@@ -587,8 +695,8 @@ async function shareSnapshot() {
           <span>间隔复习：1 → 3 → 7 → 14 → 30 天逐步巩固，到期条目自动出现在这里</span>
         </div>
         <ListSkeleton v-if="loading" :rows="4" />
-        <div v-else-if="reviewItems.length" class="review-list">
-          <div v-for="r in reviewItems" :key="`${r.kind}-${r.id}`" class="review-item wb-card">
+        <div v-else-if="reviewItems.length" class="review-list" ref="reviewListEl" tabindex="0" :aria-label="'到期复习列表，共 ' + reviewItems.length + ' 行，↑↓ 选择、Enter 标记已复习'">
+          <div v-for="r in reviewItems" :key="`${r.kind}-${r.id}`" class="review-item wb-card" :data-row-id="`${r.kind}:${r.id}`">
             <div class="rv-main">
               <div class="rv-title">
                 <NTag size="tiny" :bordered="false" :type="r.kind === 'pitfall' ? 'error' : 'info'" style="margin-right: 8px">
@@ -618,8 +726,8 @@ async function shareSnapshot() {
           </NButton>
         </div>
         <ListSkeleton v-if="loading" :rows="4" />
-        <div v-else-if="decisions.length" class="link-list">
-          <div v-for="d in decisions" :key="d.id" class="link-item wb-card">
+        <div v-else-if="decisions.length" class="link-list" ref="decisionListEl" tabindex="0" :aria-label="'决策记录列表，共 ' + decisions.length + ' 行，↑↓ 选择、Enter 复制内容'">
+          <div v-for="d in decisions" :key="d.id" class="link-item wb-card" :data-row-id="d.id">
             <div class="link-main">
               <span class="link-title">{{ d.title }}</span>
               <span v-if="d.context" class="mono link-url">背景：{{ d.context }}</span>
@@ -658,8 +766,8 @@ async function shareSnapshot() {
           </NButton>
         </div>
         <ListSkeleton v-if="loading" :rows="4" />
-        <div v-else-if="paths.length" class="review-list">
-          <div v-for="p in [...paths].sort((a, b) => (a.orderIndex || 0) - (b.orderIndex || 0))" :key="p.id" class="review-item wb-card">
+        <div v-else-if="paths.length" class="review-list" ref="pathListEl" tabindex="0" :aria-label="'学习路径列表，共 ' + paths.length + ' 行，↑↓ 选择、Enter 推进状态'">
+          <div v-for="p in [...paths].sort((a, b) => (a.orderIndex || 0) - (b.orderIndex || 0))" :key="p.id" class="review-item wb-card" :data-row-id="p.id">
             <div class="rv-main">
               <div class="rv-title">
                 <NTag size="tiny" :bordered="false" :type="p.status === 'done' ? 'success' : p.status === 'doing' ? 'info' : 'default'" style="margin-right: 8px">
@@ -690,8 +798,8 @@ async function shareSnapshot() {
             <NButton size="tiny" type="primary" ghost @click="threeDFormShow = true"><template #icon><NIcon :component="Plus" /></template>新增</NButton>
           </header>
           <ListSkeleton v-if="loading" :rows="3" />
-          <div v-else-if="threeD.length" class="review-list">
-            <div v-for="t in threeD" :key="t.id" class="review-item wb-card">
+          <div v-else-if="threeD.length" class="review-list" ref="threeDListEl" tabindex="0" :aria-label="'3D 项目列表，共 ' + threeD.length + ' 行，↑↓ 选择'">
+            <div v-for="t in threeD" :key="t.id" class="review-item wb-card" :data-row-id="t.id">
               <div class="rv-main">
                 <div class="rv-title">{{ t.name }}
                   <NTag size="tiny" :bordered="false" style="margin-left: 8px">{{ t.tool }}</NTag>
@@ -709,8 +817,8 @@ async function shareSnapshot() {
             <NButton size="tiny" type="primary" ghost @click="portfolioFormShow = true"><template #icon><NIcon :component="Plus" /></template>新增</NButton>
           </header>
           <ListSkeleton v-if="loading" :rows="3" />
-          <div v-else-if="portfolios.length" class="review-list">
-            <div v-for="p in portfolios" :key="p.id" class="review-item wb-card">
+          <div v-else-if="portfolios.length" class="review-list" ref="portfolioListEl" tabindex="0" :aria-label="'作品集列表，共 ' + portfolios.length + ' 行，↑↓ 选择'">
+            <div v-for="p in portfolios" :key="p.id" class="review-item wb-card" :data-row-id="p.id">
               <div class="rv-main">
                 <div class="rv-title">{{ p.title }}
                   <NTag size="tiny" :bordered="false" style="margin-left: 8px">{{ p.category }}</NTag>
@@ -727,8 +835,8 @@ async function shareSnapshot() {
             <NButton size="tiny" type="primary" ghost @click="contentFormShow = true"><template #icon><NIcon :component="Plus" /></template>新增</NButton>
           </header>
           <ListSkeleton v-if="loading" :rows="3" />
-          <div v-else-if="contentCal.length" class="review-list">
-            <div v-for="c in [...contentCal].sort((a, b) => (a.plannedAt || '').localeCompare(b.plannedAt || ''))" :key="c.id" class="review-item wb-card">
+          <div v-else-if="contentCal.length" class="review-list" ref="contentListEl" tabindex="0" :aria-label="'内容日历列表，共 ' + contentCal.length + ' 行，↑↓ 选择'">
+            <div v-for="c in [...contentCal].sort((a, b) => (a.plannedAt || '').localeCompare(b.plannedAt || ''))" :key="c.id" class="review-item wb-card" :data-row-id="c.id">
               <div class="rv-main">
                 <div class="rv-title">{{ c.title }}
                   <NTag size="tiny" :bordered="false" style="margin-left: 8px">{{ c.platform }}</NTag>
@@ -748,8 +856,8 @@ async function shareSnapshot() {
           <span class="review-head" style="margin: 0">实体双向链接：踩坑 / 资源 / 决策 / 技能 自动成图，用 links 表维护关联</span>
         </div>
         <div class="graph-wrap wb-card" v-html="graphHtml"></div>
-        <div v-if="allLinks.length" class="link-list" style="margin-top: 12px">
-          <div v-for="(l, i) in allLinks.slice(0, 20)" :key="i" class="link-item wb-card">
+        <div v-if="allLinks.length" class="link-list" style="margin-top: 12px" ref="graphLinkListEl" tabindex="0" :aria-label="'实体关联列表，共 ' + allLinks.length + ' 行，↑↓ 选择'">
+          <div v-for="(l, i) in allLinks.slice(0, 20)" :key="i" class="link-item wb-card" :data-row-id="l.id">
             <span class="mono" style="font-size: 11px">{{ l.fromType }}#{{ l.fromId }} → {{ l.toType }}#{{ l.toId }}<span v-if="l.label">（{{ l.label }}）</span></span>
           </div>
         </div>

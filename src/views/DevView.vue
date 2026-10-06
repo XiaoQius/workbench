@@ -12,6 +12,7 @@ import type { Project, Task, Snippet, Deployment, EnvVar, TechDebt, CmdSnippet }
 import { scanProjects, gitStatus, openPath, gitLog, codeStats, envList, repoHealth, depsCheck, type ProjectInfo, type GitStatus, type GitCommitInfo, type LangStat, type RepoHealth, type DepCheckItem } from '@/composables/useTauri'
 import { useConfirm } from '@/composables/useConfirm'
 import { useListNav } from '@/composables/useListNav'
+import { matchKw } from '@/composables/match'
 
 const message = useMessage()
 const { confirm } = useConfirm()
@@ -525,11 +526,6 @@ const envKw = ref('')
 const debtKw = ref('')
 const cmdKw = ref('')
 
-function matchKw(kw: string, ...vals: unknown[]): boolean {
-  const k = kw.trim().toLowerCase()
-  if (!k) return true
-  return vals.some((v) => String(v ?? '').toLowerCase().includes(k))
-}
 
 const filteredTasks = computed(() => tasks.value.filter((t) => matchKw(taskKw.value, t.title, t.type, t.priority, t.status, t.scope, t.note)))
 const filteredSnippets = computed(() => snippets.value.filter((s) => matchKw(snippetKw.value, s.title, s.language, s.description, s.tags, s.code)))
