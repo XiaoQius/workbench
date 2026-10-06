@@ -15,6 +15,7 @@ import CommandPalette from './CommandPalette.vue'
 import SettingsPanel from '@/components/SettingsPanel.vue'
 import { refreshTick, settingsOpen, settingsTab, requestRefresh } from '@/stores/ui'
 import { onSyncStatus, type SyncStatus } from '@/db/sync'
+import { appUndo } from '@/composables/useUndo'
 
 const route = useRoute()
 const themeStore = useThemeStore()
@@ -146,6 +147,22 @@ function openSyncPanel() {
 onMounted(() => {
   refreshSysStatus()
 })
+
+// ---- 撤销提示条：只做删除撤销，状态取 useUndo 的模块级单例 ----
+const { pending, undo: undoPending, dismiss } = appUndo
+const undoing = ref(false)
+async function runUndo() {
+  if (undoing.value) return
+  undoing.value = true
+  try {
+    // 失败只提示，不静默：用户点了撤销就得知道没恢复成功
+    const ok = await undoPending()
+    if (!ok) message.error('撤销失败：数据已被改动')
+    else requestRefresh()
+  } finally {
+    undoing.value = false
+  }
+}
 </script>
 
 <template>
@@ -267,6 +284,15 @@ onMounted(() => {
         <router-view />
       </main>
     </div>
+
+    <!-- 撤销提示条：底部居中偏上悬浮，不占文档流、不挡列表内容 -->
+    <Transition name="undo-pop">
+      <div v-if="pending" class="undo-bar" role="status" aria-live="polite">
+        <span class="undo-label">{{ pending.label }}</span>
+        <NButton size="tiny" type="primary" ghost :loading="undoing" @click="runUndo()">撤销</NButton>
+        <button class="undo-close" title="关闭" @click="dismiss()">×</button>
+      </div>
+    </Transition>
 
     <CommandPalette />
     <SettingsPanel v-model:show="settingsOpen" :initial-tab="settingsTab" />
@@ -543,6 +569,63 @@ img.user-avatar {
 }
 @keyframes wb-spin {
   to { transform: rotate(360deg); }
+}
+
+/* 撤销提示条：底部居中偏上；悬浮层不参与布局，滚动时始终可见 */
+.undo-bar {
+  position: fixed;
+  left: 50%;
+  bottom: 42px;
+  transform: translateX(-50%);
+  z-index: 40;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  max-width: min(520px, calc(100vw - 32px));
+  padding: 8px 10px 8px 14px;
+  border: var(--wb-border-w) solid var(--wb-border);
+  border-radius: var(--wb-radius-lg);
+  background: var(--wb-card);
+  box-shadow: var(--wb-shadow-hover);
+}
+.undo-label {
+  font-size: var(--wb-fs-md);
+  color: var(--wb-text-2);
+  /* 文案过长时先压缩中间，避免提示条横向铺满屏幕 */
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.undo-close {
+  flex: none;
+  width: 20px;
+  height: 20px;
+  border: none;
+  border-radius: var(--wb-radius-sm);
+  background: transparent;
+  color: var(--wb-text-3);
+  font-size: 15px;
+  line-height: 1;
+  cursor: pointer;
+}
+.undo-close:hover {
+  background: var(--wb-card-alt);
+  color: var(--wb-text-1);
+}
+/* 出入场：位移 + 淡入，幅度做小，别抢注意力 */
+.undo-pop-enter-active,
+.undo-pop-leave-active {
+  transition: opacity 160ms ease-out, transform 160ms ease-out;
+}
+.undo-pop-enter-from,
+.undo-pop-leave-to {
+  opacity: 0;
+  transform: translateX(-50%) translateY(8px);
+}
+/* 减弱动效偏好下直接切换显示，不做位移 */
+:global(.wb-reduced-motion) .undo-pop-enter-active,
+:global(.wb-reduced-motion) .undo-pop-leave-active {
+  transition: none;
 }
 
 /* ============================================================

@@ -7,6 +7,23 @@
    ============================================================ */
 
 :root {
+  /* ============================================================
+     响应式断点（统一尺度）
+     ------------------------------------------------------------
+     此前各视图自己写 640 / 900 / 960 / 1000 / 1100，同一语义的断点
+     散落在不同数值上，改一处漏一处。这里统一成三级：
+       --wb-bp-sm 640  手机 / 极窄窗口
+       --wb-bp-md 900  窄窗口（侧栏折叠、多列降两列）
+       --wb-bp-lg 1100 常规笔记本（网格开始降列）
+       --wb-bp-xl 1600 宽屏（内容放宽、不无限拉伸）
+     CSS 原生 media query 不能直接用 var()，所以这里只是「文档 + 数值
+     对照」，实际写法仍用字面量；新增断点时照这张表选，不要自造数值。
+     ============================================================ */
+  --wb-bp-sm: 640px;
+  --wb-bp-md: 900px;
+  --wb-bp-lg: 1100px;
+  --wb-bp-xl: 1600px;
+
   --wb-bg: #fafaf9;
   --wb-card: #ffffff;
   --wb-card-alt: #f4f4f5;
@@ -467,6 +484,69 @@ button::-moz-focus-inner {
   .wb-grid-4 {
     grid-template-columns: minmax(0, 1fr);
   }
+}
+
+/* ============================================================
+   表格自适应：窄屏下宽表不该把整页撑出横向滚动条
+   ------------------------------------------------------------
+   项目里几十张表都是 `grid-template-columns` 写死的多列布局，
+   窗口一窄就溢出。逐个表改断点成本高且容易漏，这里给一个通用
+   兜底：给表格容器加 .wb-table-responsive，窄屏时让它在自己
+   内部横向滚动，页面其余部分保持不动。
+   ============================================================ */
+.wb-table-responsive {
+  max-width: 100%;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+/* 表头与表体同步滚动：两者都是 grid，靠 min-width 把列宽锁成一致 */
+.wb-table-responsive > .head,
+.wb-table-responsive > [class$='-row'] {
+  min-width: max-content;
+}
+/* 窄屏下滚动条常驻可见，提示还能横向滑 */
+@media (max-width: 900px) {
+  .wb-table-responsive {
+    scrollbar-width: thin;
+  }
+}
+
+/* ============================================================
+   排版：长文本不撑破布局
+   ------------------------------------------------------------
+   grid 列的 1fr 最小值是 auto（= 内容宽度），一个长 URL 或不带空格的
+   长串就能把整张表撑出横向滚动条。1fr 一律写成 minmax(0, 1fr)，
+   再配合这里的截断工具类，长内容才会优雅省略。
+   ============================================================ */
+.wb-min-0 { min-width: 0; }
+.wb-truncate-2 {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.wb-truncate-3 {
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+/* 表格里的单元格：默认单行截断，hover 显示完整内容（靠 title 属性） */
+.wb-cell-ellipsis {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+/* 等宽数字（金额 / 日期 / 计数）：不让数字跳动 */
+.wb-num {
+  font-variant-numeric: tabular-nums;
+}
+/* 滚动容器统一细滚动条，避免各视图风格不一 */
+.wb-scroll-y {
+  overflow-y: auto;
+  scrollbar-width: thin;
+  overscroll-behavior: contain;
 }
 
 /* 强调色左条（模块标题用） */

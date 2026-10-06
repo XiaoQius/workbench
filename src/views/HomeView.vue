@@ -902,10 +902,10 @@ async function saveInspiration() {
 /* ---- 快速条 ---- */
 .quick-strip {
   display: grid;
-  grid-template-columns: 1fr 300px;
+  grid-template-columns: minmax(0, 1fr) 300px;
   gap: var(--wb-sp-3);
 }
-@media (max-width: 960px) { .quick-strip { grid-template-columns: 1fr; } }
+@media (max-width: 960px) { .quick-strip { grid-template-columns: minmax(0, 1fr); } }
 .qs-search { position: relative; }
 .qs-results {
   position: absolute;
@@ -945,11 +945,11 @@ async function saveInspiration() {
 /* ---- 第一屏 ---- */
 .top-grid {
   display: grid;
-  grid-template-columns: 1.15fr 1fr;
+  grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr);
   gap: var(--wb-sp-3);
   align-items: stretch;
 }
-@media (max-width: 1100px) { .top-grid { grid-template-columns: 1fr; } }
+@media (max-width: 1100px) { .top-grid { grid-template-columns: minmax(0, 1fr); } }
 .top-left { display: flex; flex-direction: column; gap: var(--wb-sp-3); min-width: 0; }
 .top-right { display: flex; flex-direction: column; gap: var(--wb-sp-3); min-width: 0; }
 
@@ -1111,11 +1111,11 @@ async function saveInspiration() {
 /* ---- 进度卡 ---- */
 .prog-grid {
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: var(--wb-sp-3);
 }
-@media (max-width: 1100px) { .prog-grid { grid-template-columns: repeat(2, 1fr); } }
-@media (max-width: 640px) { .prog-grid { grid-template-columns: 1fr; } }
+@media (max-width: 1100px) { .prog-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 640px) { .prog-grid { grid-template-columns: minmax(0, 1fr); } }
 .prog-card { position: relative; padding: 12px 14px; display: flex; flex-direction: column; gap: 3px; }
 /* 小卡片（进度卡）的按钮组：三个按钮放进同一个横向容器、整体绝对定位在右上角。
    此前 .prog-card 是 flex-column，↑ 被 margin-left:225px 推到右上角，与绝对定位的
@@ -1146,10 +1146,10 @@ async function saveInspiration() {
 /* ---- 趋势 ---- */
 .trend-grid {
   display: grid;
-  grid-template-columns: 1.5fr 1fr;
+  grid-template-columns: minmax(0, 1.5fr) minmax(0, 1fr);
   gap: var(--wb-sp-3);
 }
-@media (max-width: 1100px) { .trend-grid { grid-template-columns: 1fr; } }
+@media (max-width: 1100px) { .trend-grid { grid-template-columns: minmax(0, 1fr); } }
 .chart-body { position: relative; padding: 12px 14px; }
 .chart { width: 100%; height: 88px; display: block; }
 .chart.spark { height: 56px; }
