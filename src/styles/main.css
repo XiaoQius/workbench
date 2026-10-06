@@ -370,6 +370,20 @@ body {
    键盘焦点环：原先只有 naive-ui 组件有焦点样式，自绘的行 / 卡片 /
     button 在 Tab 导航时完全无可见反馈，键盘用户无法定位。
    ============================================================ */
+/* ============================================================
+   列表键盘导航高亮（useListNav 写入 data-wb-cursor="true"）
+   与 hover 态区分：hover 用底色，键盘游标用左侧强调条 + 底色，
+   这样鼠标与键盘两套指针同时存在时不互相掩盖。
+   ============================================================ */
+[data-wb-cursor='true'] {
+  background: color-mix(in srgb, var(--wb-accent) 10%, var(--wb-card-alt));
+  box-shadow: inset 2px 0 0 0 var(--wb-accent);
+}
+
+/* ============================================================
+   键盘焦点环：原先只有 naive-ui 组件有焦点样式，自绘的行 / 卡片 /
+    button 在 Tab 导航时完全无可见反馈，键盘用户无法定位。
+   ============================================================ */
 .clickable:focus-visible,
 .wb-card:focus-visible,
 button:focus-visible,
@@ -549,3 +563,4 @@ button::-moz-focus-inner {
   gap: 12px;
   color: var(--wb-text-2);
 }
+.clickable:focus-visible,

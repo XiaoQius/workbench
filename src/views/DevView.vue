@@ -11,6 +11,7 @@ import { projectsRepo, tasksRepo, snippetsRepo, deploymentsRepo, envVarsRepo, te
 import type { Project, Task, Snippet, Deployment, EnvVar, TechDebt, CmdSnippet } from '../../drizzle/schema'
 import { scanProjects, gitStatus, openPath, gitLog, codeStats, envList, repoHealth, depsCheck, type ProjectInfo, type GitStatus, type GitCommitInfo, type LangStat, type RepoHealth, type DepCheckItem } from '@/composables/useTauri'
 import { useConfirm } from '@/composables/useConfirm'
+import { useListNav } from '@/composables/useListNav'
 
 const message = useMessage()
 const { confirm } = useConfirm()
@@ -251,6 +252,20 @@ async function toggleFocus(t: Task) {
     t.focusDate = newFocus
   } catch { message.error('更新失败') }
 }
+
+// ---- 任务列表键盘导航（↑↓ 选择 · Enter 切换聚焦 · Esc 取消高亮）----
+// 任务行最高频的操作是「今天要不要做」，所以 Enter 绑定到聚焦切换，
+// 而不是弹编辑框（后者会打断批量浏览的节奏）。
+const taskTableEl = ref<HTMLElement>()
+useListNav(taskTableEl, {
+  rowSelector: '.task-row:not(.head)',
+  enabled: () => !loading.value && tab.value === 'tasks',
+  onEnter: (el) => {
+    const id = Number(el.getAttribute('data-row-id'))
+    const row = tasks.value.find((t) => t.id === id)
+    if (row) void toggleFocus(row)
+  },
+})
 
 // ---- 片段 ----
 const snippetFields: FieldDef[] = [
@@ -592,11 +607,11 @@ const boardColumns = computed(() => [
           <span class="dim" style="font-size: 12px">估时校准：近 {{ estCalib.count }} 个已完成任务平均周期约 {{ estCalib.avgHours.toFixed(1) }} 小时/个（按 createdAt→updatedAt 推算）</span>
         </div>
         <ListSkeleton v-if="loading" :rows="6" />
-        <div v-else-if="filteredTasks.length" class="task-table">
+        <div v-else-if="filteredTasks.length" class="task-table" ref="taskTableEl" tabindex="0" :aria-label="'任务列表，共 ' + filteredTasks.length + ' 行，↑↓ 选择、Enter 切换聚焦'">
           <div class="task-row head">
             <span>标题</span><span>领域</span><span>优先级</span><span>截止</span><span>状态</span><span>操作</span>
           </div>
-          <div v-for="t in filteredTasks" :key="t.id" class="task-row">
+          <div v-for="t in filteredTasks" :key="t.id" class="task-row" :data-row-id="t.id">
             <span class="tt">
               <span v-if="t.focusDate" class="focus-star">★</span>
               {{ t.title }}
