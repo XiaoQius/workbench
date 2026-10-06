@@ -71,22 +71,39 @@ function restoreAlerts() {
   dismissedAlerts.value = []
   try { localStorage.removeItem(ALERT_DISMISS_KEY) } catch { /* 忽略 */ }
 }
-interface ExpireItem { key: string; label: string; kind: string; days: number; tab: string }
+interface ExpireItem {
+  key: string
+  label: string
+  kind: string
+  days: number
+  tab: string
+  /** 真正清掉这条告警要改哪张表、哪一行、哪一列 */
+  source: { table: 'servers' | 'domains'; id: number; column: 'expireDate' | 'sslExpireDate' }
+}
 const expireItems = computed<ExpireItem[]>(() => {
   const out: ExpireItem[] = []
   for (const s of servers.value) {
     const sd = dayDiff(s.expireDate)
     if (sd === null || sd > 30) continue
-    out.push({ key: `server:${s.id}`, label: s.name, kind: '服务器续费', days: sd, tab: 'servers' })
+    out.push({
+      key: `server:${s.id}`, label: s.name, kind: '服务器续费', days: sd, tab: 'servers',
+      source: { table: 'servers', id: s.id, column: 'expireDate' },
+    })
   }
   for (const d of domains.value) {
     const dd = dayDiff(d.expireDate)
     if (dd !== null && dd <= 30) {
-      out.push({ key: `domain:${d.name}`, label: d.name, kind: '域名到期', days: dd, tab: 'domains' })
+      out.push({
+        key: `domain:${d.name}`, label: d.name, kind: '域名到期', days: dd, tab: 'domains',
+        source: { table: 'domains', id: d.id, column: 'expireDate' },
+      })
     }
     const ssl = dayDiff(d.sslExpireDate)
     if (ssl !== null && ssl <= 30) {
-      out.push({ key: `ssl:${d.name}`, label: d.name, kind: 'SSL 证书', days: ssl, tab: 'domains' })
+      out.push({
+        key: `ssl:${d.name}`, label: d.name, kind: 'SSL 证书', days: ssl, tab: 'domains',
+        source: { table: 'domains', id: d.id, column: 'sslExpireDate' },
+      })
     }
   }
   return out.sort((a, b) => a.days - b.days)
@@ -95,6 +112,35 @@ const visibleExpireItems = computed(() => expireItems.value.filter((it) => !dism
 const hiddenAlertCount = computed(() => expireItems.value.length - visibleExpireItems.value.length)
 function expireDaysText(d: number): string {
   return d < 0 ? `已过期 ${-d} 天` : d === 0 ? '今天到期' : `还剩 ${d} 天`
+}
+
+// 真正删除一条告警：清除对应资源的到期日期。
+// 「忽略」只是本机会话内不显示，换台设备/清缓存就又冒出来；
+// 用户说「无法删除」指的正是这个——这里给一个落到数据上的出口，并支持撤销。
+async function clearExpireAlert(it: ExpireItem) {
+  const colName = it.source.column === 'expireDate' ? '到期日期' : 'SSL 到期日期'
+  const ok = await confirm({
+    title: `清除「${it.label}」的${colName}？`,
+    content: `会把 ${colName} 清空，这条到期告警随之消失。删除后 8 秒内可点右下角「撤销」恢复。`,
+  })
+  if (!ok) return
+  const repo = it.source.table === 'servers' ? serversRepo : domainsRepo
+  // 两张表的字段不同，分开取旧值，否则联合类型上索引 sslExpireDate 会报 TS2551
+  const before = it.source.table === 'servers'
+    ? (servers.value.find((r) => r.id === it.source.id)?.expireDate ?? null)
+    : (domains.value.find((r) => r.id === it.source.id)?.[it.source.column] ?? null)
+  if (before === undefined) { message.error('找不到对应记录'); return }
+  try {
+    await repo.update(it.source.id, { [it.source.column]: null } as Record<string, unknown>)
+    appUndo.push({
+      label: `已清除「${it.label}」的${colName}`,
+      undo: async () => {
+        await repo.update(it.source.id, { [it.source.column]: before } as Record<string, unknown>)
+      },
+    })
+    message.success('已清除到期日期')
+    load()
+  } catch { message.error('清除失败') }
 }
 
 // ---- 列表搜索 ----
@@ -1258,11 +1304,16 @@ useListNav(backupTableEl, {
 <template>
   <div>
 
-    <div v-if="visibleExpireItems.length" class="expire-alert">
+    <div v-if="visibleExpireItems.length || hiddenAlertCount" class="expire-alert">
       <span class="ea-dot"></span>
       <div class="ea-body">
         <div class="ea-title">
-          共 {{ visibleExpireItems.length }} 项资源将在 30 天内到期或已过期（服务器续费 / 域名 / SSL），请及时处理
+          <template v-if="visibleExpireItems.length">
+            共 {{ visibleExpireItems.length }} 项资源将在 30 天内到期或已过期（服务器续费 / 域名 / SSL），请及时处理
+          </template>
+          <template v-else>
+            到期提醒已全部忽略（{{ hiddenAlertCount }} 项）
+          </template>
         </div>
         <div class="ea-list">
           <div v-for="it in visibleExpireItems" :key="it.key" class="ea-item">
@@ -1270,11 +1321,12 @@ useListNav(backupTableEl, {
             <span class="ea-name">{{ it.label }}</span>
             <span class="ea-days mono" :class="it.days < 0 ? 'overdue' : ''">{{ expireDaysText(it.days) }}</span>
             <button class="ea-btn" title="跳转到该项去处理" @click="tab = it.tab">去处理</button>
+            <button class="ea-btn" title="清除到期日期，彻底移除这条告警" @click="clearExpireAlert(it)">清除</button>
             <button class="ea-btn ghost" title="不再提示这一项" @click="dismissAlert(it.key)">忽略</button>
           </div>
         </div>
         <button v-if="hiddenAlertCount" class="ea-restore" @click="restoreAlerts()">
-          已忽略 {{ hiddenAlertCount }} 项 · 恢复显示
+          已忽略 {{ hiddenAlertCount }} 项 · 点此恢复显示
         </button>
       </div>
     </div>

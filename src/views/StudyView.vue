@@ -133,6 +133,13 @@ async function addCourse(v: Record<string, unknown>) {
 async function removeCourse(c: Course) {
   const ok = await confirm({ title: `删除课程《${c.name}》？`, content: `${c.weekday} ${c.startPeriod}-${c.endPeriod} 节${c.location ? ' · ' + c.location : ''}${c.teacher ? ' · ' + c.teacher : ''}` })
   if (!ok) return
+  appUndo.push({
+    label: `已删除课程「${c.name ?? ''}」`,
+    undo: async () => {
+      const { id: _oldId, ...rest } = c
+      await coursesRepo.insert(rest)
+    },
+  })
   try {
     await coursesRepo.remove(c.id)
     message.success('已删除')
