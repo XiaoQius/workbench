@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { watch, ref, onMounted, computed } from 'vue'
+import { watch, ref, onMounted, computed, reactive } from 'vue'
 import { refreshTick } from '@/stores/ui'
 import { NButton, NTag, NTabs, NTabPane, NIcon, useMessage, NSelect, NDatePicker, NInput } from 'naive-ui'
 import { Plus, Trash, Check, Checkbox } from '@vicons/tabler'
@@ -136,6 +136,54 @@ async function removeCourse(c: Course) {
     message.success('已删除')
     load()
   } catch { message.error('删除失败') }
+}
+
+// ---- 课程编辑：课程表是网格渲染，单元格里原本没有任何操作入口，
+// 导致 removeCourse 成了死代码、课程也无法修改。这里补上编辑/删除。
+const editCourseShow = ref(false)
+const editCourseId = ref<number | null>(null)
+const editCourseForm = ref<Record<string, unknown>>({})
+// 冲突提示此前是只读横幅、点不掉；这里允许本会话内忽略（不落库，刷新即恢复）
+const conflictHidden = reactive({ course: false, due: false })
+function hideConflict(which: 'course' | 'due') { conflictHidden[which] = true }
+function openEditCourse(c: Course) {
+  editCourseId.value = c.id
+  editCourseForm.value = {
+    name: c.name,
+    weekday: c.weekday,
+    startPeriod: c.startPeriod,
+    endPeriod: c.endPeriod,
+    location: c.location ?? '',
+    teacher: c.teacher ?? '',
+    weeks: c.weeks ?? '',
+    note: c.note ?? '',
+  }
+  editCourseShow.value = true
+}
+async function saveEditCourse(v: Record<string, unknown>) {
+  if (editCourseId.value === null) return
+  const patch: Partial<Course> = {
+    name: String(v.name || '').trim() || '未命名课程',
+    weekday: String(v.weekday || '一'),
+    startPeriod: Number(v.startPeriod || 1),
+    endPeriod: Number(v.endPeriod || 2),
+    location: String(v.location || ''),
+    teacher: String(v.teacher || ''),
+    weeks: String(v.weeks || ''),
+    note: String(v.note || ''),
+  }
+  // 起止节被改反了的话自动纠正，避免渲染出负高度的格子
+  if (patch.startPeriod! > patch.endPeriod!) {
+    const t = patch.startPeriod!
+    patch.startPeriod = patch.endPeriod
+    patch.endPeriod = t
+  }
+  try {
+    await coursesRepo.update(editCourseId.value, patch)
+    message.success('课程已更新')
+    editCourseShow.value = false
+    load()
+  } catch { message.error('保存失败') }
 }
 
 const maxPeriod = computed(() => Math.max(4, ...courses.value.map((c) => c.endPeriod)))
@@ -691,19 +739,23 @@ useListNav(feynmanListEl, {
             添加课程
           </NButton>
         </div>
-        <div v-if="courseConflicts.length" class="conflict-alert">
+        <div v-if="courseConflicts.length && !conflictHidden.course" class="conflict-alert">
           <span class="cf-dot"></span>
           检测到 {{ courseConflicts.length }} 处课程时间冲突：
           <span v-for="(c, idx) in courseConflicts" :key="idx" class="cf-item mono">
-            {{ c.day }} {{ c.a.name }} ↔ {{ c.b.name }}
+            <button class="cf-jump" title="编辑这门课调整时间" @click="openEditCourse(c.a)">{{ c.day }} {{ c.a.name }}</button>
+            ↔
+            <button class="cf-jump" title="编辑这门课调整时间" @click="openEditCourse(c.b)">{{ c.b.name }}</button>
           </span>
+          <button class="cf-hide" title="本会话内不再显示这条冲突提示" @click="hideConflict('course')">忽略</button>
         </div>
-        <div v-if="dueConflicts.length" class="conflict-alert due">
+        <div v-if="dueConflicts.length && !conflictHidden.due" class="conflict-alert due">
           <span class="cf-dot"></span>
           {{ dueConflicts.length }} 组作业截止撞期：
           <span v-for="(g, idx) in dueConflicts" :key="idx" class="cf-item mono">
             {{ g.date }}（{{ g.titles.join('、') }}）
           </span>
+          <button class="cf-hide" title="本会话内不再显示这条冲突提示" @click="hideConflict('due')">忽略</button>
         </div>
         <ListSkeleton v-if="loading" :rows="5" />
         <div v-else-if="filteredCourses.length" class="schedule">
@@ -719,6 +771,11 @@ useListNav(feynmanListEl, {
                 >
                   <div class="sc-name">{{ c.name }}</div>
                   <div class="sc-sub mono">{{ c.location || '' }} {{ c.teacher || '' }}</div>
+                  <!-- hover 才出现的编辑/删除入口：课程表是网格，此前没有任何操作按钮 -->
+                  <div class="sc-actions">
+                    <button class="sc-act" title="编辑课程" @click.stop="openEditCourse(c)">✎</button>
+                    <button class="sc-act danger" title="删除课程" @click.stop="removeCourse(c)">✕</button>
+                  </div>
                 </div>
               </template>
             </div>
@@ -1074,6 +1131,14 @@ useListNav(feynmanListEl, {
     </n-modal>
 
     <ModalForm v-model:show="courseFormShow" title="添加课程" :fields="courseFields" @submit="addCourse" />
+    <ModalForm
+      v-model:show="editCourseShow"
+      title="编辑课程"
+      :fields="courseFields"
+      :initial="editCourseForm"
+      confirm-text="保存"
+      @submit="saveEditCourse"
+    />
     <ModalForm v-model:show="assignmentFormShow" title="新建作业" :fields="assignmentFields" @submit="addAssignment" />
     <ModalForm v-model:show="noteFormShow" title="新建笔记" :fields="noteFields" confirm-text="保存" @submit="addNote" />
     <ModalForm v-model:show="gradeFormShow" title="记录成绩" :fields="gradeFields" confirm-text="保存" @submit="addGrade" />
@@ -1139,7 +1204,37 @@ useListNav(feynmanListEl, {
   border: 1px solid color-mix(in srgb, var(--wb-module-study) 34%, transparent);
   overflow: hidden;
   font-size: var(--wb-fs-xs);
+  position: relative;
 }
+/* 课程单元格 hover 才出现的编辑/删除按钮（.sc-cell 有 overflow:hidden，故绝对定位） */
+.sc-actions {
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  display: flex;
+  gap: 1px;
+  opacity: 0;
+  transition: opacity 120ms ease-out;
+}
+.sc-cell:hover .sc-actions { opacity: 1; }
+.sc-act {
+  width: 17px;
+  height: 17px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  border-radius: 3px;
+  background: var(--wb-card);
+  color: var(--wb-text-2);
+  cursor: pointer;
+  font-size: 10px;
+  line-height: 1;
+  padding: 0;
+}
+.sc-act:hover { background: var(--wb-card-alt); color: var(--wb-accent); }
+.sc-act.danger:hover { color: var(--wb-danger); }
+:global(.wb-reduced-motion) .sc-actions { transition: none; }
 .sc-name { font-weight: 600; color: var(--wb-module-study); line-height: 1.3; }
 .sc-sub { font-size: 10px; color: var(--wb-text-3); margin-top: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .conflict-alert {
@@ -1161,6 +1256,20 @@ useListNav(feynmanListEl, {
   color: var(--wb-warning, #d97706);
 }
 .cf-dot { width: 7px; height: 7px; border-radius: 50%; background: currentColor; flex: none; }
+/* 冲突项里的课程名可点击直接打开编辑弹窗（改时间即可消解冲突） */
+.cf-jump {
+  border: none; background: transparent; padding: 0; margin: 0;
+  color: inherit; font: inherit; cursor: pointer;
+  text-decoration: underline dotted;
+}
+.cf-jump:hover { text-decoration: underline; }
+.cf-hide {
+  margin-left: auto; flex: none;
+  border: 1px solid var(--wb-border); background: transparent;
+  color: var(--wb-text-3); border-radius: var(--wb-radius-sm);
+  padding: 1px 8px; font-size: 11px; cursor: pointer;
+}
+.cf-hide:hover { background: var(--wb-card-alt); color: var(--wb-text-1); }
 .cf-item {
   padding: 2px 8px;
   border-radius: 999px;

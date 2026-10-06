@@ -16,12 +16,24 @@ import { onMounted, onUnmounted, ref, watch, type Ref } from 'vue'
  *  2. 高亮态用 data-wb-cursor 属性，样式由 main.css 统一提供（.wb-nav-row），
  *     不在 JS 里写死颜色，跟着主题走。
  *  3. 数据源变化时（过滤/翻页）索引可能越界，自动夹回范围内。
+ *
+ * 免回查的数据源：传 `items`（与 DOM 行顺序严格一致的过滤后数组）后，
+ * 可以用 `onEnterItem` 直接拿到数据对象，省掉每个列表都要写的
+ * `const id = Number(el.getAttribute('data-row-id')); list.find(...)` 样板。
+ * `onEnter` 的签名始终不变（第一个参数是 DOM 元素），45 处旧调用无需改动。
  */
-export interface ListNavOptions {
+export interface ListNavOptions<T = unknown> {
   /** 行选择器，相对于容器；必须能排除表头（表头一般带 .head） */
   rowSelector: string
+  /** 可选：与 DOM 行顺序严格一致的过滤后数据源（ref 或 getter） */
+  items?: Ref<T[]> | (() => T[])
   /** 回车回调：拿到当前行的 DOM 元素与索引，由视图决定做什么（打开详情/编辑） */
   onEnter?: (el: HTMLElement, index: number) => void
+  /**
+   * 回车回调（数据版）：传了 `items` 时优先调用它，第一个参数是数据对象。
+   * 没传 `items` 时不会调用——那时没有数据来源，只能给 DOM 元素。
+   */
+  onEnterItem?: (item: T, index: number, el: HTMLElement) => void
   /** 是否启用（例如加载中禁用） */
   enabled?: Ref<boolean> | (() => boolean)
 }
@@ -35,7 +47,10 @@ function isEditableTarget(e: KeyboardEvent): boolean {
   return tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || el.isContentEditable
 }
 
-export function useListNav(containerRef: Ref<HTMLElement | undefined>, opts: ListNavOptions) {
+export function useListNav<T = unknown>(
+  containerRef: Ref<HTMLElement | undefined>,
+  opts: ListNavOptions<T>,
+) {
   const cursor = ref(-1)
 
   /** 行数快照，用于 watch 感知数据源变化 */
@@ -98,6 +113,19 @@ export function useListNav(containerRef: Ref<HTMLElement | undefined>, opts: Lis
       return opts.enabled.value !== false
     }
     return true
+  }
+
+  /**
+   * 取第 index 行对应的数据对象。
+   * 前提是 `items` 与 DOM 行顺序严格一致（都来自同一份过滤后数组），
+   * 所以直接按下标取，不回查 data-row-id。
+   * 没传 items、或下标越界时返回 undefined，调用方据此决定要不要触发回调。
+   */
+  function itemAt(index: number): T | undefined {
+    if (!opts.items) return undefined
+    const arr = typeof opts.items === 'function' ? opts.items() : opts.items.value
+    if (!Array.isArray(arr) || index < 0 || index >= arr.length) return undefined
+    return arr[index]
   }
 
   /** 清除所有行的高亮态并从新画当前 cursor */
@@ -177,7 +205,17 @@ export function useListNav(containerRef: Ref<HTMLElement | undefined>, opts: Lis
       case 'Enter': {
         const list = rows()
         const cur = list[cursor.value]
-        if (cur && opts.onEnter) {
+        if (!cur) break
+        // 传了 items + onEnterItem 时走数据版：直接给数据对象，省掉 DOM 回查。
+        // items 没传时绝不能走这条分支，否则旧写法拿不到 DOM 元素。
+        const useItem = !!opts.onEnterItem && !!opts.items
+        if (useItem) {
+          // 下标越界（items 与 DOM 行数对不上）时静默不触发：宁可不动，也不传错行
+          const item = itemAt(cursor.value)
+          if (item === undefined) break
+          e.preventDefault()
+          opts.onEnterItem?.(item, cursor.value, cur)
+        } else if (opts.onEnter) {
           e.preventDefault()
           opts.onEnter(cur, cursor.value)
         }

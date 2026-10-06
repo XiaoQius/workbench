@@ -430,17 +430,24 @@ function dismissFirstRun() { firstRun.value = false }
 // ============================================================
 /** 卡片清单：key 与设置里的 homeCardsHidden 对应 */
 const HOME_CARDS = [
-  { key: 'focus', label: '今日焦点' },
-  { key: 'insp', label: '灵感' },
-  { key: 'qa', label: 'AI 问答' },
-  { key: 'watch', label: '截止预警' },
-  { key: 'habit', label: '习惯统计' },
-  { key: 'ledger', label: '记账统计' },
-  { key: 'study', label: '学习进度' },
-  { key: 'task', label: '任务统计' },
-  { key: 'trend14', label: '近 14 天节奏' },
-  { key: 'spend6m', label: '近 6 月支出' },
+  // block = 卡片所在的父容器区块。排序必须限定在同区块内：
+  // CSS 的 order 只在同一父容器里生效，跨区块配对会导致
+  // 「点进度卡的 ↑，右上角另一张不相干的卡片被静默换位」。
+  { key: 'focus', label: '今日焦点', block: 'top-left' },
+  { key: 'insp', label: '灵感', block: 'top-left' },
+  { key: 'qa', label: 'AI 问答', block: 'top-right' },
+  { key: 'watch', label: '截止预警', block: 'top-right' },
+  { key: 'habit', label: '习惯统计', block: 'prog' },
+  { key: 'ledger', label: '记账统计', block: 'prog' },
+  { key: 'study', label: '学习进度', block: 'prog' },
+  { key: 'task', label: '任务统计', block: 'prog' },
+  { key: 'trend14', label: '近 14 天节奏', block: 'trend' },
+  { key: 'spend6m', label: '近 6 月支出', block: 'trend' },
 ] as const
+/** 取卡片所属区块；未登记的按 top-left 兜底（不应发生） */
+function cardBlock(key: string): string {
+  return (HOME_CARDS.find((c) => c.key === key) as { block?: string } | undefined)?.block ?? 'top-left'
+}
 function cardHidden(key: string): boolean {
   return !!s.homeCardsHidden[key]
 }
@@ -457,15 +464,19 @@ const anyCardHidden = computed(() => Object.values(s.homeCardsHidden).some(Boole
 // ============================================================
 function cardOrder(key: string): number {
   const i = s.homeCardsOrder.indexOf(key)
-  const def = HOME_CARDS.findIndex((c) => c.key === key)
+  // 兜底值按区块内偏移算：100*块序 + 块内序号，避免初始 order 全局连续
+  const blockIdx = HOME_CARDS.findIndex((c) => c.key === key)
+  const inBlockIdx = HOME_CARDS.filter((c) => c.block === cardBlock(key)).findIndex((c) => c.key === key)
+  const def = 100 * blockIdx + inBlockIdx
   return i === -1 ? 100 + def : i
 }
 function cardStyle(key: string) {
   return { order: String(cardOrder(key)) }
 }
 function moveCard(key: string, dir: -1 | 1) {
-  const keys = HOME_CARDS.map((c) => c.key as string)
-  // 目标：方向上最近的一张可见卡片
+  // 只在同区块内找目标：CSS order 只在同一个父容器里生效
+  const block = cardBlock(key)
+  const keys = HOME_CARDS.filter((c) => c.block === block).map((c) => c.key as string)
   const cur = cardOrder(key)
   let target: string | null = null
   let best = dir === -1 ? -Infinity : Infinity
@@ -474,6 +485,7 @@ function moveCard(key: string, dir: -1 | 1) {
     const o = cardOrder(k)
     if (dir === -1 ? (o < cur && o > best) : (o > cur && o < best)) { best = o; target = k }
   }
+  // 区块边界上无相邻卡（已是首/末）：直接不动，不跨界配对
   if (!target) return
   // 把两 key 在 order 数组里互换；不在数组里的补到最后再交换
   const ordered = [...s.homeCardsOrder]
@@ -743,9 +755,11 @@ async function saveInspiration() {
     <!-- 进度条区：一行四卡，均可点击跳转 -->
     <div class="prog-grid">
       <div v-if="!cardHidden('habit')" class="wb-card hoverable prog-card clickable" @click="go('/life')" :style="cardStyle('habit')">
-        <button class="card-move prog-move" title="上移此卡片" @click.stop="moveCard('habit',-1)">↑</button>
-        <button class="card-move prog-move" title="下移此卡片" @click.stop="moveCard('habit',1)">↓</button>
-        <button class="card-hide prog-hide" title="隐藏此卡片" @click.stop="hideCard('habit')">✕</button>
+        <div class="prog-actions">
+          <button class="card-move prog-move" title="上移此卡片" @click.stop="moveCard('habit',-1)">↑</button>
+          <button class="card-move prog-move" title="下移此卡片" @click.stop="moveCard('habit',1)">↓</button>
+          <button class="card-hide prog-hide" title="隐藏此卡片" @click.stop="hideCard('habit')">✕</button>
+        </div>
         <div class="pg-label">习惯 · 今日</div>
         <div class="pg-value mono" :style="{ color: moduleColor('life', themeStore.dark) }">
           {{ habitToday.done }}<span class="pg-suffix">/{{ habitToday.total }}</span>
@@ -755,9 +769,11 @@ async function saveInspiration() {
       </div>
 
       <div v-if="!cardHidden('ledger')" class="wb-card hoverable prog-card clickable" @click="go('/life')" :style="cardStyle('ledger')">
-        <button class="card-move prog-move" title="上移此卡片" @click.stop="moveCard('ledger',-1)">↑</button>
-        <button class="card-move prog-move" title="下移此卡片" @click.stop="moveCard('ledger',1)">↓</button>
-        <button class="card-hide prog-hide" title="隐藏此卡片" @click.stop="hideCard('ledger')">✕</button>
+        <div class="prog-actions">
+          <button class="card-move prog-move" title="上移此卡片" @click.stop="moveCard('ledger',-1)">↑</button>
+          <button class="card-move prog-move" title="下移此卡片" @click.stop="moveCard('ledger',1)">↓</button>
+          <button class="card-hide prog-hide" title="隐藏此卡片" @click.stop="hideCard('ledger')">✕</button>
+        </div>
         <div class="pg-label">记账 · 本月</div>
         <div class="pg-value mono" :style="{ color: moduleColor('ops', themeStore.dark) }">¥{{ ledgerThisMonth.spend.toFixed(0) }}</div>
         <div class="pg-sub">
@@ -768,9 +784,11 @@ async function saveInspiration() {
       </div>
 
       <div v-if="!cardHidden('study')" class="wb-card hoverable prog-card clickable" @click="go('/study')" :style="cardStyle('study')">
-        <button class="card-move prog-move" title="上移此卡片" @click.stop="moveCard('study',-1)">↑</button>
-        <button class="card-move prog-move" title="下移此卡片" @click.stop="moveCard('study',1)">↓</button>
-        <button class="card-hide prog-hide" title="隐藏此卡片" @click.stop="hideCard('study')">✕</button>
+        <div class="prog-actions">
+          <button class="card-move prog-move" title="上移此卡片" @click.stop="moveCard('study',-1)">↑</button>
+          <button class="card-move prog-move" title="下移此卡片" @click.stop="moveCard('study',1)">↓</button>
+          <button class="card-hide prog-hide" title="隐藏此卡片" @click.stop="hideCard('study')">✕</button>
+        </div>
         <div class="pg-label">学习</div>
         <div class="pg-value mono" :style="{ color: moduleColor('study', themeStore.dark) }">
           {{ studyProgress.pendingAssignments }}<span class="pg-suffix"> 待完成</span>
@@ -779,9 +797,11 @@ async function saveInspiration() {
       </div>
 
       <div v-if="!cardHidden('task')" class="wb-card hoverable prog-card clickable" @click="go('/dev')" :style="cardStyle('task')">
-        <button class="card-move prog-move" title="上移此卡片" @click.stop="moveCard('task',-1)">↑</button>
-        <button class="card-move prog-move" title="下移此卡片" @click.stop="moveCard('task',1)">↓</button>
-        <button class="card-hide prog-hide" title="隐藏此卡片" @click.stop="hideCard('task')">✕</button>
+        <div class="prog-actions">
+          <button class="card-move prog-move" title="上移此卡片" @click.stop="moveCard('task',-1)">↑</button>
+          <button class="card-move prog-move" title="下移此卡片" @click.stop="moveCard('task',1)">↓</button>
+          <button class="card-hide prog-hide" title="隐藏此卡片" @click.stop="hideCard('task')">✕</button>
+        </div>
         <div class="pg-label">任务 · 本周完成</div>
         <div class="pg-value mono" :style="{ color: moduleColor('dev', themeStore.dark) }">{{ taskWeek.thisWeek }}</div>
         <div class="pg-sub">
@@ -1097,7 +1117,20 @@ async function saveInspiration() {
 @media (max-width: 1100px) { .prog-grid { grid-template-columns: repeat(2, 1fr); } }
 @media (max-width: 640px) { .prog-grid { grid-template-columns: 1fr; } }
 .prog-card { position: relative; padding: 12px 14px; display: flex; flex-direction: column; gap: 3px; }
-.prog-hide { position: absolute; top: 6px; right: 6px; }
+/* 小卡片（进度卡）的按钮组：三个按钮放进同一个横向容器、整体绝对定位在右上角。
+   此前 .prog-card 是 flex-column，↑ 被 margin-left:225px 推到右上角，与绝对定位的
+   ✕ 重叠——实测点「↑」会命中「隐藏此卡片」，把卡片直接隐藏掉。 */
+.prog-actions {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  z-index: 2;
+}
+.prog-actions .card-hide,
+.prog-actions .card-move { position: static; margin-left: 0; }
 .pg-label { font-size: 11.5px; color: var(--wb-text-3); letter-spacing: 0.04em; }
 .pg-value { font-size: var(--wb-fs-metric); font-weight: 680; line-height: 1.2; }
 .pg-suffix { font-size: var(--wb-fs-sm); font-weight: 500; color: var(--wb-text-3); }

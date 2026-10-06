@@ -53,6 +53,48 @@ const expiringCount = computed(() => {
   return n
 })
 
+// ---- 到期告警：此前只有一句「共 N 项」，点不掉也看不出是哪一项。
+// 这里拆成逐项清单：显示具体资源名 + 剩余天数 + 去处理 / 忽略（忽略存本地）。
+const ALERT_DISMISS_KEY = 'wb:ops-expire-dismissed'
+const dismissedAlerts = ref<string[]>([])
+try {
+  const raw = localStorage.getItem(ALERT_DISMISS_KEY)
+  if (raw) dismissedAlerts.value = JSON.parse(raw) as string[]
+} catch { /* 存储不可用时退化为不忽略任何项 */ }
+function dismissAlert(key: string) {
+  dismissedAlerts.value = [...dismissedAlerts.value, key]
+  try { localStorage.setItem(ALERT_DISMISS_KEY, JSON.stringify(dismissedAlerts.value)) } catch { /* 忽略持久化失败 */ }
+}
+function restoreAlerts() {
+  dismissedAlerts.value = []
+  try { localStorage.removeItem(ALERT_DISMISS_KEY) } catch { /* 忽略 */ }
+}
+interface ExpireItem { key: string; label: string; kind: string; days: number; tab: string }
+const expireItems = computed<ExpireItem[]>(() => {
+  const out: ExpireItem[] = []
+  for (const s of servers.value) {
+    const sd = dayDiff(s.expireDate)
+    if (sd === null || sd > 30) continue
+    out.push({ key: `server:${s.id}`, label: s.name, kind: '服务器续费', days: sd, tab: 'servers' })
+  }
+  for (const d of domains.value) {
+    const dd = dayDiff(d.expireDate)
+    if (dd !== null && dd <= 30) {
+      out.push({ key: `domain:${d.name}`, label: d.name, kind: '域名到期', days: dd, tab: 'domains' })
+    }
+    const ssl = dayDiff(d.sslExpireDate)
+    if (ssl !== null && ssl <= 30) {
+      out.push({ key: `ssl:${d.name}`, label: d.name, kind: 'SSL 证书', days: ssl, tab: 'domains' })
+    }
+  }
+  return out.sort((a, b) => a.days - b.days)
+})
+const visibleExpireItems = computed(() => expireItems.value.filter((it) => !dismissedAlerts.value.includes(it.key)))
+const hiddenAlertCount = computed(() => expireItems.value.length - visibleExpireItems.value.length)
+function expireDaysText(d: number): string {
+  return d < 0 ? `已过期 ${-d} 天` : d === 0 ? '今天到期' : `还剩 ${d} 天`
+}
+
 // ---- 列表搜索 ----
 // 每张表只按「人认得出来的那几列」匹配，不逐字段全扫。
 const serverKw = ref('')
@@ -738,14 +780,109 @@ useListNav(serverGridEl, {
   },
 })
 
+// ---- 磁盘 / WSL / 定时任务 / 备份验证：先补「非破坏性」的 Enter 动作 ----
+// 这四张列表的行内没有删除以外的现成动作，而删除必须二次确认、不能绑 Enter
+// （项目约定走 useConfirm），所以统一补一个「复制该行概况到剪贴板」的安全动作。
+
+/** 磁盘行 Enter：复制该挂载点的空间概况 */
+async function copyDiskInfo(d: DiskInfo) {
+  const text = `${d.mount}  已用 ${fmtGb(d.used)}GB / 可用 ${fmtGb(d.free)}GB（${fmtPercent(d.used_percent)}%）`
+  try {
+    await navigator.clipboard.writeText(text)
+    message.success(`已复制：${text}`)
+  } catch { message.error('复制失败') }
+}
+
+/** 定时任务行 Enter：复制查询该任务的 schtasks 命令 */
+async function copyTaskCmd(t: ScheduledTask) {
+  const txt = `schtasks /query /tn "${t.task_name}" /fo list`
+  try {
+    await navigator.clipboard.writeText(txt)
+    message.success(`已复制：${txt}`)
+  } catch { message.error('复制失败') }
+}
+
+/** 备份行 Enter：复制该备份文件的校验概况 */
+async function copyBackupInfo(b: BackupVerifyInfo) {
+  const err = b.valid ? '' : b.error ? `（${b.error}）` : ''
+  const text = `${b.name}  ${fmtBackupSize(b.size)}  表 ${b.tables} / 记录 ${b.records}  ${b.valid ? '健康' : '损坏'}${err}`
+  try {
+    await navigator.clipboard.writeText(text)
+    message.success(`已复制：${text}`)
+  } catch { message.error('复制失败') }
+}
+
+// 磁盘是卡片网格（.disk-grid > .disk-card），没有 id，用挂载点 mount 作为稳定键
+const diskGridEl = ref<HTMLElement>()
+useListNav(diskGridEl, {
+  rowSelector: '.disk-card',
+  enabled: () => !loading.value && tab.value === 'disks',
+  onEnter: (el) => {
+    const mount = el.getAttribute('data-row-id')
+    const row = disks.value.find((d) => d.mount === mount)
+    if (row) void copyDiskInfo(row)
+  },
+})
+
+// WSL 列表（.wsl-list > .wsl-item），主键是发行版名 name；行内已有 copyWslCmd 可直接复用
+const wslListEl = ref<HTMLElement>()
+useListNav(wslListEl, {
+  rowSelector: '.wsl-item',
+  enabled: () => !wslLoading.value && tab.value === 'wsl',
+  onEnter: (el) => {
+    const name = el.getAttribute('data-row-id')
+    if (name) void copyWslCmd(name)
+  },
+})
+
+// 定时任务表（.task-table > .t-row），schtasks 没有数字 id，沿用模板 :key 的 task_name
+const taskTableEl = ref<HTMLElement>()
+useListNav(taskTableEl, {
+  rowSelector: '.t-row:not(.head)',
+  enabled: () => !taskLoading.value && tab.value === 'tasks',
+  onEnter: (el) => {
+    const name = el.getAttribute('data-row-id')
+    const row = filteredTasks.value.find((t) => t.task_name === name)
+    if (row) void copyTaskCmd(row)
+  },
+})
+
+// 备份验证表（同为 .task-table > .t-row），备份文件名 name 作为稳定键
+const backupTableEl = ref<HTMLElement>()
+useListNav(backupTableEl, {
+  rowSelector: '.t-row:not(.head)',
+  enabled: () => !backupLoading.value && tab.value === 'backups',
+  onEnter: (el) => {
+    const name = el.getAttribute('data-row-id')
+    const row = backups.value.find((b) => b.name === name)
+    if (row) void copyBackupInfo(row)
+  },
+})
+
 </script>
 
 <template>
   <div>
 
-    <div v-if="expiringCount" class="expire-alert">
+    <div v-if="visibleExpireItems.length" class="expire-alert">
       <span class="ea-dot"></span>
-      共 {{ expiringCount }} 项资源将在 30 天内到期或已过期（服务器续费 / 域名 / SSL），请及时处理
+      <div class="ea-body">
+        <div class="ea-title">
+          共 {{ visibleExpireItems.length }} 项资源将在 30 天内到期或已过期（服务器续费 / 域名 / SSL），请及时处理
+        </div>
+        <div class="ea-list">
+          <div v-for="it in visibleExpireItems" :key="it.key" class="ea-item">
+            <span class="ea-kind">{{ it.kind }}</span>
+            <span class="ea-name">{{ it.label }}</span>
+            <span class="ea-days mono" :class="it.days < 0 ? 'overdue' : ''">{{ expireDaysText(it.days) }}</span>
+            <button class="ea-btn" title="跳转到该项去处理" @click="tab = it.tab">去处理</button>
+            <button class="ea-btn ghost" title="不再提示这一项" @click="dismissAlert(it.key)">忽略</button>
+          </div>
+        </div>
+        <button v-if="hiddenAlertCount" class="ea-restore" @click="restoreAlerts()">
+          已忽略 {{ hiddenAlertCount }} 项 · 恢复显示
+        </button>
+      </div>
     </div>
 
     <n-tabs v-model:value="tab" type="line" class="wb-tabs">
@@ -824,8 +961,8 @@ useListNav(serverGridEl, {
 
       <!-- 磁盘 -->
       <n-tab-pane name="disks" tab="磁盘空间">
-        <div v-if="disks.length" class="disk-grid">
-          <div v-for="d in disks" :key="d.mount" class="disk-card wb-card">
+        <div v-if="disks.length" class="disk-grid" ref="diskGridEl" tabindex="0" :aria-label="'磁盘列表，共 ' + disks.length + ' 行，↑↓ 选择、Enter 复制空间概况'">
+          <div v-for="d in disks" :key="d.mount" class="disk-card wb-card" :data-row-id="d.mount">
             <div class="dk-head">
               <span class="dk-mount mono">{{ d.mount }}</span>
               <span class="mono dk-pct" :style="d.used_percent >= 90 ? 'color: var(--wb-danger)' : d.used_percent >= 75 ? 'color: var(--wb-warning)' : ''">
@@ -921,8 +1058,8 @@ useListNav(serverGridEl, {
             检测
           </NButton>
         </div>
-        <div v-if="wslDists.length" class="wsl-list">
-          <div v-for="d in wslDists" :key="d.name" class="wsl-item wb-card">
+        <div v-if="wslDists.length" class="wsl-list" ref="wslListEl" tabindex="0" :aria-label="'WSL 发行版列表，共 ' + wslDists.length + ' 行，↑↓ 选择、Enter 复制进入命令'">
+          <div v-for="d in wslDists" :key="d.name" class="wsl-item wb-card" :data-row-id="d.name">
             <div class="wsl-row">
               <span class="mono wsl-name">{{ d.name }}</span>
               <NTag size="tiny" :bordered="false" :type="d.state.toLowerCase() === 'running' ? 'success' : 'default'">{{ d.state }}</NTag>
@@ -948,11 +1085,11 @@ useListNav(serverGridEl, {
             </NButton>
           </div>
         </div>
-        <div v-if="tasks.length" class="task-table">
+        <div v-if="tasks.length" class="task-table" ref="taskTableEl" tabindex="0" :aria-label="'定时任务列表，共 ' + filteredTasks.length + ' 行，↑↓ 选择、Enter 复制查询命令'">
           <div class="t-row head">
             <span>任务</span><span>下次运行</span><span>状态</span><span>上次运行</span><span>上次结果</span>
           </div>
-          <div v-for="t in filteredTasks" :key="t.task_name" class="t-row">
+          <div v-for="t in filteredTasks" :key="t.task_name" class="t-row" :data-row-id="t.task_name">
             <span class="mono t-name">{{ t.task_name }}</span>
             <span class="mono">{{ t.next_run }}</span>
             <span>
@@ -974,11 +1111,11 @@ useListNav(serverGridEl, {
             验证
           </NButton>
         </div>
-        <div v-if="backups.length" class="task-table">
+        <div v-if="backups.length" class="task-table" ref="backupTableEl" tabindex="0" :aria-label="'备份文件列表，共 ' + backups.length + ' 行，↑↓ 选择、Enter 复制校验概况'">
           <div class="t-row head">
             <span>备份文件</span><span>大小</span><span>表数</span><span>记录数</span><span>状态</span>
           </div>
-          <div v-for="b in backups" :key="b.name" class="t-row">
+          <div v-for="b in backups" :key="b.name" class="t-row" :data-row-id="b.name">
             <span class="mono t-name">{{ b.name }}</span>
             <span class="mono">{{ fmtBackupSize(b.size) }}</span>
             <span class="mono">{{ b.tables }}</span>
@@ -1156,6 +1293,41 @@ useListNav(serverGridEl, {
   font-size: 12.5px;
 }
 .ea-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--wb-warning); flex: none; }
+/* 到期告警逐项清单 */
+.ea-body { flex: 1; min-width: 0; }
+.ea-title { font-weight: 600; }
+.ea-list { display: flex; flex-direction: column; gap: 4px; margin-top: 8px; }
+.ea-item {
+  display: flex; align-items: center; gap: var(--wb-sp-2);
+  flex-wrap: wrap;
+  font-size: 12px;
+  padding: 4px 8px;
+  border-radius: var(--wb-radius-sm);
+  background: color-mix(in srgb, var(--wb-warning) 8%, transparent);
+}
+.ea-kind {
+  flex: none; font-size: 10.5px; padding: 1px 6px; border-radius: 999px;
+  background: color-mix(in srgb, var(--wb-warning) 22%, transparent);
+}
+.ea-name { font-weight: 600; color: var(--wb-text-1); }
+.ea-days { color: var(--wb-text-2); }
+.ea-days.overdue { color: var(--wb-danger); font-weight: 600; }
+.ea-btn {
+  flex: none; margin-left: auto;
+  border: 1px solid color-mix(in srgb, var(--wb-warning) 55%, transparent);
+  background: transparent; color: var(--wb-warning);
+  border-radius: var(--wb-radius-sm);
+  padding: 1px 8px; font-size: 11px; cursor: pointer;
+}
+.ea-btn.ghost { margin-left: 0; border-color: var(--wb-border); color: var(--wb-text-3); }
+.ea-btn:hover { background: color-mix(in srgb, var(--wb-warning) 16%, transparent); }
+.ea-btn.ghost:hover { background: var(--wb-card-alt); }
+.ea-restore {
+  margin-top: 8px; border: none; background: transparent;
+  color: var(--wb-text-3); font-size: 11px; cursor: pointer;
+  text-decoration: underline; padding: 0;
+}
+.ea-restore:hover { color: var(--wb-text-1); }
 .server-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
