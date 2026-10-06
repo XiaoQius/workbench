@@ -459,6 +459,10 @@ function commitFontScale(v: number) {
       <NTabPane name="display" tab="显示">
         <div class="sp-sec">
           <div class="sp-label">配色（明暗）</div>
+          <label class="sp-follow">
+            <NSwitch size="small" :value="themeStore.followSystem" @update:value="themeStore.setFollowSystem" />
+            <span>跟随系统明暗（Windows 深色模式切换时自动跟随）</span>
+          </label>
           <div class="theme-grid">
             <button
               v-for="c in COLOR_MODES"
@@ -726,6 +730,16 @@ function commitFontScale(v: number) {
 .sp-switch > span { flex: 1; }
 .sp-switch .n-switch { margin-left: auto; }
 .sp-dim { font-size: 12px; color: var(--wb-text-3); margin-top: 4px; }
+.sp-follow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12.5px;
+  color: var(--wb-text-2);
+  margin-bottom: 10px;
+  cursor: pointer;
+  user-select: none;
+}
 .sp-k { width: 110px; flex: none; margin-top: 0; }
 /* 恢复预览：列出会被覆盖的表 */
 .restore-preview {
