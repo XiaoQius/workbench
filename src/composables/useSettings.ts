@@ -54,6 +54,7 @@ function defaults() {
     keymap: { ctrlNum: true, gSeq: true, theme: true, newShortcut: true } as KeymapSwitches,
     cards: [] as CustomCard[],
     sections: Object.fromEntries(modules.map((m) => [m.key, true])) as Record<ModuleKey, boolean>,
+    homeCardsHidden: {} as Record<string, boolean>,
     llmEnabled: true,
     sidebarCollapsed: false,
     autoCheckUpdate: true,
@@ -78,6 +79,8 @@ export interface WbSettings {
   keymap: KeymapSwitches
   cards: CustomCard[]
   sections: Record<ModuleKey, boolean>
+  /** 总览页卡片显隐：key 存在且为 true = 隐藏该卡片 */
+  homeCardsHidden: Record<string, boolean>
   llmEnabled: boolean
   sidebarCollapsed: boolean
   autoCheckUpdate: boolean
@@ -108,6 +111,7 @@ function load(): WbSettings {
       keymap: { ...d.keymap, ...(p.keymap || {}) },
       cards: Array.isArray(p.cards) ? p.cards : [],
       sections: { ...d.sections, ...(p.sections || {}) },
+      homeCardsHidden: { ...(p.homeCardsHidden || {}) },
       llmEnabled: p.llmEnabled !== false,
       sidebarCollapsed: !!p.sidebarCollapsed,
       autoCheckUpdate: p.autoCheckUpdate !== false,

@@ -6,6 +6,7 @@ import { ArrowRight, Bulb } from '@vicons/tabler'
 import EmptyState from '@/components/EmptyState.vue'
 import ListSkeleton from '@/components/ListSkeleton.vue'
 import { refreshTick, settingsOpen, settingsTab } from '@/stores/ui'
+import { useSettings } from '@/composables/useSettings'
 import { useThemeStore } from '@/stores/theme'
 import { moduleColor } from '@/theme/tokens'
 import {
@@ -26,6 +27,7 @@ import type {
 const router = useRouter()
 const themeStore = useThemeStore()
 const message = useMessage()
+const s = useSettings()
 
 // ============================================================
 // 日期工具（本地时区，避免 toISOString 的 UTC 偏移）
@@ -423,6 +425,33 @@ function initFirstRun() {
 }
 function dismissFirstRun() { firstRun.value = false }
 
+// ============================================================
+// 总览卡片显隐：每张卡片右上角 × 可隐藏；设置 → 显示 → 总览卡片 可恢复
+// ============================================================
+/** 卡片清单：key 与设置里的 homeCardsHidden 对应 */
+const HOME_CARDS = [
+  { key: 'focus', label: '今日焦点' },
+  { key: 'insp', label: '灵感' },
+  { key: 'qa', label: 'AI 问答' },
+  { key: 'watch', label: '截止预警' },
+  { key: 'habit', label: '习惯统计' },
+  { key: 'ledger', label: '记账统计' },
+  { key: 'study', label: '学习进度' },
+  { key: 'task', label: '任务统计' },
+  { key: 'trend14', label: '近 14 天节奏' },
+  { key: 'spend6m', label: '近 6 月支出' },
+] as const
+function cardHidden(key: string): boolean {
+  return !!s.homeCardsHidden[key]
+}
+function hideCard(key: string) {
+  s.homeCardsHidden[key] = true
+}
+function showCard(key: string) {
+  delete s.homeCardsHidden[key]
+}
+const anyCardHidden = computed(() => Object.values(s.homeCardsHidden).some(Boolean))
+
 const searchQuery = ref('')
 const debouncedQuery = ref('')
 let searchTimer: number | undefined
@@ -516,14 +545,28 @@ async function saveInspiration() {
       </div>
     </div>
 
+    <!-- 有隐藏卡片时的恢复入口 -->
+    <div v-if="anyCardHidden" class="cards-restore">
+      <span>已隐藏的卡片：</span>
+      <button
+        v-for="c in HOME_CARDS.filter((c) => cardHidden(c.key))"
+        :key="c.key"
+        class="restore-chip"
+        :title="'恢复显示「' + c.label + '」'"
+        @click="showCard(c.key)"
+      >{{ c.label }} ↩</button>
+      <button class="restore-chip" style="margin-left: auto" @click="HOME_CARDS.forEach((c) => showCard(c.key))">全部恢复</button>
+    </div>
+
     <!-- 第一屏：今日焦点 + 灵感（左，最大权重）｜ 右侧：AI 问答 + 截止预警 -->
     <div class="top-grid">
       <div class="top-left">
-      <section class="wb-card focus-card">
+      <section v-if="!cardHidden('focus')" class="wb-card focus-card">
         <header class="card-head">
           <span class="accent-bar" :style="{ background: moduleColor('home', themeStore.dark) }"></span>
           <h2>今日焦点</h2>
           <span class="mono head-meta">{{ todayLabel }}</span>
+          <button class="card-hide" title="隐藏此卡片（可在 设置→显示→总览卡片 恢复）" @click="hideCard('focus')">✕</button>
         </header>
         <ListSkeleton v-if="loading" :rows="5" />
         <div v-else-if="focusRows.length" class="focus-list">
@@ -554,11 +597,12 @@ async function saveInspiration() {
       </section>
 
       <!-- 灵感：最近记录（点击跳灵感页） -->
-      <section class="wb-card insp-card">
+      <section v-if="!cardHidden('insp')" class="wb-card insp-card">
         <header class="card-head">
           <span class="accent-bar" :style="{ background: moduleColor('inspiration', themeStore.dark) }"></span>
           <h2>灵感</h2>
           <span class="mono head-meta">近 7 天 · {{ recentInspirations.length }}</span>
+          <button class="card-hide" title="隐藏此卡片" @click="hideCard('insp')">✕</button>
           <NButton size="tiny" text type="primary" class="insp-all" @click="go('/inspiration')">全部 <template #icon><NIcon :component="ArrowRight" /></template></NButton>
         </header>
         <div v-if="recentInspirations.length" class="insp-list">
@@ -586,12 +630,13 @@ async function saveInspiration() {
 
       <div class="top-right">
         <!-- AI 智能问答（常驻） -->
-        <section class="wb-card qa-card">
+        <section v-if="!cardHidden('qa')" class="wb-card qa-card">
           <header class="card-head">
             <span class="accent-bar" :style="{ background: moduleColor('knowledge', themeStore.dark) }"></span>
             <h2>AI 问答</h2>
             <span v-if="llmConfigured()" class="ai-chip mono">{{ llmConfigLabel() }}</span>
             <span v-else class="ai-chip fallback">本地检索</span>
+            <button class="card-hide" title="隐藏此卡片" @click="hideCard('qa')">✕</button>
           </header>
           <div class="qa-body">
             <div class="qa-bar">
@@ -631,11 +676,12 @@ async function saveInspiration() {
         </section>
 
         <!-- 截止预警 -->
-        <section class="wb-card watch-card">
+        <section v-if="!cardHidden('watch')" class="wb-card watch-card">
           <header class="card-head">
             <span class="accent-bar" :style="{ background: moduleColor('ops', themeStore.dark) }"></span>
             <h2>截止预警 · 未来 7 天</h2>
             <span class="mono head-meta">{{ watchGroups.length }} 天</span>
+            <button class="card-hide" title="隐藏此卡片" @click="hideCard('watch')">✕</button>
           </header>
           <div v-if="watchGroups.length" class="watch-list">
             <div v-for="g in watchGroups" :key="g.date" class="watch-group">
@@ -656,7 +702,8 @@ async function saveInspiration() {
 
     <!-- 进度条区：一行四卡，均可点击跳转 -->
     <div class="prog-grid">
-      <div class="wb-card hoverable prog-card clickable" @click="go('/life')">
+      <div v-if="!cardHidden('habit')" class="wb-card hoverable prog-card clickable" @click="go('/life')">
+        <button class="card-hide prog-hide" title="隐藏此卡片" @click.stop="hideCard('habit')">✕</button>
         <div class="pg-label">习惯 · 今日</div>
         <div class="pg-value mono" :style="{ color: moduleColor('life', themeStore.dark) }">
           {{ habitToday.done }}<span class="pg-suffix">/{{ habitToday.total }}</span>
@@ -665,7 +712,8 @@ async function saveInspiration() {
         <div class="pg-bar"><div class="pg-bar-fill" :style="{ width: (habitToday.total ? habitToday.done / habitToday.total * 100 : 0) + '%', background: 'var(--wb-module-life)' }"></div></div>
       </div>
 
-      <div class="wb-card hoverable prog-card clickable" @click="go('/life')">
+      <div v-if="!cardHidden('ledger')" class="wb-card hoverable prog-card clickable" @click="go('/life')">
+        <button class="card-hide prog-hide" title="隐藏此卡片" @click.stop="hideCard('ledger')">✕</button>
         <div class="pg-label">记账 · 本月</div>
         <div class="pg-value mono" :style="{ color: moduleColor('ops', themeStore.dark) }">¥{{ ledgerThisMonth.spend.toFixed(0) }}</div>
         <div class="pg-sub">
@@ -675,7 +723,8 @@ async function saveInspiration() {
         </div>
       </div>
 
-      <div class="wb-card hoverable prog-card clickable" @click="go('/study')">
+      <div v-if="!cardHidden('study')" class="wb-card hoverable prog-card clickable" @click="go('/study')">
+        <button class="card-hide prog-hide" title="隐藏此卡片" @click.stop="hideCard('study')">✕</button>
         <div class="pg-label">学习</div>
         <div class="pg-value mono" :style="{ color: moduleColor('study', themeStore.dark) }">
           {{ studyProgress.pendingAssignments }}<span class="pg-suffix"> 待完成</span>
@@ -683,7 +732,8 @@ async function saveInspiration() {
         <div class="pg-sub">作业 · 课程进行中 {{ studyProgress.activeCourses }} 门</div>
       </div>
 
-      <div class="wb-card hoverable prog-card clickable" @click="go('/dev')">
+      <div v-if="!cardHidden('task')" class="wb-card hoverable prog-card clickable" @click="go('/dev')">
+        <button class="card-hide prog-hide" title="隐藏此卡片" @click.stop="hideCard('task')">✕</button>
         <div class="pg-label">任务 · 本周完成</div>
         <div class="pg-value mono" :style="{ color: moduleColor('dev', themeStore.dark) }">{{ taskWeek.thisWeek }}</div>
         <div class="pg-sub">
@@ -698,7 +748,7 @@ async function saveInspiration() {
 
     <!-- 趋势小图（纯 SVG，无新依赖） -->
     <div class="trend-grid">
-      <section class="wb-card">
+      <section v-if="!cardHidden('trend14')" class="wb-card">
         <header class="card-head">
           <span class="accent-bar" :style="{ background: moduleColor('life', themeStore.dark) }"></span>
           <h2>近 14 天节奏</h2>
@@ -706,6 +756,7 @@ async function saveInspiration() {
             <i class="lg-swatch bar-a"></i>打卡
             <i class="lg-swatch bar-b"></i>番茄
           </span>
+          <button class="card-hide" title="隐藏此卡片" @click="hideCard('trend14')">✕</button>
         </header>
         <div class="chart-body">
           <svg :viewBox="`0 0 322 ${TREND_H + 16}`" preserveAspectRatio="none" class="chart">
@@ -727,11 +778,12 @@ async function saveInspiration() {
         </div>
       </section>
 
-      <section class="wb-card">
+      <section v-if="!cardHidden('spend6m')" class="wb-card">
         <header class="card-head">
           <span class="accent-bar" :style="{ background: moduleColor('ops', themeStore.dark) }"></span>
           <h2>近 6 月支出</h2>
           <span class="mono head-meta">峰值 ¥{{ spend6mMax.toFixed(0) }}</span>
+          <button class="card-hide" title="隐藏此卡片" @click="hideCard('spend6m')">✕</button>
         </header>
         <div class="chart-body">
           <svg :viewBox="`0 0 ${SPARK_W} ${SPARK_H}`" preserveAspectRatio="none" class="chart spark">
@@ -991,7 +1043,8 @@ async function saveInspiration() {
 }
 @media (max-width: 1100px) { .prog-grid { grid-template-columns: repeat(2, 1fr); } }
 @media (max-width: 640px) { .prog-grid { grid-template-columns: 1fr; } }
-.prog-card { padding: 12px 14px; display: flex; flex-direction: column; gap: 3px; }
+.prog-card { position: relative; padding: 12px 14px; display: flex; flex-direction: column; gap: 3px; }
+.prog-hide { position: absolute; top: 6px; right: 6px; }
 .pg-label { font-size: 11.5px; color: var(--wb-text-3); letter-spacing: 0.04em; }
 .pg-value { font-size: var(--wb-fs-metric); font-weight: 680; line-height: 1.2; }
 .pg-suffix { font-size: var(--wb-fs-sm); font-weight: 500; color: var(--wb-text-3); }
@@ -1035,4 +1088,60 @@ async function saveInspiration() {
 .lg-swatch { width: 8px; height: 8px; border-radius: 2px; display: inline-block; }
 .lg-swatch.bar-a { background: var(--wb-accent); }
 .lg-swatch.bar-b { background: color-mix(in srgb, var(--wb-accent) 32%, transparent); }
+
+/* 卡片右上角隐藏按钮：hover 才出现，避免常态干扰视线 */
+.card-hide {
+  margin-left: auto;
+  width: 22px;
+  height: 22px;
+  border: none;
+  background: transparent;
+  color: var(--wb-text-3);
+  border-radius: var(--wb-radius-sm);
+  cursor: pointer;
+  font-size: 11px;
+  line-height: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0;
+  transition: opacity 120ms ease-out, background-color 120ms ease-out;
+}
+.wb-card:hover .card-hide,
+.prog-card:hover .card-hide {
+  opacity: 1;
+}
+.card-hide:hover {
+  background: var(--wb-card-alt);
+  color: var(--wb-danger);
+}
+/* 减少动效：不淡入 */
+:global(.wb-reduced-motion) .card-hide { transition: none; }
+
+/* 恢复入口：有任何隐藏卡片时显示 */
+.cards-restore {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  font-size: var(--wb-fs-sm);
+  color: var(--wb-text-3);
+  padding: 6px 10px;
+  border: 1px dashed var(--wb-border);
+  border-radius: var(--wb-radius-md);
+}
+.cards-restore .restore-chip {
+  border: var(--wb-border-w) solid var(--wb-border);
+  background: var(--wb-card);
+  color: var(--wb-text-2);
+  border-radius: 999px;
+  padding: 2px 10px;
+  font-size: var(--wb-fs-sm);
+  cursor: pointer;
+  transition: border-color 120ms ease-out, color 120ms ease-out;
+}
+.cards-restore .restore-chip:hover {
+  border-color: var(--wb-accent);
+  color: var(--wb-accent);
+}
 </style>
