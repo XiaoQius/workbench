@@ -883,7 +883,8 @@ async function saveInspiration() {
   display: flex;
   flex-direction: column;
   gap: var(--wb-sp-3);
-  max-width: 1280px;
+  /* 宽屏自适应：铺满内容区即可，可读性由 AppShell 的 padding 控制 */
+  max-width: none;
 }
 
 /* ---- 首次引导 ---- */
