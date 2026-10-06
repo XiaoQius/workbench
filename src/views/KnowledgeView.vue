@@ -2,7 +2,7 @@
 import { watch, ref, onMounted, computed } from 'vue'
 import { refreshTick } from '@/stores/ui'
 import { NButton, NTag, NTabs, NTabPane, NIcon, useMessage, NInput } from 'naive-ui'
-import { Plus, Trash, ExternalLink, AlertTriangle, Refresh } from '@vicons/tabler'
+import { Plus, Trash, ExternalLink, AlertTriangle, Refresh, Pencil } from '@vicons/tabler'
 import EmptyState from '@/components/EmptyState.vue'
 import ListSkeleton from '@/components/ListSkeleton.vue'
 import ModalForm, { type FieldDef } from '@/components/ModalForm.vue'
@@ -389,7 +389,7 @@ const skillTreeComputed = computed(() => {
   const render = (n: SkillNode, depth: number): string => {
     const kids = byParent.get(n.id) ?? []
     const childHtml = kids.length ? `<div class="st-children">${kids.map((k) => render(k, depth + 1)).join('')}</div>` : ''
-    return `<div class="st-node" style="margin-left:${depth * 22}px"><span class="st-dot" data-st="${escHtml(n.status)}"></span>${escHtml(n.name)}<span class="st-meta">L${n.level} · ${escHtml(n.status)}</span>${childHtml}</div>`
+    return `<div class="st-node" style="margin-left:${depth * 22}px"><span class="st-dot" data-st="${escHtml(n.status)}"></span>${escHtml(n.name)}<span class="st-meta">L${n.level} · ${escHtml(n.status)}</span><span class="st-ops"><button type="button" class="st-act" data-act="edit" data-id="${n.id}" title="编辑「${escHtml(n.name)}」">✎</button><button type="button" class="st-act danger" data-act="del" data-id="${n.id}" title="删除「${escHtml(n.name)}」">✕</button></span>${childHtml}</div>`
   }
   return roots.map((r) => render(r, 0)).join('')
 })
@@ -399,6 +399,18 @@ function escHtml(s: string): string {
   return String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
 }
 const skillTreeHtml = computed(() => `<div class="st-tree">${skillTreeComputed.value || '<p class="dim">暂无技能节点</p>'}</div>`)
+
+// 技能树是 v-html 渲染的，节点里原本没有任何操作入口（removeSkill 因此成了死代码）。
+// 这里在树容器上做一次事件委托：把 data-act / data-id 打在按钮上，点击时反查节点。
+function onSkillTreeClick(e: MouseEvent) {
+  const el = (e.target as HTMLElement | null)?.closest('[data-act]') as HTMLElement | null
+  if (!el) return
+  const id = Number(el.getAttribute('data-id'))
+  const node = skillNodes.value.find((s) => s.id === id)
+  if (!node) return
+  if (el.getAttribute('data-act') === 'edit') openEditSkill(node)
+  else void removeSkill(node)
+}
 
 // ---- F-KNW-06 学习路径 ----
 async function addPath(v: Record<string, unknown>) {
@@ -476,6 +488,205 @@ async function removeContent(c: ContentCalendar) {
   const ok = await confirm({ title: '删除内容排期？', content: `「${c.title}」${c.platform}，计划于 ${c.plannedAt}。` })
   if (!ok) return
   try { await contentCalendarsRepo.remove(c.id); load() } catch { /* ignore */ }
+}
+
+// ---- 编辑已有记录 ----
+// 各实体复用「新增」用的同一份 fields 定义，保存时只写业务列（不碰 id / createdAt）。
+const editPitfallShow = ref(false)
+const editPitfallId = ref<number | null>(null)
+const editPitfallForm = ref<Record<string, unknown>>({})
+function openEditPitfall(p: Pitfall) {
+  editPitfallId.value = p.id
+  editPitfallForm.value = {
+    title: p.title, category: p.category ?? '其他',
+    tags: p.tags ?? '', problem: p.problem ?? '', solution: p.solution ?? '',
+  }
+  editPitfallShow.value = true
+}
+async function saveEditPitfall(v: Record<string, unknown>) {
+  if (editPitfallId.value === null) return
+  try {
+    await pitfallsRepo.update(editPitfallId.value, {
+      title: String(v.title || ''), category: String(v.category || '其他'),
+      tags: String(v.tags || ''), problem: String(v.problem || ''), solution: String(v.solution || ''),
+    })
+    message.success('已更新')
+    editPitfallShow.value = false
+    load()
+  } catch { message.error('保存失败') }
+}
+
+const editLinkShow = ref(false)
+const editLinkId = ref<number | null>(null)
+const editLinkForm = ref<Record<string, unknown>>({})
+function openEditLink(l: Resource) {
+  editLinkId.value = l.id
+  editLinkForm.value = { title: l.title, url: l.url, category: l.category ?? 'favorite', note: l.note ?? '' }
+  editLinkShow.value = true
+}
+async function saveEditLink(v: Record<string, unknown>) {
+  if (editLinkId.value === null) return
+  try {
+    await resourcesRepo.update(editLinkId.value, {
+      title: String(v.title || ''), url: String(v.url || ''),
+      category: String(v.category || 'favorite'), note: String(v.note || ''),
+    })
+    message.success('已更新')
+    editLinkShow.value = false
+    load()
+  } catch { message.error('保存失败') }
+}
+
+const editDecisionShow = ref(false)
+const editDecisionId = ref<number | null>(null)
+const editDecisionForm = ref<Record<string, unknown>>({})
+function openEditDecision(d: Decision) {
+  editDecisionId.value = d.id
+  editDecisionForm.value = {
+    title: d.title, context: d.context ?? '', decision: d.decision ?? '',
+    alternatives: d.alternatives ?? '', status: d.status ?? 'proposed', decidedAt: d.decidedAt ?? '',
+  }
+  editDecisionShow.value = true
+}
+async function saveEditDecision(v: Record<string, unknown>) {
+  if (editDecisionId.value === null) return
+  try {
+    await decisionsRepo.update(editDecisionId.value, {
+      title: String(v.title || ''), context: String(v.context || ''), decision: String(v.decision || ''),
+      alternatives: String(v.alternatives || ''), status: String(v.status || 'proposed'),
+      decidedAt: v.decidedAt ? String(v.decidedAt) : null,
+    })
+    message.success('已更新')
+    editDecisionShow.value = false
+    load()
+  } catch { message.error('保存失败') }
+}
+
+const editSkillShow = ref(false)
+const editSkillId = ref<number | null>(null)
+const editSkillForm = ref<Record<string, unknown>>({})
+function openEditSkill(s: SkillNode) {
+  editSkillId.value = s.id
+  const parent = s.parentId ? skillNodes.value.find((n) => n.id === s.parentId) : undefined
+  editSkillForm.value = {
+    name: s.name, parentName: parent ? parent.name : '',
+    level: String(s.level ?? 1), status: s.status ?? 'todo', note: s.note ?? '',
+  }
+  editSkillShow.value = true
+}
+async function saveEditSkill(v: Record<string, unknown>) {
+  if (editSkillId.value === null) return
+  const parentName = String(v.parentName || '').trim()
+  // 不允许把自己设成自己的父级（会让树渲染成环）
+  const parent = parentName
+    ? skillNodes.value.find((n) => n.name === parentName && n.id !== editSkillId.value)
+    : undefined
+  try {
+    await skillTreeRepo.update(editSkillId.value, {
+      name: String(v.name || ''), parentId: parent ? parent.id : null,
+      level: Number(v.level || 1), status: String(v.status || 'todo'), note: String(v.note || ''),
+    })
+    message.success('已更新')
+    editSkillShow.value = false
+    load()
+  } catch { message.error('保存失败') }
+}
+
+const editPathShow = ref(false)
+const editPathId = ref<number | null>(null)
+const editPathForm = ref<Record<string, unknown>>({})
+function openEditPath(p: LearningPath) {
+  editPathId.value = p.id
+  editPathForm.value = {
+    title: p.title, goal: p.goal ?? '', step: p.step ?? '1',
+    resource: p.resource ?? '', status: p.status ?? 'todo',
+  }
+  editPathShow.value = true
+}
+async function saveEditPath(v: Record<string, unknown>) {
+  if (editPathId.value === null) return
+  try {
+    // orderIndex 由新增时分配，编辑不改（重排请删除重建）
+    await learningPathsRepo.update(editPathId.value, {
+      title: String(v.title || ''), goal: String(v.goal || ''), step: String(v.step || '1'),
+      resource: String(v.resource || ''), status: String(v.status || 'todo'),
+    })
+    message.success('已更新')
+    editPathShow.value = false
+    load()
+  } catch { message.error('保存失败') }
+}
+
+const editThreeDShow = ref(false)
+const editThreeDId = ref<number | null>(null)
+const editThreeDForm = ref<Record<string, unknown>>({})
+function openEditThreeD(t: ThreeDProject) {
+  editThreeDId.value = t.id
+  editThreeDForm.value = {
+    name: t.name, tool: t.tool ?? 'other', category: t.category ?? 'model',
+    status: t.status ?? 'planning', path: t.path ?? '', note: t.note ?? '',
+  }
+  editThreeDShow.value = true
+}
+async function saveEditThreeD(v: Record<string, unknown>) {
+  if (editThreeDId.value === null) return
+  try {
+    await threeDProjectsRepo.update(editThreeDId.value, {
+      name: String(v.name || ''), tool: String(v.tool || 'other'), category: String(v.category || 'model'),
+      status: String(v.status || 'planning'), path: String(v.path || ''), note: String(v.note || ''),
+    })
+    message.success('已更新')
+    editThreeDShow.value = false
+    load()
+  } catch { message.error('保存失败') }
+}
+
+const editPortfolioShow = ref(false)
+const editPortfolioId = ref<number | null>(null)
+const editPortfolioForm = ref<Record<string, unknown>>({})
+function openEditPortfolio(p: Portfolio) {
+  editPortfolioId.value = p.id
+  editPortfolioForm.value = {
+    title: p.title, category: p.category ?? 'code', url: p.url ?? '',
+    path: p.path ?? '', status: p.status ?? 'draft', note: p.note ?? '',
+  }
+  editPortfolioShow.value = true
+}
+async function saveEditPortfolio(v: Record<string, unknown>) {
+  if (editPortfolioId.value === null) return
+  try {
+    await portfoliosRepo.update(editPortfolioId.value, {
+      title: String(v.title || ''), category: String(v.category || 'code'), url: String(v.url || ''),
+      path: String(v.path || ''), status: String(v.status || 'draft'), note: String(v.note || ''),
+    })
+    message.success('已更新')
+    editPortfolioShow.value = false
+    load()
+  } catch { message.error('保存失败') }
+}
+
+const editContentShow = ref(false)
+const editContentId = ref<number | null>(null)
+const editContentForm = ref<Record<string, unknown>>({})
+function openEditContent(c: ContentCalendar) {
+  editContentId.value = c.id
+  editContentForm.value = {
+    title: c.title, platform: c.platform ?? 'other', plannedAt: c.plannedAt ?? '',
+    status: c.status ?? 'planned', note: c.note ?? '',
+  }
+  editContentShow.value = true
+}
+async function saveEditContent(v: Record<string, unknown>) {
+  if (editContentId.value === null) return
+  try {
+    await contentCalendarsRepo.update(editContentId.value, {
+      title: String(v.title || ''), platform: String(v.platform || 'other'), plannedAt: String(v.plannedAt || ''),
+      status: String(v.status || 'planned'), note: String(v.note || ''),
+    })
+    message.success('已更新')
+    editContentShow.value = false
+    load()
+  } catch { message.error('保存失败') }
 }
 
 // ---- F-KNW-04 实体双链 + 关联图视图 ----
@@ -620,6 +831,7 @@ async function shareSnapshot() {
             <div class="pc-foot">
               <span v-if="p.tags" class="mono pc-tags">{{ p.tags }}</span>
               <span class="mono pc-date">{{ p.updatedAt || p.createdAt }}</span>
+              <NButton size="tiny" text @click="openEditPitfall(p)" title="编辑"><template #icon><NIcon :component="Pencil" /></template></NButton>
               <NButton size="tiny" text type="error" @click="removePitfall(p)"><template #icon><NIcon :component="Trash" /></template></NButton>
             </div>
           </div>
@@ -644,6 +856,9 @@ async function shareSnapshot() {
             </div>
             <div class="link-side">
               <NTag size="tiny" :bordered="false" :type="linkColor(l.category) as any">{{ l.category }}</NTag>
+              <NButton size="tiny" quaternary circle @click.stop="openEditLink(l)" title="编辑">
+                <template #icon><NIcon :component="Pencil" /></template>
+              </NButton>
               <NButton size="tiny" quaternary circle @click.stop="openLink(l)" title="打开">
                 <template #icon><NIcon :component="ExternalLink" /></template>
               </NButton>
@@ -736,6 +951,9 @@ async function shareSnapshot() {
             <div class="link-side">
               <NTag size="tiny" :bordered="false" :type="decisionStatus(d).color">{{ decisionStatus(d).label }}</NTag>
               <span class="mono" style="font-size: 10.5px; color: var(--wb-text-3)">{{ d.decidedAt || (d.createdAt || '').slice(0, 10) }}</span>
+              <NButton size="tiny" quaternary circle @click="openEditDecision(d)" title="编辑">
+                <template #icon><NIcon :component="Pencil" /></template>
+              </NButton>
               <NButton size="tiny" quaternary circle type="error" @click="removeDecision(d)">
                 <template #icon><NIcon :component="Trash" /></template>
               </NButton>
@@ -753,7 +971,7 @@ async function shareSnapshot() {
             添加技能
           </NButton>
         </div>
-        <div class="st-wrap" v-html="skillTreeHtml"></div>
+        <div class="st-wrap" v-html="skillTreeHtml" @click="onSkillTreeClick"></div>
         <EmptyState v-if="!skillNodes.length" text="暂无技能节点，规划你的技能树" />
       </n-tab-pane>
 
@@ -779,6 +997,9 @@ async function shareSnapshot() {
               <div v-if="p.resource" class="mono rv-meta">资源：{{ p.resource }}</div>
             </div>
             <div style="display: flex; gap: 6px">
+              <NButton size="small" @click="openEditPath(p)" title="编辑">
+                <template #icon><NIcon :component="Pencil" /></template>
+              </NButton>
               <NButton size="small" @click="togglePathStatus(p)">
                 {{ p.status === 'todo' ? '开始' : p.status === 'doing' ? '完成' : '重置' }}
               </NButton>
@@ -807,7 +1028,10 @@ async function shareSnapshot() {
                 </div>
                 <div class="mono rv-meta">{{ t.path || '未指定路径' }} · {{ t.status }}</div>
               </div>
-              <NButton size="tiny" quaternary circle type="error" @click="removeThreeD(t)"><template #icon><NIcon :component="Trash" /></template></NButton>
+              <div style="display: flex; gap: 4px">
+                <NButton size="tiny" quaternary circle @click="openEditThreeD(t)" title="编辑"><template #icon><NIcon :component="Pencil" /></template></NButton>
+                <NButton size="tiny" quaternary circle type="error" @click="removeThreeD(t)"><template #icon><NIcon :component="Trash" /></template></NButton>
+              </div>
             </div>
           </div>
           <EmptyState v-else-if="!threeD.length" text="暂无 3D 项目" />
@@ -825,7 +1049,10 @@ async function shareSnapshot() {
                 </div>
                 <div class="mono rv-meta">{{ p.url || p.path || '—' }} · {{ p.status }}</div>
               </div>
-              <NButton size="tiny" quaternary circle type="error" @click="removePortfolio(p)"><template #icon><NIcon :component="Trash" /></template></NButton>
+              <div style="display: flex; gap: 4px">
+                <NButton size="tiny" quaternary circle @click="openEditPortfolio(p)" title="编辑"><template #icon><NIcon :component="Pencil" /></template></NButton>
+                <NButton size="tiny" quaternary circle type="error" @click="removePortfolio(p)"><template #icon><NIcon :component="Trash" /></template></NButton>
+              </div>
             </div>
           </div>
           <EmptyState v-else-if="!portfolios.length" text="暂无作品记录" />
@@ -843,7 +1070,10 @@ async function shareSnapshot() {
                 </div>
                 <div class="mono rv-meta">计划 {{ c.plannedAt }} · {{ c.status }}</div>
               </div>
-              <NButton size="tiny" quaternary circle type="error" @click="removeContent(c)"><template #icon><NIcon :component="Trash" /></template></NButton>
+              <div style="display: flex; gap: 4px">
+                <NButton size="tiny" quaternary circle @click="openEditContent(c)" title="编辑"><template #icon><NIcon :component="Pencil" /></template></NButton>
+                <NButton size="tiny" quaternary circle type="error" @click="removeContent(c)"><template #icon><NIcon :component="Trash" /></template></NButton>
+              </div>
             </div>
           </div>
           <EmptyState v-else-if="!contentCal.length" text="暂无内容排期" />
@@ -890,6 +1120,14 @@ async function shareSnapshot() {
     <ModalForm v-model:show="threeDFormShow" title="新增 3D 项目" :fields="threeDFields" confirm-text="保存" @submit="addThreeD" />
     <ModalForm v-model:show="portfolioFormShow" title="新增作品" :fields="portfolioFields" confirm-text="保存" @submit="addPortfolio" />
     <ModalForm v-model:show="contentFormShow" title="新增内容排期" :fields="contentFields" confirm-text="保存" @submit="addContent" />
+    <ModalForm v-model:show="editPitfallShow" title="编辑踩坑记录" :fields="pitfallFields" :initial="editPitfallForm" confirm-text="保存" @submit="saveEditPitfall" />
+    <ModalForm v-model:show="editLinkShow" title="编辑收藏链接" :fields="linkFields" :initial="editLinkForm" confirm-text="保存" @submit="saveEditLink" />
+    <ModalForm v-model:show="editDecisionShow" title="编辑决策记录" :fields="decisionFields" :initial="editDecisionForm" confirm-text="保存" @submit="saveEditDecision" />
+    <ModalForm v-model:show="editSkillShow" title="编辑技能节点" :fields="skillFields" :initial="editSkillForm" confirm-text="保存" @submit="saveEditSkill" />
+    <ModalForm v-model:show="editPathShow" title="编辑学习路径步骤" :fields="pathFields" :initial="editPathForm" confirm-text="保存" @submit="saveEditPath" />
+    <ModalForm v-model:show="editThreeDShow" title="编辑 3D 项目" :fields="threeDFields" :initial="editThreeDForm" confirm-text="保存" @submit="saveEditThreeD" />
+    <ModalForm v-model:show="editPortfolioShow" title="编辑作品" :fields="portfolioFields" :initial="editPortfolioForm" confirm-text="保存" @submit="saveEditPortfolio" />
+    <ModalForm v-model:show="editContentShow" title="编辑内容排期" :fields="contentFields" :initial="editContentForm" confirm-text="保存" @submit="saveEditContent" />
     <ModalForm v-model:show="batchFormShow" title="批量入库" confirm-text="导入">
       <template #default>
         <div style="display: flex; gap: 6px; margin-bottom: 8px">
@@ -961,6 +1199,16 @@ async function shareSnapshot() {
 .st-wrap { background: var(--wb-card-bg); border: 1px solid var(--wb-border); border-radius: var(--wb-radius-md); padding: 14px; }
 .st-tree { display: flex; flex-direction: column; gap: var(--wb-sp-2); }
 .st-node { display: flex; align-items: center; gap: 7px; font-size: 12.5px; padding: 4px 0; }
+/* 技能树是 v-html 渲染的，节点内元素拿不到 scoped 的 data-v 属性，故用 :deep */
+.st-wrap :deep(.st-ops) { margin-left: 6px; display: flex; gap: 2px; opacity: 0; transition: opacity 120ms ease-out; }
+.st-wrap :deep(.st-node:hover .st-ops) { opacity: 1; }
+.st-wrap :deep(.st-act) {
+  width: 17px; height: 17px; display: flex; align-items: center; justify-content: center;
+  border: none; border-radius: 3px; background: var(--wb-card); color: var(--wb-text-2);
+  cursor: pointer; font-size: 10px; line-height: 1; padding: 0;
+}
+.st-wrap :deep(.st-act:hover) { background: var(--wb-card-alt); color: var(--wb-accent); }
+.st-wrap :deep(.st-act.danger:hover) { color: var(--wb-danger); }
 .st-dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; flex: none; }
 .st-dot[data-st='mastered'] { background: var(--wb-success); }
 .st-dot[data-st='learning'] { background: var(--wb-info, #2080f0); }

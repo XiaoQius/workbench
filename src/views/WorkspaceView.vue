@@ -2,7 +2,7 @@
 import { watch, ref, onMounted, onUnmounted, computed } from 'vue'
 import { refreshTick } from '@/stores/ui'
 import { NButton, NTag, NInput, NSelect, NModal, NForm, NFormItem, NSpace, useMessage, NIcon } from 'naive-ui'
-import { Plus, Trash, Rocket, Refresh } from '@vicons/tabler'
+import { Plus, Trash, Rocket, Refresh, Edit } from '@vicons/tabler'
 import EmptyState from '@/components/EmptyState.vue'
 import ListSkeleton from '@/components/ListSkeleton.vue'
 import ModalForm, { type FieldDef } from '@/components/ModalForm.vue'
@@ -397,6 +397,33 @@ function removePrompt(id: string) {
   persistPrompts()
 }
 
+// ---- 编辑 Prompt（数据存在 localStorage，没有 repo，走本地数组改写 + 持久化） ----
+const editPromptId = ref<string | null>(null)
+const editPromptName = ref('')
+const editPromptText = ref('')
+function openEditPrompt(p: { id: string; name: string; text: string }) {
+  editPromptId.value = p.id
+  editPromptName.value = p.name
+  editPromptText.value = p.text
+}
+function cancelEditPrompt() {
+  editPromptId.value = null
+  editPromptName.value = ''
+  editPromptText.value = ''
+}
+function saveEditPrompt() {
+  if (!editPromptId.value) return
+  const name = editPromptName.value.trim()
+  const text = editPromptText.value.trim()
+  if (!name || !text) { message.warning('请填写名称与模板内容'); return }
+  const i = promptLib.value.findIndex((p) => p.id === editPromptId.value)
+  if (i === -1) { cancelEditPrompt(); return }
+  promptLib.value[i] = { ...promptLib.value[i], name, text }
+  persistPrompts()
+  message.success('Prompt 已更新')
+  cancelEditPrompt()
+}
+
 // ---- F-AGT-14 交接包：为最近一次工作流生成交接文本 ----
 function handoffPack() {
   if (!wfResult.value) { message.warning('请先拆解一个目标任务'); return }
@@ -567,6 +594,37 @@ async function removeTool(t: Tool) {
   }
 }
 
+// ---- 编辑工具（复用 toolFields；hitCount 是使用频次统计，编辑时不覆盖） ----
+const editToolShow = ref(false)
+const editToolId = ref<number | null>(null)
+const editToolForm = ref<Record<string, unknown>>({})
+function openEditTool(t: Tool) {
+  editToolId.value = t.id
+  editToolForm.value = {
+    name: t.name, category: t.category, launchType: t.launchType,
+    target: t.target, port: t.port ?? null,
+    note: t.note ?? '', docUrl: t.docUrl ?? '',
+  }
+  editToolShow.value = true
+}
+async function saveEditTool(v: Record<string, unknown>) {
+  if (editToolId.value === null) return
+  try {
+    await toolsRepo.update(editToolId.value, {
+      name: String(v.name || '').trim() || '未命名工具',
+      category: String(v.category || 'other') as Tool['category'],
+      launchType: String(v.launchType || 'protocol') as Tool['launchType'],
+      target: String(v.target || ''),
+      port: v.port ? Number(v.port) : null,
+      note: String(v.note || ''),
+      docUrl: String(v.docUrl || ''),
+    })
+    message.success('工具已更新')
+    editToolShow.value = false
+    load()
+  } catch { message.error('保存失败') }
+}
+
 const filteredTools = computed(() =>
   keyword.value ? tools.value.filter((t) => t.name.includes(keyword.value) || (t.note || '').includes(keyword.value)) : tools.value,
 )
@@ -616,6 +674,34 @@ async function removeAgent(a: Agent) {
   } catch {
     message.error('删除失败')
   }
+}
+
+// ---- 编辑 Agent（复用 agentFields；startedAt 由启停动作维护，这里不动） ----
+const editAgentShow = ref(false)
+const editAgentId = ref<number | null>(null)
+const editAgentForm = ref<Record<string, unknown>>({})
+function openEditAgent(a: Agent) {
+  editAgentId.value = a.id
+  editAgentForm.value = {
+    name: a.name, vendor: a.vendor ?? '', task: a.task ?? '',
+    status: a.status, note: a.note ?? '',
+  }
+  editAgentShow.value = true
+}
+async function saveEditAgent(v: Record<string, unknown>) {
+  if (editAgentId.value === null) return
+  try {
+    await agentsRepo.update(editAgentId.value, {
+      name: String(v.name || '').trim() || '未命名 Agent',
+      vendor: String(v.vendor || ''),
+      task: String(v.task || ''),
+      status: String(v.status || 'idle') as Agent['status'],
+      note: String(v.note || ''),
+    })
+    message.success('Agent 已更新')
+    editAgentShow.value = false
+    load()
+  } catch { message.error('保存失败') }
 }
 
 const agentStatusColor = (s: string) =>
@@ -961,6 +1047,9 @@ useListNav(rollbackListEl, {
                 <NButton size="tiny" quaternary circle @click="launchTool(t)" title="启动">
                   <template #icon><NIcon :component="Rocket" /></template>
                 </NButton>
+                <NButton size="tiny" quaternary circle @click="openEditTool(t)" title="编辑">
+                  <template #icon><NIcon :component="Edit" /></template>
+                </NButton>
                 <NButton size="tiny" quaternary circle type="error" @click="removeTool(t)" title="删除">
                   <template #icon><NIcon :component="Trash" /></template>
                 </NButton>
@@ -1003,6 +1092,9 @@ useListNav(rollbackListEl, {
                   :options="[{ label: '空闲', value: 'idle' }, { label: '运行中', value: 'running' }, { label: '卡住', value: 'stalled' }, { label: '已完成', value: 'done' }]"
                   @update:value="(v: string) => setAgentStatus(a, v)"
                 />
+                <NButton size="tiny" quaternary circle @click="openEditAgent(a)" title="编辑">
+                  <template #icon><NIcon :component="Edit" /></template>
+                </NButton>
                 <NButton size="tiny" quaternary circle type="error" @click="removeAgent(a)">
                   <template #icon><NIcon :component="Trash" /></template>
                 </NButton>
@@ -1177,9 +1269,18 @@ useListNav(rollbackListEl, {
           </div>
           <div v-if="promptLib.length" class="prompt-list" ref="promptListEl" tabindex="0" :aria-label="'Prompt 库列表，共 ' + promptLib.length + ' 行，↑↓ 选择'">
             <div v-for="p in promptLib" :key="p.id" class="prompt-item" :data-row-id="p.id">
-              <span class="prompt-name">{{ p.name }}</span>
-              <span class="prompt-text mono">{{ p.text }}</span>
-              <NButton size="tiny" text type="error" @click="removePrompt(p.id)">删除</NButton>
+              <template v-if="editPromptId === p.id">
+                <NInput v-model:value="editPromptName" size="tiny" placeholder="名称" style="flex: 0 0 120px" />
+                <NInput v-model:value="editPromptText" size="tiny" placeholder="模板内容" style="flex: 1" />
+                <NButton size="tiny" text type="primary" @click="saveEditPrompt()">保存</NButton>
+                <NButton size="tiny" text @click="cancelEditPrompt()">取消</NButton>
+              </template>
+              <template v-else>
+                <span class="prompt-name">{{ p.name }}</span>
+                <span class="prompt-text mono">{{ p.text }}</span>
+                <NButton size="tiny" text @click="openEditPrompt(p)">编辑</NButton>
+                <NButton size="tiny" text type="error" @click="removePrompt(p.id)">删除</NButton>
+              </template>
             </div>
           </div>
           <EmptyState v-else text="Prompt 库为空" />
@@ -1230,6 +1331,9 @@ useListNav(rollbackListEl, {
       </template>
     </ModalForm>
     <ModalForm v-model:show="agentFormShow" title="登记 Agent" :fields="agentFields" @submit="addAgent" />
+    <!-- 编辑弹窗：与新增共用同一份 fields，initial 回填当前值 -->
+    <ModalForm v-model:show="editToolShow" title="编辑工具" :fields="toolFields" :initial="editToolForm" confirm-text="保存" @submit="saveEditTool" />
+    <ModalForm v-model:show="editAgentShow" title="编辑 Agent" :fields="agentFields" :initial="editAgentForm" confirm-text="保存" @submit="saveEditAgent" />
   </div>
 </template>
 

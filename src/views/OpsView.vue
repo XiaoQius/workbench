@@ -327,6 +327,41 @@ async function removeServer(s: Server) {
   } catch { message.error('删除失败') }
 }
 
+// ---- 编辑服务器 ----
+// 列名全部取自 drizzle/schema.ts 的 servers：name/purpose/vendor/region/ip/sshPort/
+// user/config/monthlyCost/expireDate/status/note（主键是 id，不是 name）。
+const editServerShow = ref(false)
+const editServerId = ref<number | null>(null)
+const editServerForm = ref<Record<string, unknown>>({})
+
+function openEditServer(s: Server) {
+  editServerId.value = s.id
+  editServerForm.value = {
+    name: s.name, vendor: s.vendor ?? '', region: s.region ?? '', ip: s.ip ?? '',
+    sshPort: s.sshPort ?? 22, user: s.user ?? '', purpose: s.purpose ?? '',
+    monthlyCost: s.monthlyCost ?? null, expireDate: s.expireDate ?? '',
+    status: s.status ?? 'active', config: s.config ?? '', note: s.note ?? '',
+  }
+  editServerShow.value = true
+}
+
+async function saveEditServer(v: Record<string, unknown>) {
+  if (editServerId.value === null) return
+  try {
+    await serversRepo.update(editServerId.value, {
+      name: String(v.name || ''), vendor: String(v.vendor || ''), region: String(v.region || ''),
+      ip: String(v.ip || ''), sshPort: v.sshPort ? Number(v.sshPort) : 22,
+      user: String(v.user || ''), purpose: String(v.purpose || ''),
+      monthlyCost: v.monthlyCost === null || v.monthlyCost === undefined || v.monthlyCost === '' ? null : Number(v.monthlyCost),
+      expireDate: v.expireDate ? String(v.expireDate) : undefined,
+      status: String(v.status || 'active'), config: String(v.config || ''), note: String(v.note || ''),
+    })
+    message.success('已更新')
+    editServerShow.value = false
+    load()
+  } catch { message.error('保存失败') }
+}
+
 const serverStatus = (s: Server) => {
   const color = s.status === 'active' ? 'success' : s.status === 'expiring' ? 'warning' : 'default'
   const label = s.status === 'active' ? '运行中' : s.status === 'expiring' ? '即将到期' : '已停'
@@ -371,6 +406,41 @@ async function removeDomain(d: Domain) {
     message.success('已删除')
     load()
   } catch { message.error('删除失败') }
+}
+
+// ---- 编辑域名 ----
+// domains 的业务列：name/registrar/dnsProvider/expireDate/serverId/sslExpireDate/
+// cost/renewCycle/note。注意主键是 id，name 只是域名文本。
+const editDomainShow = ref(false)
+const editDomainId = ref<number | null>(null)
+const editDomainForm = ref<Record<string, unknown>>({})
+
+function openEditDomain(d: Domain) {
+  editDomainId.value = d.id
+  editDomainForm.value = {
+    name: d.name, registrar: d.registrar ?? '', dnsProvider: d.dnsProvider ?? '',
+    expireDate: d.expireDate ?? '', sslExpireDate: d.sslExpireDate ?? '',
+    serverId: d.serverId ?? null, cost: d.cost ?? null,
+    renewCycle: d.renewCycle ?? 'yearly', note: d.note ?? '',
+  }
+  editDomainShow.value = true
+}
+
+async function saveEditDomain(v: Record<string, unknown>) {
+  if (editDomainId.value === null) return
+  try {
+    await domainsRepo.update(editDomainId.value, {
+      name: String(v.name || ''), registrar: String(v.registrar || ''), dnsProvider: String(v.dnsProvider || ''),
+      expireDate: v.expireDate ? String(v.expireDate) : undefined,
+      sslExpireDate: v.sslExpireDate ? String(v.sslExpireDate) : undefined,
+      serverId: v.serverId ? Number(v.serverId) : undefined, note: String(v.note || ''),
+      cost: v.cost === null || v.cost === undefined || v.cost === '' ? undefined : Number(v.cost),
+      renewCycle: v.renewCycle ? String(v.renewCycle) : undefined,
+    })
+    message.success('已更新')
+    editDomainShow.value = false
+    load()
+  } catch { message.error('保存失败') }
 }
 
 const fmtGb = (b: number) => (b / 1024 / 1024 / 1024).toFixed(1)
@@ -420,6 +490,36 @@ async function removeFlow(f: OpsFlow) {
   try { await opsFlowsRepo.remove(f.id); message.success('已删除'); load() } catch { message.error('删除失败') }
 }
 
+// ---- 编辑流量指标 ----
+// opsFlows 的可编辑业务列：name/metric/threshold/current/status/note
+// （updatedAt 由 repo 的 timestamps 自动维护，不在这里传）
+const editFlowShow = ref(false)
+const editFlowId = ref<number | null>(null)
+const editFlowForm = ref<Record<string, unknown>>({})
+
+function openEditFlow(f: OpsFlow) {
+  editFlowId.value = f.id
+  editFlowForm.value = {
+    name: f.name, metric: f.metric ?? 'qps', threshold: f.threshold ?? 0,
+    current: f.current ?? 0, status: f.status ?? 'ok', note: f.note ?? '',
+  }
+  editFlowShow.value = true
+}
+
+async function saveEditFlow(v: Record<string, unknown>) {
+  if (editFlowId.value === null) return
+  try {
+    await opsFlowsRepo.update(editFlowId.value, {
+      name: String(v.name || ''), metric: String(v.metric || 'qps'),
+      threshold: v.threshold ? Number(v.threshold) : 0, current: v.current ? Number(v.current) : 0,
+      status: String(v.status || 'ok'), note: String(v.note || ''),
+    })
+    message.success('已更新')
+    editFlowShow.value = false
+    load()
+  } catch { message.error('保存失败') }
+}
+
 // ---- 配置变更台账（F-OPS-14） ----
 const changes = ref<OpsChange[]>([])
 const changeFormShow = ref(false)
@@ -458,6 +558,37 @@ async function removeChange(c: OpsChange) {
   const ok = await confirm({ title: '删除变更记录？', content: `「${c.title}」${c.env}，${c.changedAt || '无日期'}。` })
   if (!ok) return
   try { await opsChangesRepo.remove(c.id); message.success('已删除'); load() } catch { message.error('删除失败') }
+}
+
+// ---- 编辑配置变更 ----
+// opsChanges 的可编辑业务列：title/env/category/detail/operator/changedAt/status
+// （没有 result 这一列，结果语义落在 status 上）
+const editChangeShow = ref(false)
+const editChangeId = ref<number | null>(null)
+const editChangeForm = ref<Record<string, unknown>>({})
+
+function openEditChange(c: OpsChange) {
+  editChangeId.value = c.id
+  editChangeForm.value = {
+    title: c.title, env: c.env ?? 'prod', category: c.category ?? 'config',
+    operator: c.operator ?? '', changedAt: c.changedAt ?? '',
+    status: c.status ?? 'done', detail: c.detail ?? '',
+  }
+  editChangeShow.value = true
+}
+
+async function saveEditChange(v: Record<string, unknown>) {
+  if (editChangeId.value === null) return
+  try {
+    await opsChangesRepo.update(editChangeId.value, {
+      title: String(v.title || ''), env: String(v.env || 'prod'), category: String(v.category || 'config'),
+      detail: String(v.detail || ''), operator: String(v.operator || ''),
+      changedAt: v.changedAt ? String(v.changedAt) : undefined, status: String(v.status || 'done'),
+    })
+    message.success('已更新')
+    editChangeShow.value = false
+    load()
+  } catch { message.error('保存失败') }
 }
 
 // ---- 安全巡检台账（F-OPS-15） ----
@@ -505,6 +636,36 @@ async function removeSec(s: OpsSecCheck) {
   try { await opsSecChecksRepo.remove(s.id); message.success('已删除'); load() } catch { message.error('删除失败') }
 }
 
+// ---- 编辑安全巡检 ----
+// opsSecChecks 的可编辑业务列：title/category/severity/result/detail/checkedAt
+// （没有 note 列，补充说明写在 detail）
+const editSecShow = ref(false)
+const editSecId = ref<number | null>(null)
+const editSecForm = ref<Record<string, unknown>>({})
+
+function openEditSec(s: OpsSecCheck) {
+  editSecId.value = s.id
+  editSecForm.value = {
+    title: s.title, category: s.category ?? 'other', severity: s.severity ?? 'low',
+    result: s.result ?? 'pass', checkedAt: s.checkedAt ?? '', detail: s.detail ?? '',
+  }
+  editSecShow.value = true
+}
+
+async function saveEditSec(v: Record<string, unknown>) {
+  if (editSecId.value === null) return
+  try {
+    await opsSecChecksRepo.update(editSecId.value, {
+      title: String(v.title || ''), category: String(v.category || 'other'), severity: String(v.severity || 'low'),
+      result: String(v.result || 'pass'), detail: String(v.detail || ''),
+      checkedAt: v.checkedAt ? String(v.checkedAt) : undefined,
+    })
+    message.success('已更新')
+    editSecShow.value = false
+    load()
+  } catch { message.error('保存失败') }
+}
+
 // ---- 密钥管理台账（F-OPS-16） ----
 const secrets = ref<OpsSecret[]>([])
 const secretFormShow = ref(false)
@@ -537,6 +698,36 @@ async function removeSecret(s: OpsSecret) {
   const ok = await confirm({ title: '删除密钥记录？', content: `「${s.name}」${s.provider || '无服务商'}，删除后无法恢复。` })
   if (!ok) return
   try { await opsSecretsRepo.remove(s.id); message.success('已删除'); load() } catch { message.error('删除失败') }
+}
+
+// ---- 编辑密钥 ----
+// opsSecrets 的可编辑业务列：name/provider/account/status/expiresAt/note
+// （只登记元信息，表里没有密钥内容列）
+const editSecretShow = ref(false)
+const editSecretId = ref<number | null>(null)
+const editSecretForm = ref<Record<string, unknown>>({})
+
+function openEditSecret(s: OpsSecret) {
+  editSecretId.value = s.id
+  editSecretForm.value = {
+    name: s.name, provider: s.provider ?? '', account: s.account ?? '',
+    status: s.status ?? 'active', expiresAt: s.expiresAt ?? '', note: s.note ?? '',
+  }
+  editSecretShow.value = true
+}
+
+async function saveEditSecret(v: Record<string, unknown>) {
+  if (editSecretId.value === null) return
+  try {
+    await opsSecretsRepo.update(editSecretId.value, {
+      name: String(v.name || ''), provider: String(v.provider || ''), account: String(v.account || ''),
+      status: String(v.status || 'active'), expiresAt: v.expiresAt ? String(v.expiresAt) : undefined,
+      note: String(v.note || ''),
+    })
+    message.success('已更新')
+    editSecretShow.value = false
+    load()
+  } catch { message.error('保存失败') }
 }
 
 // ---- DNS 记录台账（F-OPS-17） ----
@@ -576,6 +767,35 @@ async function removeDns(d: OpsDnsRecord) {
   const ok = await confirm({ title: '删除 DNS 记录？', content: `「${d.name}」${d.recordType} 记录，主机 ${d.host}，指向 ${d.value}。` })
   if (!ok) return
   try { await opsDnsRepo.remove(d.id); message.success('已删除'); load() } catch { message.error('删除失败') }
+}
+
+// ---- 编辑 DNS 记录 ----
+// opsDns 的可编辑业务列：name/recordType/host/value/ttl/status/note
+const editDnsShow = ref(false)
+const editDnsId = ref<number | null>(null)
+const editDnsForm = ref<Record<string, unknown>>({})
+
+function openEditDns(d: OpsDnsRecord) {
+  editDnsId.value = d.id
+  editDnsForm.value = {
+    name: d.name, recordType: d.recordType ?? 'A', host: d.host ?? '@',
+    value: d.value ?? '', ttl: d.ttl ?? 600, status: d.status ?? 'active', note: d.note ?? '',
+  }
+  editDnsShow.value = true
+}
+
+async function saveEditDns(v: Record<string, unknown>) {
+  if (editDnsId.value === null) return
+  try {
+    await opsDnsRepo.update(editDnsId.value, {
+      name: String(v.name || ''), recordType: String(v.recordType || 'A'), host: String(v.host || '@'),
+      value: String(v.value || ''), ttl: v.ttl ? Number(v.ttl) : 600,
+      status: String(v.status || 'active'), note: String(v.note || ''),
+    })
+    message.success('已更新')
+    editDnsShow.value = false
+    load()
+  } catch { message.error('保存失败') }
 }
 
 // ============================================================
@@ -915,6 +1135,7 @@ useListNav(backupTableEl, {
               <NTag v-if="dueTag(s.expireDate)" size="tiny" :bordered="false" :type="dueTag(s.expireDate)!.color as any">{{ dueTag(s.expireDate)!.text }}</NTag>
               <span v-if="serverDomainCount(s.id)" class="mono due">{{ serverDomainCount(s.id) }} 个域名</span>
               <NButton size="tiny" text type="primary" @click="copySsh(s)">SSH</NButton>
+              <NButton size="tiny" text type="primary" @click="openEditServer(s)">编辑</NButton>
               <NButton size="tiny" text type="error" @click="removeServer(s)"><template #icon><NIcon :component="Trash" /></template></NButton>
             </div>
           </div>
@@ -952,6 +1173,7 @@ useListNav(backupTableEl, {
               <span v-else class="dim">—</span>
             </span>
             <span style="text-align: right">
+              <NButton size="tiny" text type="primary" @click="openEditDomain(d)">编辑</NButton>
               <NButton size="tiny" text type="error" @click="removeDomain(d)"><template #icon><NIcon :component="Trash" /></template></NButton>
             </span>
           </div>
@@ -1152,10 +1374,14 @@ useListNav(backupTableEl, {
             <span class="mono">{{ f.threshold }}</span>
             <span><NTag size="tiny" :bordered="false" :type="flowStatus(f).color as any">{{ flowStatus(f).label }}</NTag></span>
             <span class="dim ellipsis">{{ f.note || '—' }}</span>
-            <span style="text-align: right"><NButton size="tiny" text type="error" @click="removeFlow(f)"><template #icon><NIcon :component="Trash" /></template></NButton></span>
+            <span style="text-align: right">
+              <NButton size="tiny" text type="primary" @click="openEditFlow(f)">编辑</NButton>
+              <NButton size="tiny" text type="error" @click="removeFlow(f)"><template #icon><NIcon :component="Trash" /></template></NButton>
+            </span>
           </div>
         </div>
         <EmptyState v-else :text="flows.length ? '没有匹配的指标' : '暂无流量指标，登记后按阈值自动标红预警'" />
+        <ModalForm v-model:show="editFlowShow" title="编辑流量指标" :fields="flowFields" :initial="editFlowForm" confirm-text="保存" @submit="saveEditFlow" />
       </n-tab-pane>
 
       <!-- 配置变更台账（F-OPS-14） -->
@@ -1179,10 +1405,14 @@ useListNav(backupTableEl, {
             <span>{{ c.operator || '—' }}</span>
             <span class="mono">{{ c.changedAt || '—' }}</span>
             <span><NTag size="tiny" :bordered="false" :type="changeStatus(c).color as any">{{ changeStatus(c).label }}</NTag></span>
-            <span style="text-align: right"><NButton size="tiny" text type="error" @click="removeChange(c)"><template #icon><NIcon :component="Trash" /></template></NButton></span>
+            <span style="text-align: right">
+              <NButton size="tiny" text type="primary" @click="openEditChange(c)">编辑</NButton>
+              <NButton size="tiny" text type="error" @click="removeChange(c)"><template #icon><NIcon :component="Trash" /></template></NButton>
+            </span>
           </div>
         </div>
         <EmptyState v-else :text="changes.length ? '没有匹配的变更' : '暂无配置变更记录'" />
+        <ModalForm v-model:show="editChangeShow" title="编辑配置变更" :fields="changeFields" :initial="editChangeForm" confirm-text="保存" @submit="saveEditChange" />
       </n-tab-pane>
 
       <!-- 安全巡检台账（F-OPS-15） -->
@@ -1206,10 +1436,14 @@ useListNav(backupTableEl, {
             <span><NTag size="tiny" :bordered="false" :type="secResult(s).color as any">{{ secResult(s).label }}</NTag></span>
             <span class="mono">{{ s.checkedAt || '—' }}</span>
             <span class="dim ellipsis">{{ s.detail || '—' }}</span>
-            <span style="text-align: right"><NButton size="tiny" text type="error" @click="removeSec(s)"><template #icon><NIcon :component="Trash" /></template></NButton></span>
+            <span style="text-align: right">
+              <NButton size="tiny" text type="primary" @click="openEditSec(s)">编辑</NButton>
+              <NButton size="tiny" text type="error" @click="removeSec(s)"><template #icon><NIcon :component="Trash" /></template></NButton>
+            </span>
           </div>
         </div>
         <EmptyState v-else :text="secChecks.length ? '没有匹配的巡检项' : '暂无安全巡检记录'" />
+        <ModalForm v-model:show="editSecShow" title="编辑安全巡检" :fields="secFields" :initial="editSecForm" confirm-text="保存" @submit="saveEditSec" />
       </n-tab-pane>
 
       <!-- 密钥管理台账（F-OPS-16） -->
@@ -1233,10 +1467,14 @@ useListNav(backupTableEl, {
             <span><NTag size="tiny" :bordered="false" :type="secretStatus(s).color as any">{{ secretStatus(s).label }}</NTag></span>
             <span class="mono" :style="s.expiresAt && s.expiresAt < new Date().toISOString().slice(0, 10) ? 'color: var(--wb-danger)' : ''">{{ s.expiresAt || '—' }}</span>
             <span class="dim ellipsis">{{ s.note || '—' }}</span>
-            <span style="text-align: right"><NButton size="tiny" text type="error" @click="removeSecret(s)"><template #icon><NIcon :component="Trash" /></template></NButton></span>
+            <span style="text-align: right">
+              <NButton size="tiny" text type="primary" @click="openEditSecret(s)">编辑</NButton>
+              <NButton size="tiny" text type="error" @click="removeSecret(s)"><template #icon><NIcon :component="Trash" /></template></NButton>
+            </span>
           </div>
         </div>
         <EmptyState v-else :text="secrets.length ? '没有匹配的密钥' : '暂无密钥记录（仅登记元信息，不存储密钥内容）'" />
+        <ModalForm v-model:show="editSecretShow" title="编辑密钥" :fields="secretFields" :initial="editSecretForm" confirm-text="保存" @submit="saveEditSecret" />
       </n-tab-pane>
 
       <!-- DNS 记录台账（F-OPS-17） -->
@@ -1260,10 +1498,14 @@ useListNav(backupTableEl, {
             <span class="mono ellipsis">{{ d.value }}</span>
             <span class="mono">{{ d.ttl }}</span>
             <span><NTag size="tiny" :bordered="false" :type="dnsStatus(d).color as any">{{ dnsStatus(d).label }}</NTag></span>
-            <span style="text-align: right"><NButton size="tiny" text type="error" @click="removeDns(d)"><template #icon><NIcon :component="Trash" /></template></NButton></span>
+            <span style="text-align: right">
+              <NButton size="tiny" text type="primary" @click="openEditDns(d)">编辑</NButton>
+              <NButton size="tiny" text type="error" @click="removeDns(d)"><template #icon><NIcon :component="Trash" /></template></NButton>
+            </span>
           </div>
         </div>
         <EmptyState v-else :text="dnsRecords.length ? '没有匹配的 DNS 记录' : '暂无 DNS 记录'" />
+        <ModalForm v-model:show="editDnsShow" title="编辑 DNS 记录" :fields="dnsFields" :initial="editDnsForm" confirm-text="保存" @submit="saveEditDns" />
       </n-tab-pane>
     </n-tabs>
 
@@ -1274,6 +1516,8 @@ useListNav(backupTableEl, {
     <ModalForm v-model:show="secFormShow" title="记录安全巡检" :fields="secFields" @submit="addSec" />
     <ModalForm v-model:show="secretFormShow" title="登记密钥" :fields="secretFields" @submit="addSecret" />
     <ModalForm v-model:show="dnsFormShow" title="登记 DNS 记录" :fields="dnsFields" @submit="addDns" />
+    <ModalForm v-model:show="editServerShow" title="编辑服务器" :fields="serverFields" :initial="editServerForm" confirm-text="保存" @submit="saveEditServer" />
+    <ModalForm v-model:show="editDomainShow" title="编辑域名" :fields="domainFields" :initial="editDomainForm" confirm-text="保存" @submit="saveEditDomain" />
   </div>
 </template>
 

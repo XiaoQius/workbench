@@ -255,6 +255,40 @@ async function toggleFocus(t: Task) {
 }
 
 // ---- 任务列表键盘导航（↑↓ 选择 · Enter 切换聚焦 · Esc 取消高亮）----
+// ---- 编辑任务（复用 taskFields；这里只写 tasks 表的业务列，不动 id/createdAt/updatedAt） ----
+const editTaskShow = ref(false)
+const editTaskId = ref<number | null>(null)
+const editTaskForm = ref<Record<string, unknown>>({})
+function openEditTask(t: Task) {
+  editTaskId.value = t.id
+  editTaskForm.value = {
+    title: t.title, scope: t.scope, type: t.type, priority: t.priority,
+    projectId: t.projectId ?? null,
+    dueDate: t.dueDate ?? '', focusDate: t.focusDate ?? '',
+    note: t.note ?? '',
+  }
+  editTaskShow.value = true
+}
+async function saveEditTask(v: Record<string, unknown>) {
+  if (editTaskId.value === null) return
+  try {
+    await tasksRepo.update(editTaskId.value, {
+      title: String(v.title || '').trim() || '未命名任务',
+      scope: String(v.scope || 'dev') as Task['scope'],
+      type: String(v.type || 'task') as Task['type'],
+      priority: String(v.priority || 'medium') as Task['priority'],
+      projectId: v.projectId ? Number(v.projectId) : null,
+      dueDate: v.dueDate ? String(v.dueDate) : null,
+      focusDate: v.focusDate ? String(v.focusDate) : null,
+      note: String(v.note || ''),
+    })
+    message.success('任务已更新')
+    editTaskShow.value = false
+    load()
+  } catch { message.error('保存失败') }
+}
+
+// ---- 任务列表键盘导航（↑↓ 选择 · Enter 切换聚焦 · Esc 取消高亮）----
 // 任务行最高频的操作是「今天要不要做」，所以 Enter 绑定到聚焦切换，
 // 而不是弹编辑框（后者会打断批量浏览的节奏）。
 const taskTableEl = ref<HTMLElement>()
@@ -299,6 +333,38 @@ async function removeSnippet(s: Snippet) {
     message.success('已删除')
     load()
   } catch { message.error('删除失败') }
+}
+
+// ---- 编辑代码片段（复用 snippetFields） ----
+const editSnippetShow = ref(false)
+const editSnippetId = ref<number | null>(null)
+const editSnippetForm = ref<Record<string, unknown>>({})
+function openEditSnippet(s: Snippet) {
+  editSnippetId.value = s.id
+  editSnippetForm.value = {
+    title: s.title, language: s.language, code: s.code,
+    tags: s.tags ?? '', description: s.description ?? '',
+  }
+  editSnippetShow.value = true
+}
+async function saveEditSnippet(v: Record<string, unknown>) {
+  if (editSnippetId.value === null) return
+  try {
+    await snippetsRepo.update(editSnippetId.value, {
+      title: String(v.title || '').trim() || '未命名片段',
+      language: String(v.language || 'text'),
+      code: String(v.code || ''),
+      tags: String(v.tags || ''),
+      description: String(v.description || ''),
+    })
+    message.success('片段已更新')
+    editSnippetShow.value = false
+    load()
+    if (activeSnippet.value?.id === editSnippetId.value) {
+      const all = await snippetsRepo.listAll()
+      activeSnippet.value = all.find((s) => s.id === editSnippetId.value) ?? null
+    }
+  } catch { message.error('保存失败') }
 }
 
 const LANG_COLORS = {
@@ -350,6 +416,36 @@ async function removeDeploy(d: Deployment) {
   if (!ok) return
   try { await deploymentsRepo.remove(d.id); message.success('已删除'); load() } catch { message.error('删除失败') }
 }
+
+// ---- 编辑部署记录（复用 deployFields） ----
+const editDeployShow = ref(false)
+const editDeployId = ref<number | null>(null)
+const editDeployForm = ref<Record<string, unknown>>({})
+function openEditDeploy(d: Deployment) {
+  editDeployId.value = d.id
+  editDeployForm.value = {
+    project: d.project, env: d.env, version: d.version ?? '', status: d.status,
+    deployedAt: d.deployedAt ?? '', operator: d.operator ?? '', note: d.note ?? '',
+  }
+  editDeployShow.value = true
+}
+async function saveEditDeploy(v: Record<string, unknown>) {
+  if (editDeployId.value === null) return
+  try {
+    await deploymentsRepo.update(editDeployId.value, {
+      project: String(v.project || '').trim() || '未命名项目',
+      env: String(v.env || 'prod') as Deployment['env'],
+      version: String(v.version || ''),
+      status: String(v.status || 'success') as Deployment['status'],
+      deployedAt: v.deployedAt ? String(v.deployedAt) : null,
+      operator: String(v.operator || ''),
+      note: String(v.note || ''),
+    })
+    message.success('部署记录已更新')
+    editDeployShow.value = false
+    load()
+  } catch { message.error('保存失败') }
+}
 const deployStatus = (d: Deployment) => ({
   color: (d.status === 'success' ? 'success' : d.status === 'failed' ? 'error' : d.status === 'rollback' ? 'warning' : 'info') as 'success' | 'error' | 'warning' | 'info',
   label: d.status === 'success' ? '成功' : d.status === 'failed' ? '失败' : d.status === 'rollback' ? '回滚' : '进行中',
@@ -377,6 +473,32 @@ async function removeEnv(e: EnvVar) {
   const ok = await confirm({ title: '删除环境变量？', content: `「${e.key}」删除后无法恢复。` })
   if (!ok) return
   try { await envVarsRepo.remove(e.id); message.success('已删除'); load() } catch { message.error('删除失败') }
+}
+
+// ---- 编辑环境变量（复用 envFields） ----
+const editEnvShow = ref(false)
+const editEnvId = ref<number | null>(null)
+const editEnvForm = ref<Record<string, unknown>>({})
+function openEditEnv(e: EnvVar) {
+  editEnvId.value = e.id
+  editEnvForm.value = {
+    key: e.key, value: e.value ?? '', scope: e.scope, note: e.note ?? '',
+  }
+  editEnvShow.value = true
+}
+async function saveEditEnv(v: Record<string, unknown>) {
+  if (editEnvId.value === null) return
+  try {
+    await envVarsRepo.update(editEnvId.value, {
+      key: String(v.key || '').trim() || 'UNNAMED',
+      value: String(v.value || ''),
+      scope: String(v.scope || 'user') as EnvVar['scope'],
+      note: String(v.note || ''),
+    })
+    message.success('环境变量已更新')
+    editEnvShow.value = false
+    load()
+  } catch { message.error('保存失败') }
 }
 const sysEnvVars = ref<Array<[string, string]>>([])
 async function loadSysEnv() {
@@ -415,6 +537,35 @@ async function removeDebt(d: TechDebt) {
   if (!ok) return
   try { await techDebtsRepo.remove(d.id); message.success('已删除'); load() } catch { message.error('删除失败') }
 }
+
+// ---- 编辑技术债（复用 debtFields） ----
+const editDebtShow = ref(false)
+const editDebtId = ref<number | null>(null)
+const editDebtForm = ref<Record<string, unknown>>({})
+function openEditDebt(d: TechDebt) {
+  editDebtId.value = d.id
+  editDebtForm.value = {
+    title: d.title, category: d.category, severity: d.severity,
+    project: d.project ?? '', status: d.status, detail: d.detail ?? '',
+  }
+  editDebtShow.value = true
+}
+async function saveEditDebt(v: Record<string, unknown>) {
+  if (editDebtId.value === null) return
+  try {
+    await techDebtsRepo.update(editDebtId.value, {
+      title: String(v.title || '').trim() || '未命名技术债',
+      category: String(v.category || 'tech') as TechDebt['category'],
+      severity: String(v.severity || 'medium') as TechDebt['severity'],
+      project: String(v.project || ''),
+      status: String(v.status || 'open') as TechDebt['status'],
+      detail: String(v.detail || ''),
+    })
+    message.success('技术债已更新')
+    editDebtShow.value = false
+    load()
+  } catch { message.error('保存失败') }
+}
 const debtSeverity = (d: TechDebt) => ({
   color: (d.severity === 'critical' ? 'error' : d.severity === 'high' ? 'error' : d.severity === 'medium' ? 'warning' : 'default') as 'error' | 'warning' | 'default',
   label: d.severity === 'critical' ? '严重' : d.severity === 'high' ? '高' : d.severity === 'medium' ? '中' : '低',
@@ -444,6 +595,32 @@ async function removeCmd(c: CmdSnippet) {
   const ok = await confirm({ title: '删除命令片段？', content: `「${c.title}」删除后无法恢复。` })
   if (!ok) return
   try { await cmdSnippetsRepo.remove(c.id); message.success('已删除'); load() } catch { message.error('删除失败') }
+}
+
+// ---- 编辑命令片段（复用 cmdFields；hitCount 是使用统计，编辑时不覆盖） ----
+const editCmdShow = ref(false)
+const editCmdId = ref<number | null>(null)
+const editCmdForm = ref<Record<string, unknown>>({})
+function openEditCmd(c: CmdSnippet) {
+  editCmdId.value = c.id
+  editCmdForm.value = {
+    title: c.title, category: c.category, command: c.command, note: c.note ?? '',
+  }
+  editCmdShow.value = true
+}
+async function saveEditCmd(v: Record<string, unknown>) {
+  if (editCmdId.value === null) return
+  try {
+    await cmdSnippetsRepo.update(editCmdId.value, {
+      title: String(v.title || '').trim() || '未命名命令',
+      category: String(v.category || 'shell') as CmdSnippet['category'],
+      command: String(v.command || ''),
+      note: String(v.note || ''),
+    })
+    message.success('命令片段已更新')
+    editCmdShow.value = false
+    load()
+  } catch { message.error('保存失败') }
 }
 async function bumpCmd(c: CmdSnippet) {
   try {
@@ -581,6 +758,7 @@ const boardColumns = computed(() => [
                   <NButton size="tiny" text :type="t.focusDate ? 'warning' : 'default'" @click="toggleFocus(t)">
                     {{ t.focusDate ? '★ 焦点' : '☆ 焦点' }}
                   </NButton>
+                  <NButton size="tiny" text @click="openEditTask(t)">编辑</NButton>
                   <NButton size="tiny" text type="error" @click="removeTask(t)">删除</NButton>
                 </div>
               </div>
@@ -627,6 +805,7 @@ const boardColumns = computed(() => [
             </span>
             <span class="row-ops">
               <NButton size="tiny" text @click="toggleFocus(t)" :type="t.focusDate ? 'warning' : 'default'">{{ t.focusDate ? '★' : '☆' }}</NButton>
+              <NButton size="tiny" text @click="openEditTask(t)"><template #icon><NIcon :component="Edit" /></template></NButton>
               <NButton size="tiny" text type="error" @click="removeTask(t)"><template #icon><NIcon :component="Trash" /></template></NButton>
             </span>
           </div>
@@ -648,7 +827,10 @@ const boardColumns = computed(() => [
           <div v-for="s in filteredSnippets" :key="s.id" class="snippet-card wb-card hoverable" @click="activeSnippet = s">
             <div class="snippet-head">
               <span class="snippet-title"><NIcon :component="Code" style="margin-right: 6px" />{{ s.title }}</span>
-              <NTag size="tiny" :bordered="false" :type="langColor(s.language)">{{ s.language }}</NTag>
+              <span style="display: flex; align-items: center; gap: 6px">
+                <NTag size="tiny" :bordered="false" :type="langColor(s.language)">{{ s.language }}</NTag>
+                <NButton size="tiny" text @click.stop="openEditSnippet(s)"><template #icon><NIcon :component="Edit" /></template></NButton>
+              </span>
             </div>
             <pre class="snippet-preview mono">{{ (s.code || '').slice(0, 200) }}</pre>
             <div v-if="s.tags" class="snippet-tags mono">{{ s.tags }}</div>
@@ -747,6 +929,7 @@ const boardColumns = computed(() => [
             <span class="mono">{{ d.deployedAt || '—' }}</span>
             <span>{{ d.operator || '—' }}</span>
             <span class="row-ops">
+              <NButton size="tiny" text @click="openEditDeploy(d)"><template #icon><NIcon :component="Edit" /></template></NButton>
               <NButton size="tiny" text type="error" @click="removeDeploy(d)"><template #icon><NIcon :component="Trash" /></template></NButton>
             </span>
           </div>
@@ -779,6 +962,7 @@ const boardColumns = computed(() => [
             <span class="tt mono dim">{{ e.value || '—' }}</span>
             <span><NTag size="tiny" :bordered="false" type="default">{{ e.scope }}</NTag></span>
             <span class="row-ops">
+              <NButton size="tiny" text @click="openEditEnv(e)"><template #icon><NIcon :component="Edit" /></template></NButton>
               <NButton size="tiny" text type="error" @click="removeEnv(e)"><template #icon><NIcon :component="Trash" /></template></NButton>
             </span>
           </div>
@@ -813,6 +997,7 @@ const boardColumns = computed(() => [
             <span class="tt">{{ d.project || '—' }}</span>
             <span><NTag size="tiny" :bordered="false" :type="d.status === 'done' ? 'success' : d.status === 'planned' ? 'info' : 'warning'">{{ d.status }}</NTag></span>
             <span class="row-ops">
+              <NButton size="tiny" text @click="openEditDebt(d)"><template #icon><NIcon :component="Edit" /></template></NButton>
               <NButton size="tiny" text type="error" @click="removeDebt(d)"><template #icon><NIcon :component="Trash" /></template></NButton>
             </span>
           </div>
@@ -841,6 +1026,7 @@ const boardColumns = computed(() => [
             <div class="cmd-foot">
               <NButton size="tiny" text @click="copyCmd(c)">复制</NButton>
               <span class="mono dim">使用 {{ c.hitCount || 0 }} 次</span>
+              <NButton size="tiny" text @click="openEditCmd(c)">编辑</NButton>
               <NButton size="tiny" text type="error" @click="removeCmd(c)">删除</NButton>
             </div>
           </div>
@@ -947,6 +1133,7 @@ const boardColumns = computed(() => [
         <p v-if="activeSnippet.description" class="sd-desc">{{ activeSnippet.description }}</p>
         <div style="display: flex; justify-content: flex-end; gap: 8px">
           <NButton size="tiny" text @click="activeSnippet = null">关闭</NButton>
+          <NButton size="tiny" text @click="openEditSnippet(activeSnippet); activeSnippet = null">编辑</NButton>
           <NButton size="tiny" text type="error" @click="removeSnippet(activeSnippet); activeSnippet = null">删除</NButton>
         </div>
       </div>
@@ -959,6 +1146,13 @@ const boardColumns = computed(() => [
     <ModalForm v-model:show="envFormShow" title="登记环境变量" :fields="envFields" @submit="addEnv" />
     <ModalForm v-model:show="debtFormShow" title="记录技术债" :fields="debtFields" @submit="addDebt" />
     <ModalForm v-model:show="cmdFormShow" title="保存命令片段" :fields="cmdFields" confirm-text="保存" @submit="addCmd" />
+    <!-- 编辑弹窗：与新增共用同一份 fields，initial 回填当前值 -->
+    <ModalForm v-model:show="editTaskShow" title="编辑任务" :fields="taskFields" :initial="editTaskForm" confirm-text="保存" @submit="saveEditTask" />
+    <ModalForm v-model:show="editSnippetShow" title="编辑代码片段" :fields="snippetFields" :initial="editSnippetForm" confirm-text="保存" @submit="saveEditSnippet" />
+    <ModalForm v-model:show="editDeployShow" title="编辑部署记录" :fields="deployFields" :initial="editDeployForm" confirm-text="保存" @submit="saveEditDeploy" />
+    <ModalForm v-model:show="editEnvShow" title="编辑环境变量" :fields="envFields" :initial="editEnvForm" confirm-text="保存" @submit="saveEditEnv" />
+    <ModalForm v-model:show="editDebtShow" title="编辑技术债" :fields="debtFields" :initial="editDebtForm" confirm-text="保存" @submit="saveEditDebt" />
+    <ModalForm v-model:show="editCmdShow" title="编辑命令片段" :fields="cmdFields" :initial="editCmdForm" confirm-text="保存" @submit="saveEditCmd" />
   </div>
 </template>
 

@@ -2,7 +2,7 @@
 import { watch, ref, onMounted, computed, reactive } from 'vue'
 import { refreshTick } from '@/stores/ui'
 import { NButton, NTag, NTabs, NTabPane, NIcon, useMessage, NSelect, NDatePicker, NInput } from 'naive-ui'
-import { Plus, Trash, Check, Checkbox } from '@vicons/tabler'
+import { Plus, Trash, Check, Checkbox, Pencil } from '@vicons/tabler'
 import EmptyState from '@/components/EmptyState.vue'
 import ListSkeleton from '@/components/ListSkeleton.vue'
 import ModalForm, { type FieldDef } from '@/components/ModalForm.vue'
@@ -266,6 +266,32 @@ async function removeAssignment(a: Assignment) {
   } catch { message.error('删除失败') }
 }
 
+// ---- 编辑已有记录：统一复用「新增」那份 fields，保存只写业务列 ----
+const editAssignmentShow = ref(false)
+const editAssignmentId = ref<number | null>(null)
+const editAssignmentForm = ref<Record<string, unknown>>({})
+function openEditAssignment(a: Assignment) {
+  editAssignmentId.value = a.id
+  editAssignmentForm.value = {
+    title: a.title, courseId: a.courseId ?? null,
+    dueDate: a.dueDate ?? '', status: a.status ?? 'todo', note: a.note ?? '',
+  }
+  editAssignmentShow.value = true
+}
+async function saveEditAssignment(v: Record<string, unknown>) {
+  if (editAssignmentId.value === null) return
+  try {
+    await assignmentsRepo.update(editAssignmentId.value, {
+      title: String(v.title || ''), courseId: v.courseId ? Number(v.courseId) : null,
+      dueDate: v.dueDate ? String(v.dueDate) : null,
+      status: String(v.status || 'todo'), note: String(v.note || ''),
+    })
+    message.success('已更新')
+    editAssignmentShow.value = false
+    load()
+  } catch { message.error('保存失败') }
+}
+
 async function setAssignmentStatus(a: Assignment, status: string) {
   try {
     await assignmentsRepo.update(a.id, { status })
@@ -356,6 +382,28 @@ async function removeNote(n: Note) {
   } catch { message.error('删除失败') }
 }
 
+const editNoteShow = ref(false)
+const editNoteId = ref<number | null>(null)
+const editNoteForm = ref<Record<string, unknown>>({})
+function openEditNote(n: Note) {
+  editNoteId.value = n.id
+  editNoteForm.value = { title: n.title, tags: n.tags ?? '', content: n.content ?? '' }
+  editNoteShow.value = true
+}
+async function saveEditNote(v: Record<string, unknown>) {
+  if (editNoteId.value === null) return
+  try {
+    await notesRepo.update(editNoteId.value, {
+      title: String(v.title || ''), tags: String(v.tags || ''), content: String(v.content || ''),
+    })
+    message.success('已更新')
+    editNoteShow.value = false
+    load()
+    const all = await notesRepo.listAll()
+    if (activeNote.value) activeNote.value = all.find((n) => n.id === activeNote.value!.id) ?? null
+  } catch { message.error('保存失败') }
+}
+
 // ---- 成绩单（F-STU-04）----
 const gradeFields: FieldDef[] = [
   { key: 'courseName', label: '课程名称', required: true },
@@ -391,6 +439,38 @@ async function removeGrade(g: Grade) {
   if (!ok) return
   try { await gradesRepo.remove(g.id); message.success('已删除'); load() } catch { message.error('删除失败') }
 }
+
+const editGradeShow = ref(false)
+const editGradeId = ref<number | null>(null)
+const editGradeForm = ref<Record<string, unknown>>({})
+function openEditGrade(g: Grade) {
+  editGradeId.value = g.id
+  editGradeForm.value = {
+    courseName: g.courseName, examType: g.examType ?? '期中',
+    score: g.score ?? 0, total: g.total ?? 100, weight: g.weight ?? 1,
+    date: g.date ?? '', note: g.note ?? '',
+  }
+  editGradeShow.value = true
+}
+async function saveEditGrade(v: Record<string, unknown>) {
+  if (editGradeId.value === null) return
+  const courseName = String(v.courseName || '').trim()
+  try {
+    await gradesRepo.update(editGradeId.value, {
+      courseId: courses.value.find((c) => c.name === courseName)?.id ?? null,
+      courseName,
+      examType: String(v.examType || '期中'),
+      score: Number(v.score || 0),
+      total: Number(v.total || 100),
+      weight: Number(v.weight || 1),
+      date: v.date ? String(v.date) : null,
+      note: String(v.note || ''),
+    })
+    message.success('已更新')
+    editGradeShow.value = false
+    load()
+  } catch { message.error('保存失败') }
+}
 const gradeAverage = computed(() => {
   const list = grades.value.filter((g) => g.total > 0)
   if (!list.length) return 0
@@ -425,6 +505,30 @@ async function removePitfall(p: Pitfall) {
   try { await pitfallsRepo.remove(p.id); message.success('已删除'); load() } catch { message.error('删除失败') }
 }
 
+const editPitfallShow = ref(false)
+const editPitfallId = ref<number | null>(null)
+const editPitfallForm = ref<Record<string, unknown>>({})
+function openEditPitfall(p: Pitfall) {
+  editPitfallId.value = p.id
+  editPitfallForm.value = {
+    title: p.title, category: p.category ?? '', problem: p.problem ?? '',
+    solution: p.solution ?? '', tags: p.tags ?? '',
+  }
+  editPitfallShow.value = true
+}
+async function saveEditPitfall(v: Record<string, unknown>) {
+  if (editPitfallId.value === null) return
+  try {
+    await pitfallsRepo.update(editPitfallId.value, {
+      title: String(v.title || ''), category: String(v.category || ''),
+      problem: String(v.problem || ''), solution: String(v.solution || ''), tags: String(v.tags || ''),
+    })
+    message.success('已更新')
+    editPitfallShow.value = false
+    load()
+  } catch { message.error('保存失败') }
+}
+
 // ---- 阅读队列（F-STU-08）---
 const readFields: FieldDef[] = [
   { key: 'title', label: '书名/文章', required: true },
@@ -454,6 +558,31 @@ async function removeRead(r: ReadQueueItem) {
   try { await readQueueRepo.remove(r.id); message.success('已删除'); load() } catch { message.error('删除失败') }
 }
 
+const editReadShow = ref(false)
+const editReadId = ref<number | null>(null)
+const editReadForm = ref<Record<string, unknown>>({})
+function openEditRead(r: ReadQueueItem) {
+  editReadId.value = r.id
+  editReadForm.value = {
+    title: r.title, author: r.author ?? '', category: r.category ?? '', url: r.url ?? '',
+    totalPages: r.totalPages ?? 0, priority: r.priority ?? 1,
+  }
+  editReadShow.value = true
+}
+async function saveEditRead(v: Record<string, unknown>) {
+  if (editReadId.value === null) return
+  try {
+    // currentPage / status / addedAt / finishedAt 由「在读/读完」等动作维护，编辑不改
+    await readQueueRepo.update(editReadId.value, {
+      title: String(v.title || ''), author: String(v.author || ''), category: String(v.category || ''),
+      url: String(v.url || ''), priority: Number(v.priority || 1), totalPages: Number(v.totalPages || 0),
+    })
+    message.success('已更新')
+    editReadShow.value = false
+    load()
+  } catch { message.error('保存失败') }
+}
+
 // ---- 费曼输出（F-STU-12）---
 const feynmanFields: FieldDef[] = [
   { key: 'topic', label: '主题', required: true },
@@ -472,6 +601,27 @@ async function removeFeynman(f: FeynmanLog) {
   const ok = await confirm({ title: `删除费曼记录《${f.topic}》？`, content: '讲解内容删除后无法恢复。' })
   if (!ok) return
   try { await feynmanLogsRepo.remove(f.id); message.success('已删除'); load() } catch { message.error('删除失败') }
+}
+
+const editFeynmanShow = ref(false)
+const editFeynmanId = ref<number | null>(null)
+const editFeynmanForm = ref<Record<string, unknown>>({})
+function openEditFeynman(f: FeynmanLog) {
+  editFeynmanId.value = f.id
+  editFeynmanForm.value = { topic: f.topic, explanation: f.explanation ?? '', gap: f.gap ?? '', source: f.source ?? '' }
+  editFeynmanShow.value = true
+}
+async function saveEditFeynman(v: Record<string, unknown>) {
+  if (editFeynmanId.value === null) return
+  try {
+    await feynmanLogsRepo.update(editFeynmanId.value, {
+      topic: String(v.topic || ''), explanation: String(v.explanation || ''),
+      gap: String(v.gap || ''), source: String(v.source || ''),
+    })
+    message.success('已更新')
+    editFeynmanShow.value = false
+    load()
+  } catch { message.error('保存失败') }
 }
 
 // ---- 闪卡（F-STU-09）----
@@ -494,6 +644,27 @@ async function removeCard(c: Flashcard) {
   const ok = await confirm({ title: '删除这张闪卡？', content: `${c.deck} · ${c.front}` })
   if (!ok) return
   try { await flashcardsRepo.remove(c.id); message.success('已删除'); load() } catch { message.error('删除失败') }
+}
+
+const editCardShow = ref(false)
+const editCardId = ref<number | null>(null)
+const editCardForm = ref<Record<string, unknown>>({})
+function openEditCard(c: Flashcard) {
+  editCardId.value = c.id
+  editCardForm.value = { front: c.front, back: c.back, deck: c.deck ?? '默认' }
+  editCardShow.value = true
+}
+async function saveEditCard(v: Record<string, unknown>) {
+  if (editCardId.value === null) return
+  try {
+    // level / dueDate / reviewCount 属于复习进度，由复习动作维护，编辑不改
+    await flashcardsRepo.update(editCardId.value, {
+      front: String(v.front || ''), back: String(v.back || ''), deck: String(v.deck || '默认'),
+    })
+    message.success('已更新')
+    editCardShow.value = false
+    load()
+  } catch { message.error('保存失败') }
 }
 const todayStr2 = new Date().toISOString().slice(0, 10)
 const dueCards = computed(() => cards.value.filter((c) => !c.dueDate || c.dueDate <= todayStr2))
@@ -555,6 +726,29 @@ async function removeGoal(g: Task) {
   const ok = await confirm({ title: `删除学习目标《${g.title}》？`, content: `当前状态：${g.status}${g.dueDate ? ' · 截止 ' + g.dueDate : ''}` })
   if (!ok) return
   try { await tasksRepo.remove(g.id); message.success('已删除'); load() } catch { message.error('删除失败') }
+}
+
+// 学习目标实际落在 tasks 表（scope/type = study），编辑只改 title/dueDate/priority，
+// 不动 scope/type/status —— 改了它就不是「学习目标」了。
+const editGoalShow = ref(false)
+const editGoalId = ref<number | null>(null)
+const editGoalForm = ref<Record<string, unknown>>({})
+function openEditGoal(g: Task) {
+  editGoalId.value = g.id
+  editGoalForm.value = { title: g.title, priority: g.priority ?? 'medium', dueDate: g.dueDate ?? '' }
+  editGoalShow.value = true
+}
+async function saveEditGoal(v: Record<string, unknown>) {
+  if (editGoalId.value === null) return
+  try {
+    await tasksRepo.update(editGoalId.value, {
+      title: String(v.title || ''), priority: String(v.priority || 'medium'),
+      dueDate: v.dueDate ? String(v.dueDate) : null,
+    })
+    message.success('已更新')
+    editGoalShow.value = false
+    load()
+  } catch { message.error('保存失败') }
 }
 const goalProgress = computed(() => {
   if (!studyGoals.value.length) return 0
@@ -833,6 +1027,7 @@ useListNav(feynmanListEl, {
               </NButton>
             </span>
             <span style="text-align: right">
+              <NButton size="tiny" text @click="openEditAssignment(a)" title="编辑"><template #icon><NIcon :component="Pencil" /></template></NButton>
               <NButton size="tiny" text type="error" @click="removeAssignment(a)"><template #icon><NIcon :component="Trash" /></template></NButton>
             </span>
           </div>
@@ -856,6 +1051,9 @@ useListNav(feynmanListEl, {
             <div class="note-preview">{{ (n.content || '').slice(0, 120) }}</div>
             <div v-if="n.tags" class="note-tags mono">{{ n.tags }}</div>
             <div class="note-date mono">{{ n.updatedAt || n.createdAt }}</div>
+            <NButton size="tiny" text class="note-edit" title="编辑笔记" @click.stop="openEditNote(n)">
+              <template #icon><NIcon :component="Pencil" /></template>
+            </NButton>
           </div>
         </div>
         <EmptyState v-else :text="notes.length ? '没有匹配的笔记' : '暂无笔记'" />
@@ -893,6 +1091,7 @@ useListNav(feynmanListEl, {
             <span class="mono">{{ g.weight }}</span>
             <span class="mono">{{ g.date || '—' }}</span>
             <span style="text-align: right">
+              <NButton size="tiny" text @click="openEditGrade(g)" title="编辑"><template #icon><NIcon :component="Pencil" /></template></NButton>
               <NButton size="tiny" text type="error" @click="removeGrade(g)"><template #icon><NIcon :component="Trash" /></template></NButton>
             </span>
           </div>
@@ -935,6 +1134,9 @@ useListNav(feynmanListEl, {
               <NButton size="tiny" @click="reviewCard(c, false)">再记一次</NButton>
               <NButton size="tiny" type="primary" @click="reviewCard(c, true)">记住了</NButton>
             </div>
+            <NButton size="tiny" text title="编辑闪卡" style="position: absolute; right: 26px; bottom: 4px" @click="openEditCard(c)">
+              <template #icon><NIcon :component="Pencil" /></template>
+            </NButton>
             <NButton size="tiny" text type="error" style="position: absolute; right: 6px; bottom: 4px" @click="removeCard(c)">
               <template #icon><NIcon :component="Trash" /></template>
             </NButton>
@@ -964,6 +1166,7 @@ useListNav(feynmanListEl, {
             <span class="mono dim">{{ g.dueDate || '' }}</span>
             <span style="display: flex; gap: 4px">
               <NButton size="tiny" :type="g.status === 'done' ? 'success' : 'default'" text @click="toggleGoal(g)"><template #icon><NIcon :component="Check" /></template></NButton>
+              <NButton size="tiny" text title="编辑目标" @click="openEditGoal(g)"><template #icon><NIcon :component="Pencil" /></template></NButton>
               <NButton size="tiny" text type="error" @click="removeGoal(g)"><template #icon><NIcon :component="Trash" /></template></NButton>
             </span>
           </div>
@@ -1050,6 +1253,7 @@ useListNav(feynmanListEl, {
               <span class="dim" style="margin-left: 12px">解法：</span><span>{{ p.solution }}</span>
             </div>
             <span style="position: absolute; right: 8px; top: 8px">
+              <NButton size="tiny" text title="编辑错题" @click="openEditPitfall(p)"><template #icon><NIcon :component="Pencil" /></template></NButton>
               <NButton size="tiny" text type="error" @click="removePitfall(p)"><template #icon><NIcon :component="Trash" /></template></NButton>
             </span>
           </div>
@@ -1080,6 +1284,7 @@ useListNav(feynmanListEl, {
             <span style="display: flex; gap: 4px; align-items: center">
               <NButton size="tiny" text :type="r.status === 'reading' ? 'info' : 'default'" @click="markRead(r, false)"><template #icon><NIcon :component="Checkbox" /></template>在读</NButton>
               <NButton size="tiny" text type="success" @click="markRead(r, true)"><template #icon><NIcon :component="Check" /></template>读完</NButton>
+              <NButton size="tiny" text title="编辑" @click="openEditRead(r)"><template #icon><NIcon :component="Pencil" /></template></NButton>
               <NButton size="tiny" text type="error" @click="removeRead(r)"><template #icon><NIcon :component="Trash" /></template></NButton>
             </span>
           </div>
@@ -1110,6 +1315,7 @@ useListNav(feynmanListEl, {
               <span class="dim" style="color: var(--wb-danger)">卡壳点：</span><span>{{ f.gap }}</span>
             </div>
             <span style="position: absolute; right: 8px; top: 8px">
+              <NButton size="tiny" text title="编辑" @click="openEditFeynman(f)"><template #icon><NIcon :component="Pencil" /></template></NButton>
               <NButton size="tiny" text type="error" @click="removeFeynman(f)"><template #icon><NIcon :component="Trash" /></template></NButton>
             </span>
           </div>
@@ -1125,6 +1331,7 @@ useListNav(feynmanListEl, {
         <p class="note-detail-body">{{ activeNote.content || '（空）' }}</p>
         <div style="display: flex; justify-content: flex-end; gap: 8px">
           <NButton size="tiny" text @click="activeNote = null">关闭</NButton>
+          <NButton size="tiny" text @click="openEditNote(activeNote)">编辑</NButton>
           <NButton size="tiny" text type="error" @click="removeNote(activeNote); activeNote = null">删除</NButton>
         </div>
       </div>
@@ -1140,12 +1347,20 @@ useListNav(feynmanListEl, {
       @submit="saveEditCourse"
     />
     <ModalForm v-model:show="assignmentFormShow" title="新建作业" :fields="assignmentFields" @submit="addAssignment" />
+    <ModalForm v-model:show="editAssignmentShow" title="编辑作业" :fields="assignmentFields" :initial="editAssignmentForm" confirm-text="保存" @submit="saveEditAssignment" />
     <ModalForm v-model:show="noteFormShow" title="新建笔记" :fields="noteFields" confirm-text="保存" @submit="addNote" />
+    <ModalForm v-model:show="editNoteShow" title="编辑笔记" :fields="noteFields" :initial="editNoteForm" confirm-text="保存" @submit="saveEditNote" />
     <ModalForm v-model:show="gradeFormShow" title="记录成绩" :fields="gradeFields" confirm-text="保存" @submit="addGrade" />
+    <ModalForm v-model:show="editGradeShow" title="编辑成绩" :fields="gradeFields" :initial="editGradeForm" confirm-text="保存" @submit="saveEditGrade" />
     <ModalForm v-model:show="cardFormShow" title="添加闪卡" :fields="cardFields" confirm-text="保存" @submit="addCard" />
+    <ModalForm v-model:show="editCardShow" title="编辑闪卡" :fields="cardFields" :initial="editCardForm" confirm-text="保存" @submit="saveEditCard" />
     <ModalForm v-model:show="pitfallFormShow" title="收录错题" :fields="pitfallFields" confirm-text="保存" @submit="addPitfall" />
+    <ModalForm v-model:show="editPitfallShow" title="编辑错题" :fields="pitfallFields" :initial="editPitfallForm" confirm-text="保存" @submit="saveEditPitfall" />
     <ModalForm v-model:show="readFormShow" title="加入阅读队列" :fields="readFields" confirm-text="保存" @submit="addRead" />
+    <ModalForm v-model:show="editReadShow" title="编辑阅读项" :fields="readFields" :initial="editReadForm" confirm-text="保存" @submit="saveEditRead" />
     <ModalForm v-model:show="feynmanFormShow" title="费曼讲解记录" :fields="feynmanFields" confirm-text="保存" @submit="addFeynman" />
+    <ModalForm v-model:show="editFeynmanShow" title="编辑费曼记录" :fields="feynmanFields" :initial="editFeynmanForm" confirm-text="保存" @submit="saveEditFeynman" />
+    <ModalForm v-model:show="editGoalShow" title="编辑学习目标" :fields="goalFields" :initial="editGoalForm" confirm-text="保存" @submit="saveEditGoal" />
     <ModalForm v-model:show="goalFormShow" title="新建学习目标" confirm-text="创建" @submit="addGoal">
       <template #default>
         <div style="display: flex; flex-direction: column; gap: 10px">
@@ -1303,7 +1518,9 @@ useListNav(feynmanListEl, {
   grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
   gap: var(--wb-sp-3);
 }
-.note-card { padding: 13px 15px; cursor: pointer; }
+/* 笔记卡整体 @click 是「打开详情」，编辑按钮绝对定位在右上角并 @click.stop */
+.note-card { padding: 13px 15px; cursor: pointer; position: relative; }
+.note-edit { position: absolute; top: 6px; right: 6px; }
 .note-title { font-size: 13.5px; font-weight: 600; }
 .note-preview {
   margin-top: 6px;

@@ -83,6 +83,28 @@ async function removeHabit(h: Habit) {
   } catch { message.error('删除失败') }
 }
 
+// ---- 编辑习惯 ----
+// habits 只有两个业务列：name / color（habitsRepo 白名单也是这两个），其余由 id 定位
+const editHabitShow = ref(false)
+const editHabitId = ref<number | null>(null)
+const editHabitForm = ref<Record<string, unknown>>({})
+
+function openEditHabit(h: Habit) {
+  editHabitId.value = h.id
+  editHabitForm.value = { name: h.name, color: h.color ?? '#059669' }
+  editHabitShow.value = true
+}
+
+async function saveEditHabit(v: Record<string, unknown>) {
+  if (editHabitId.value === null) return
+  try {
+    await habitsRepo.update(editHabitId.value, { name: String(v.name || ''), color: String(v.color || '#059669') })
+    message.success('已更新')
+    editHabitShow.value = false
+    load()
+  } catch { message.error('保存失败') }
+}
+
 // 预计算：habitId -> 已打卡日期集合。
 // 原先每个习惯卡片要各调两次全表 filter/some（模板里 checkedToday 还调了两次），
 // 习惯与日志一多就是 O(习惯数 × 日志数)，改为一次建索引后 O(1) 查询。
@@ -172,6 +194,36 @@ async function removeLedger(e: LedgerEntry) {
     message.success('已删除')
     load()
   } catch { message.error('删除失败') }
+}
+
+// ---- 编辑记账 ----
+// ledger 的可编辑业务列：type/amount/category/note/date
+// 复用 ledgerFields（分类随 type 联动由 optionsBy 提供，编辑时同样生效）
+const editLedgerShow = ref(false)
+const editLedgerId = ref<number | null>(null)
+const editLedgerForm = ref<Record<string, unknown>>({})
+
+function openEditLedger(e: LedgerEntry) {
+  editLedgerId.value = e.id
+  editLedgerForm.value = {
+    type: e.type ?? 'expense', amount: e.amount ?? 0, category: e.category ?? '其他',
+    date: e.date ?? todayStr, note: e.note ?? '',
+  }
+  editLedgerShow.value = true
+}
+
+async function saveEditLedger(v: Record<string, unknown>) {
+  if (editLedgerId.value === null) return
+  try {
+    await ledgerRepo.update(editLedgerId.value, {
+      type: String(v.type || 'expense'), amount: Number(v.amount || 0),
+      category: String(v.category || '其他'), date: String(v.date || todayStr),
+      note: String(v.note || ''),
+    })
+    message.success('已更新')
+    editLedgerShow.value = false
+    load()
+  } catch { message.error('保存失败') }
 }
 
 const incomeTotal = computed(() => ledger.value.filter((e) => e.type === 'income').reduce((s, e) => s + e.amount, 0))
@@ -345,20 +397,50 @@ async function loadHealth() {
 
 async function saveHealth() {
   const v = healthToday.value
+  const patch = {
+    date: v.date || todayStr,
+    sleepHours: Number(v.sleepHours),
+    exerciseMin: Number(v.exerciseMin),
+    mood: Number(v.mood),
+    weight: v.weight ? Number(v.weight) : undefined,
+    note: v.note || '',
+  }
   try {
-    await healthLogsRepo.insert({
-      date: v.date || todayStr,
-      sleepHours: Number(v.sleepHours),
-      exerciseMin: Number(v.exerciseMin),
-      mood: Number(v.mood),
-      weight: v.weight ? Number(v.weight) : undefined,
-      note: v.note || '',
-    })
-    message.success('健康记录已保存')
+    // 同一天只应有一条记录：表单里选中了已有日期时改为更新，避免重复打卡产生多行
+    if (healthEditId.value !== null) {
+      await healthLogsRepo.update(healthEditId.value, patch)
+      healthEditId.value = null
+      message.success('健康记录已更新')
+    } else {
+      await healthLogsRepo.insert(patch)
+      message.success('健康记录已保存')
+    }
     loadHealth()
   } catch {
     message.error('保存失败（请通过 npm run tauri dev 启动）')
   }
+}
+
+// ---- 编辑健康记录 ----
+// 复用上方那张录入表单（不新增弹窗、不动布局）：点行的「编辑」把该行回填进表单，
+// 保存时走 update 分支。healthLogs 业务列：date/sleepHours/exerciseMin/mood/weight/note
+const healthEditId = ref<number | null>(null)
+
+function openEditHealth(h: HealthLog) {
+  healthEditId.value = h.id
+  healthToday.value = {
+    date: h.date || todayStr,
+    sleepHours: h.sleepHours ?? 0,
+    exerciseMin: h.exerciseMin ?? 0,
+    mood: h.mood ?? 3,
+    weight: h.weight === null || h.weight === undefined ? '' : String(h.weight),
+    note: h.note ?? '',
+  }
+}
+
+function cancelEditHealth() {
+  healthEditId.value = null
+  healthToday.value = { date: todayStr, sleepHours: 7, exerciseMin: 30, mood: 3, weight: '', note: '' }
 }
 
 onUnmounted(clearPomoInterval)
@@ -417,6 +499,36 @@ async function removeBill(b: FixedBill) {
   if (!ok) return
   try { await fixedBillsRepo.remove(b.id); message.success('已删除'); load() } catch { message.error('删除失败') }
 }
+
+// ---- 编辑固定账单 ----
+// fixedBills 的可编辑业务列：name/amount/category/cycle/dueDay/payMethod/status/note
+const editBillShow = ref(false)
+const editBillId = ref<number | null>(null)
+const editBillForm = ref<Record<string, unknown>>({})
+
+function openEditBill(b: FixedBill) {
+  editBillId.value = b.id
+  editBillForm.value = {
+    name: b.name, amount: b.amount ?? 0, category: b.category ?? '订阅',
+    cycle: b.cycle ?? 'monthly', dueDay: b.dueDay ?? 1, payMethod: b.payMethod ?? '',
+    status: b.status ?? 'active', note: b.note ?? '',
+  }
+  editBillShow.value = true
+}
+
+async function saveEditBill(v: Record<string, unknown>) {
+  if (editBillId.value === null) return
+  try {
+    await fixedBillsRepo.update(editBillId.value, {
+      name: String(v.name || ''), amount: Number(v.amount || 0), category: String(v.category || '订阅'),
+      cycle: String(v.cycle || 'monthly'), dueDay: Number(v.dueDay || 1),
+      payMethod: String(v.payMethod || ''), status: String(v.status || 'active'), note: String(v.note || ''),
+    })
+    message.success('已更新')
+    editBillShow.value = false
+    load()
+  } catch { message.error('保存失败') }
+}
 const billDueSoon = computed(() => {
   const day = today.getDate()
   return bills.value.filter((b) => b.status !== 'paused' && (b.dueDay >= day ? b.dueDay - day : b.dueDay + (30 - day)) <= 3)
@@ -469,6 +581,49 @@ async function addChore() {
     choreFormShow.value = false
     load()
   } catch { message.error('保存失败（请通过 npm run tauri dev 启动）') }
+}
+
+// ---- 编辑杂事 ----
+// 杂事复用 tasks 表，可编辑业务列取自 schema.ts：title/status/priority/dueDate/note。
+// scope/type 决定它出现在「生活杂事」列表里（load 里按 scope==='life' || type==='life' 过滤），
+// 编辑时不下发这两个字段，避免改坏归属。
+const editChoreShow = ref(false)
+const editChoreId = ref<number | null>(null)
+const editChoreForm = ref<Record<string, unknown>>({})
+const choreFields: FieldDef[] = [
+  { key: 'title', label: '事项', required: true, span: 2 },
+  { key: 'priority', label: '优先级', type: 'select', options: [
+    { label: '低', value: 'low' }, { label: '中', value: 'medium' }, { label: '高', value: 'high' }, { label: '紧急', value: 'urgent' },
+  ] },
+  { key: 'status', label: '状态', type: 'select', options: [
+    { label: '待办', value: 'todo' }, { label: '进行中', value: 'doing' }, { label: '已完成', value: 'done' },
+  ] },
+  { key: 'dueDate', label: '截止日期', type: 'date' },
+  { key: 'note', label: '备注', span: 2 },
+]
+
+function openEditChore(t: Task) {
+  editChoreId.value = t.id
+  editChoreForm.value = {
+    title: t.title, priority: t.priority ?? 'medium',
+    status: t.status ?? 'todo', dueDate: t.dueDate ?? '', note: t.note ?? '',
+  }
+  editChoreShow.value = true
+}
+
+async function saveEditChore(v: Record<string, unknown>) {
+  if (editChoreId.value === null) return
+  try {
+    await tasksRepo.update(editChoreId.value, {
+      title: String(v.title || ''), priority: String(v.priority || 'medium'),
+      status: String(v.status || 'todo'),
+      dueDate: v.dueDate ? String(v.dueDate) : undefined,
+      note: String(v.note || ''),
+    })
+    message.success('已更新')
+    editChoreShow.value = false
+    load()
+  } catch { message.error('保存失败') }
 }
 const costBars = computed(() => {
   const map = new Map<string, { expense: number; income: number }>()
@@ -614,11 +769,13 @@ useListNav(countdownGridEl, {
                 <template #icon><NIcon :component="Check" /></template>
                 {{ checkedToday(h.id) ? '已打卡' : '打卡' }}
               </NButton>
+              <NButton size="tiny" text type="primary" @click="openEditHabit(h)">编辑</NButton>
               <NButton size="tiny" text type="error" @click="removeHabit(h)"><template #icon><NIcon :component="Trash" /></template></NButton>
             </div>
           </div>
         </div>
         <EmptyState v-else text="暂无习惯，新建一个开始打卡" />
+        <ModalForm v-model:show="editHabitShow" title="编辑习惯" :fields="habitFields" :initial="editHabitForm" confirm-text="保存" @submit="saveEditHabit" />
       </n-tab-pane>
 
       <!-- 极简记账 -->
@@ -662,11 +819,13 @@ useListNav(countdownGridEl, {
             </span>
             <span class="l-note">{{ e.note || '—' }}</span>
             <span style="text-align: right">
+              <NButton size="tiny" text type="primary" @click="openEditLedger(e)">编辑</NButton>
               <NButton size="tiny" text type="error" @click="removeLedger(e)"><template #icon><NIcon :component="Trash" /></template></NButton>
             </span>
           </div>
         </div>
         <EmptyState v-else :text="recentLedger.length ? '没有匹配的记账记录' : '暂无记账记录'" />
+        <ModalForm v-model:show="editLedgerShow" title="编辑记账" :fields="ledgerFields" :initial="editLedgerForm" confirm-text="保存" @submit="saveEditLedger" />
       </n-tab-pane>
 
       <!-- 番茄钟 -->
@@ -738,6 +897,10 @@ useListNav(countdownGridEl, {
       <!-- 健康记录 -->
       <n-tab-pane name="health" tab="健康记录">
         <div class="health-form wb-card">
+          <div v-if="healthEditId !== null" class="hf-edit-bar">
+            <span>正在编辑历史记录（{{ healthToday.date }}），保存后将覆盖该条</span>
+            <NButton size="tiny" quaternary @click="cancelEditHealth()">取消编辑</NButton>
+          </div>
           <div class="hf-row">
             <NDatePicker v-model:formatted-value="healthToday.date" type="date" size="small" value-format="yyyy-MM-dd" style="width: 140px" />
           </div>
@@ -769,7 +932,7 @@ useListNav(countdownGridEl, {
         <ListSkeleton v-if="loading" :rows="5" />
         <div v-else-if="filteredHealthRecords.length" class="health-table" ref="healthTableEl" tabindex="0" :aria-label="'健康记录列表，共 ' + filteredHealthRecords.length + ' 行，↑↓ 选择'">
           <div class="ht-row head">
-            <span>日期</span><span>睡眠</span><span>运动</span><span>心情</span><span>体重</span><span>备注</span>
+            <span>日期</span><span>睡眠</span><span>运动</span><span>心情</span><span>体重</span><span>备注</span><span></span>
           </div>
           <div v-for="h in filteredHealthRecords" :key="h.id" class="ht-row" :data-row-id="h.id">
             <span class="mono">{{ h.date }}</span>
@@ -778,6 +941,9 @@ useListNav(countdownGridEl, {
             <span class="mono">{{ h.mood ? moodLabels[h.mood] || h.mood : '—' }}</span>
             <span class="mono">{{ h.weight ?? '—' }}</span>
             <span class="ht-note">{{ h.note || '—' }}</span>
+            <span style="text-align: right">
+              <NButton size="tiny" text type="primary" @click="openEditHealth(h)">编辑</NButton>
+            </span>
           </div>
         </div>
         <EmptyState v-else :text="healthRecords.length ? '没有匹配的健康记录' : '暂无健康记录'" />
@@ -851,11 +1017,13 @@ useListNav(countdownGridEl, {
             <span class="mono">{{ b.dueDay }} 日</span>
             <span><NTag size="tiny" :bordered="false" :type="b.status === 'active' ? 'success' : 'default'">{{ b.status === 'active' ? '启用' : '暂停' }}</NTag></span>
             <span style="text-align: right">
+              <NButton size="tiny" text type="primary" @click="openEditBill(b)">编辑</NButton>
               <NButton size="tiny" text type="error" @click="removeBill(b)"><template #icon><NIcon :component="Trash" /></template></NButton>
             </span>
           </div>
         </div>
         <EmptyState v-else :text="bills.length ? '没有匹配的固定账单' : '暂无固定账单'" />
+        <ModalForm v-model:show="editBillShow" title="编辑固定账单" :fields="billFields" :initial="editBillForm" confirm-text="保存" @submit="saveEditBill" />
       </n-tab-pane>
 
       <!-- 生活看板 F-LIFE-05/07/09 -->
@@ -890,6 +1058,7 @@ useListNav(countdownGridEl, {
                 </span>
                 <span style="display: flex; gap: 2px">
                   <NButton size="tiny" text @click="toggleChore(t)"><template #icon><NIcon :component="Check" /></template></NButton>
+                  <NButton size="tiny" text type="primary" @click="openEditChore(t)">编辑</NButton>
                   <NButton size="tiny" text type="error" @click="removeChore(t)"><template #icon><NIcon :component="Trash" /></template></NButton>
                 </span>
               </div>
@@ -935,6 +1104,7 @@ useListNav(countdownGridEl, {
         <NInput v-model:value="choreText" type="textarea" :rows="3" placeholder="要处理的生活杂事…" />
       </template>
     </ModalForm>
+    <ModalForm v-model:show="editChoreShow" title="编辑杂事" :fields="choreFields" :initial="editChoreForm" confirm-text="保存" @submit="saveEditChore" />
   </div>
 </template>
 
@@ -1012,7 +1182,14 @@ useListNav(countdownGridEl, {
 .pr-more { padding: 8px 14px; text-align: center; border-top: 1px solid var(--wb-border); }
 .sec-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
 .sec-title { font-size: var(--wb-fs-md); font-weight: 600; color: var(--wb-text-2); }
-.ht-row { grid-template-columns: 1fr 0.8fr 0.8fr 0.8fr 0.8fr 2fr; }
+/* 末列是「编辑」操作列（健康记录可编辑后新增） */
+.ht-row { grid-template-columns: 1fr 0.8fr 0.8fr 0.8fr 0.8fr 2fr 0.6fr; }
+.hf-edit-bar {
+  display: flex; align-items: center; justify-content: space-between; gap: var(--wb-sp-2);
+  font-size: 12px; color: var(--wb-warning, #f0a020);
+  background: color-mix(in srgb, var(--wb-warning, #f0a020) 10%, transparent);
+  border-radius: var(--wb-radius-sm); padding: 5px 8px;
+}
 .pr-row:last-child, .ht-row:last-child { border-bottom: none; }
 .pr-row.head, .ht-row.head {
   background: var(--wb-card-alt);
