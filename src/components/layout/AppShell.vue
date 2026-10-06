@@ -258,7 +258,7 @@ onMounted(() => {
           <NButton size="small" quaternary circle title="系统设置" @click="openSettings()">
             <template #icon><NIcon :component="Settings" /></template>
           </NButton>
-          <NButton size="small" quaternary circle title="命令面板 (Ctrl K)" @click="paletteStore.openPanel()">
+          <NButton size="small" quaternary circle class="wb-cmd-btn" title="命令面板 (Ctrl K)" @click="paletteStore.openPanel()">
             <template #icon><NIcon :component="Command" /></template>
           </NButton>
         </div>
@@ -315,10 +315,15 @@ onMounted(() => {
   padding: 0 12px;
 }
 .avatar-slot {
-  /* 与 .nav-icon 同宽并让头像居中：头像中心线 = 导航图标中心线（展开态左缘同 padding 时精确对齐） */
-  width: 17px;
+  /* 修正：原先写 17px（想对齐 .nav-icon 字号），但里面装的是 30px 的 .user-avatar，
+     容器比内容小 13px，头像必然溢出、与下方导航图标错开半个身位。
+     正确做法：容器跟随头像实际尺寸，用负 margin 抵消视觉重量居中，
+     保证展开/折叠两种状态下头像中心线都与导航图标中心线重合。 */
+  width: 30px;
+  height: 30px;
   flex: none;
   display: flex;
+  align-items: center;
   justify-content: center;
 }
 .user-avatar {
@@ -334,6 +339,7 @@ onMounted(() => {
   font-size: 14px;
   letter-spacing: 0.5px;
   box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.18);
+  overflow: hidden;
 }
 img.user-avatar {
   object-fit: cover;
@@ -366,6 +372,7 @@ img.user-avatar {
   color: var(--wb-text-3);
   transition: background-color 120ms ease-out;
   text-decoration: none;
+  /* 键盘可达：router-link 渲染成 <a>，默认可聚焦，配合 main.css 焦点环即生效 */
 }
 .nav-icon {
   flex: none;
@@ -536,5 +543,63 @@ img.user-avatar {
 }
 @keyframes wb-spin {
   to { transform: rotate(360deg); }
+}
+
+/* ============================================================
+   响应式：统一 md(900) / sm(640) 两级断点
+   历史问题：AppShell 此前一条 media query 都没有。窗口收窄时，
+   196px 侧栏 + 8 个顶栏按钮会把内容区挤到不足 400px，
+   表格行也各自用 640/1100 等散断点单独降级，节奏不一致。
+   ============================================================ */
+
+/* md 窄窗口：侧栏自动折叠为图标栏（不覆盖用户的展开设置，用户仍可手动展开） */
+@media (max-width: 900px) {
+  .sidebar {
+    width: 56px;
+    padding: 14px 8px;
+  }
+  .sidebar .logo-text,
+  .sidebar .nav-label {
+    display: none;
+  }
+  .sidebar .logo {
+    justify-content: center;
+    padding: 0;
+  }
+  .sidebar .nav-item {
+    justify-content: center;
+    padding: 0;
+    gap: 0;
+  }
+  /* 次级信息让位：系统状态摘要在窄屏隐藏（详情仍在悬浮气泡里可查） */
+  .sys-status {
+    display: none;
+  }
+}
+
+/* sm 极窄：进一步精简顶栏，保留最高频三个入口（灵感 / 刷新 / 设置） */
+@media (max-width: 640px) {
+  .topbar-right > .divider {
+    display: none;
+  }
+  /* 命令面板按钮在窄屏隐藏：仍有 Ctrl+K 快捷键可用 */
+  .topbar-right > .wb-cmd-btn {
+    display: none;
+  }
+  .crumb-module {
+    font-size: var(--wb-fs-md);
+  }
+  .content {
+    padding: var(--wb-sp-3) var(--wb-sp-2) var(--wb-sp-5);
+  }
+}
+
+/* 宽屏：内容区不再被 1280 硬顶死（见 HomeView .dash），
+   但给可读宽度留上限，避免超宽屏上文字行过长难读 */
+@media (min-width: 1600px) {
+  .content {
+    padding-left: max(var(--wb-content-pad-x), 6%);
+    padding-right: max(var(--wb-content-pad-x), 6%);
+  }
 }
 </style>

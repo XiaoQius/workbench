@@ -32,6 +32,56 @@
   --wb-radius-md: 8px;
   --wb-radius-lg: 12px;
   --wb-border-w: 1px;
+
+  /* ============================================================
+     统一尺度：间距 / 字号 / 断点
+     历史问题：139 处 gap 硬编码 4/6/8/10/12/16px，7 个视图各用自己的
+     断点（640/900/960/1000/1100），同尺度问题在两端写法不统一。
+     新增6 全部 Knox 引用这组 token，改一处即全局生效。
+     ============================================================ */
+  /* 间距阶尺（4px 基准） */
+  --wb-sp-1: 4px;
+  --wb-sp-2: 8px;
+  --wb-sp-3: 12px;
+  --wb-sp-4: 16px;
+  --wb-sp-5: 20px;
+  --wb-sp-6: 24px;
+  --wb-sp-8: 32px;
+  /* 语义化间距：卡片间距 / 区块间距 / 控件间距 */
+  --wb-gap-card: var(--wb-sp-3);      /* 12px 网格卡片之间 */
+  --wb-gap-section: var(--wb-sp-4);   /* 16px 页面大区块之间 */
+  --wb-gap-control: var(--wb-sp-2);   /* 8px  按钮/输入之间 */
+  --wb-gap-inner: var(--wb-sp-3);     /* 12px 卡片内元素之间 */
+  --wb-pad-card: var(--wb-sp-4);      /* 16px 卡片内边距 */
+  --wb-pad-page: var(--wb-sp-5);      /* 20px 页面级内边距 */
+
+  /* 字号阶尺 */
+  --wb-fs-xs: 11px;    /* 徽标 / 水印 */
+  --wb-fs-sm: 12px;    /* 次要信息 / 表格 */
+  --wb-fs-md: 13px;    /* 正文（基准） */
+  --wb-fs-lg: 14px;    /* 小标题 / 强调 */
+  --wb-fs-xl: 16px;    /* 区块标题 */
+  --wb-fs-2xl: 20px;   /* 页面标题 */
+  --wb-fs-metric: 21px;/* 指标数字 */
+
+  /* 行高阶尺 */
+  --wb-lh-tight: 1.25;
+  --wb-lh-normal: 1.55;
+  --wb-lh-relax: 1.8;
+
+  /* 响应式断点注释（CSS 无法定义变量用于 media query，此处仅作文档约定）
+     sm = 640   手机 / 极窄窗口
+     md = 900   窄窗口：两列网格转单列
+     lg = 1200  常规：主内容 + 侧栏
+     xl = 1600  宽屏：内容区放宽上限
+     统一用这四个值，不再用 960/1000/1100 等散值。 */
+
+  /* 触控目标下限：可点区域不小于 32px，避免密集列表误触 */
+  --wb-touch-min: 32px;
+
+  /* 焦点环（无障碍：键盘导航可见） */
+  --wb-focus-ring: 0 0 0 2px color-mix(in srgb, var(--wb-accent) 45%, transparent);
+
   /* 左右对齐：顶栏为悬浮卡片（外边距 + 内边距），页面内容区需等于两者之和
      才能与顶栏内容左边缘对齐；AppShell 统一引用这组变量 */
   --wb-shell-edge: 10px;
@@ -285,6 +335,124 @@ body {
   transform: translateY(-2px);
   box-shadow: var(--wb-shadow-hover);
   border-color: var(--wb-card-hover-border);
+}
+
+/* ============================================================
+   统一可点击语义：列表行 / 卡片跳转点
+   历史问题：`.clickable` 依赖各视图自己写 hover 底色，深浅主题下
+   对比度不一致，且部分行忘记加 cursor，鼠标移上去毫无反馈。
+   ============================================================ */
+.clickable {
+  cursor: pointer;
+}
+.clickable:hover {
+  background: var(--wb-card-alt);
+}
+
+/* 列表通用容器：点击行负边距出血 + 圆角，视觉不与卡片边缘冲突 */
+.wb-list {
+  display: flex;
+  flex-direction: column;
+  padding: var(--wb-sp-1) var(--wb-sp-1);
+  gap: var(--wb-sp-1);
+}
+.wb-list-item {
+  display: flex;
+  align-items: center;
+  gap: var(--wb-sp-3);
+  min-height: var(--wb-touch-min);
+  padding: var(--wb-sp-2) var(--wb-sp-2);
+  border-radius: var(--wb-radius-md);
+  transition: background-color 120ms ease-out;
+}
+
+/* ============================================================
+   键盘焦点环：原先只有 naive-ui 组件有焦点样式，自绘的行 / 卡片 /
+    button 在 Tab 导航时完全无可见反馈，键盘用户无法定位。
+   ============================================================ */
+.clickable:focus-visible,
+.wb-card:focus-visible,
+button:focus-visible,
+a:focus-visible,
+[role='button']:focus-visible,
+input:focus-visible,
+textarea:focus-visible,
+select:focus-visible {
+  outline: none;
+  box-shadow: var(--wb-focus-ring);
+  border-radius: var(--wb-radius-sm);
+}
+/* 原生按钮在部分主题下自带 outline，冲突时优先用我们的环 */
+button::-moz-focus-inner {
+  border: 0;
+}
+
+/* ============================================================
+   触控目标保障：密集列表里的图标按钮不应小于 32px，
+   否则平板/触屏和鼠标快速点击都容易误触。
+   ============================================================ */
+.wb-icon-btn {
+  min-width: var(--wb-touch-min);
+  min-height: var(--wb-touch-min);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* ============================================================
+   文本截断工具：列表里的标题/描述统一单行截断，避免撑破栅格。
+   原先各视图重复写 text-overflow 三件套，且常漏 min-width:0 导致失效。
+   ============================================================ */
+.wb-truncate {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.wb-truncate-2 {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+/* ============================================================
+   区块 / 表单栅格：以前每个视图手写 repeat(auto-fill, minmax(...))，
+   最小宽度值从 180 到 320 不等，同屏并排卡片数量对不齐。
+   ============================================================ */
+.wb-grid-auto {
+  display: grid;
+  gap: var(--wb-gap-card);
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+}
+.wb-grid-2 {
+  display: grid;
+  gap: var(--wb-gap-card);
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+.wb-grid-3 {
+  display: grid;
+  gap: var(--wb-gap-card);
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+.wb-grid-4 {
+  display: grid;
+  gap: var(--wb-gap-card);
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+/* md 断点（窄窗口）：多列网格统一降级为两列；sm 再降单列 */
+@media (max-width: 900px) {
+  .wb-grid-3,
+  .wb-grid-4 {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+@media (max-width: 640px) {
+  .wb-grid-2,
+  .wb-grid-3,
+  .wb-grid-4 {
+    grid-template-columns: minmax(0, 1fr);
+  }
 }
 
 /* 强调色左条（模块标题用） */
