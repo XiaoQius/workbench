@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { watch, ref, onMounted, onUnmounted, computed } from 'vue'
 import { refreshTick } from '@/stores/ui'
-import { NButton, NTag, NInput, NSelect, NModal, NForm, NFormItem, NSpace, useMessage, NIcon } from 'naive-ui'
+import { NButton, NTag, NInput, NSelect, NModal, NForm, NFormItem, NSpace, useMessage, NIcon, NCheckbox } from 'naive-ui'
 import { Plus, Trash, Rocket, Refresh, Edit } from '@vicons/tabler'
 import EmptyState from '@/components/EmptyState.vue'
 import ListSkeleton from '@/components/ListSkeleton.vue'
@@ -11,6 +11,7 @@ import type { Tool, Agent } from '../../drizzle/schema'
 import { scanAgents, portProbe, agentWorkflow, listInstalledApps, resolveShortcut, launchApp, type AgentSessionInfo, type AgentWorkflowResult, type InstalledApp } from '@/composables/useTauri'
 import { useConfirm } from '@/composables/useConfirm'
 import { useListNav } from '@/composables/useListNav'
+import { useBatchSelect } from '@/composables/useBatchSelect'
 
 const message = useMessage()
 const { confirm } = useConfirm()
@@ -424,6 +425,85 @@ function saveEditPrompt() {
   cancelEditPrompt()
 }
 
+// ============================================================
+// 批量处理：Prompt 库
+// 这里不能用共享 useBatchSelect —— 它的签名约束是 T extends { id: number }，
+// 而 Prompt 存在 localStorage、id 是 String(Date.now()) 的字符串。
+// 逻辑照抄同一套语义（Set + 数据源变化时 prune 失效 id），只是键类型换成 string。
+// ============================================================
+const promptSelIds = ref<Set<string>>(new Set())
+const promptSelCount = computed(() => promptSelIds.value.size)
+const promptSelActive = computed(() => promptSelCount.value > 0)
+const promptAllChecked = computed(() => promptLib.value.length > 0 && promptSelCount.value === promptLib.value.length)
+const promptSomeChecked = computed(() => promptSelCount.value > 0 && !promptAllChecked.value)
+function togglePrompt(id: string) {
+  const next = new Set(promptSelIds.value)
+  if (next.has(id)) next.delete(id)
+  else next.add(id)
+  promptSelIds.value = next
+}
+function toggleAllPrompts() {
+  if (promptAllChecked.value) promptSelIds.value = new Set()
+  else promptSelIds.value = new Set(promptLib.value.map((p) => p.id))
+}
+function clearPromptSel() {
+  if (promptSelIds.value.size) promptSelIds.value = new Set()
+}
+function isPromptSelected(id: string): boolean {
+  return promptSelIds.value.has(id)
+}
+// 数据源变化（增删 / 重新加载）后剔除已不存在的 id，避免对看不见的行做删除
+watch(
+  () => promptLib.value.map((p) => p.id).join(','),
+  () => {
+    const alive = new Set(promptLib.value.map((p) => p.id))
+    let dirty = false
+    const next = new Set<string>()
+    for (const id of promptSelIds.value) {
+      if (alive.has(id)) next.add(id)
+      else dirty = true
+    }
+    if (dirty) promptSelIds.value = next
+  },
+  { flush: 'post' },
+)
+
+async function batchRemovePrompts() {
+  const n = promptSelCount.value
+  if (!n) return
+  const names = promptLib.value
+    .filter((p) => promptSelIds.value.has(p.id))
+    .slice(0, 3)
+    .map((p) => p.name)
+    .join('、')
+  const ok = await confirm({
+    title: `删除选中的 ${n} 条 Prompt？`,
+    content: `${names}${n > 3 ? ` 等 ${n} 条` : ''}，删除后无法恢复。`,
+  })
+  if (!ok) return
+  promptLib.value = promptLib.value.filter((p) => !promptSelIds.value.has(p.id))
+  persistPrompts()
+  clearPromptSel()
+  message.success(`已删除 ${n} 条 Prompt`)
+}
+
+/** 批量复制：把选中模板拼成一段文本放进剪贴板 */
+async function batchCopyPrompts() {
+  const n = promptSelCount.value
+  if (!n) return
+  const text = promptLib.value
+    .filter((p) => promptSelIds.value.has(p.id))
+    .map((p) => `## ${p.name}\n${p.text}`)
+    .join('\n\n')
+  try {
+    await navigator.clipboard.writeText(text)
+    message.success(`已复制 ${n} 条 Prompt`)
+    clearPromptSel()
+  } catch {
+    message.error('复制失败')
+  }
+}
+
 // ---- F-AGT-14 交接包：为最近一次工作流生成交接文本 ----
 function handoffPack() {
   if (!wfResult.value) { message.warning('请先拆解一个目标任务'); return }
@@ -721,6 +801,81 @@ function toggleToolSort() {
   toolSort.value = toolSort.value === 'hot' ? 'name' : 'hot'
   message.info(toolSort.value === 'hot' ? '已按使用频次排序（F-LP-05）' : '已按名称排序')
 }
+
+// ============================================================
+// 批量处理：工具（tools）
+// 勾选绑到 orderedTools —— 它是模板真正渲染的那份数组（排序后的结果），
+// 用 filteredTools 会让「选中集合」与「看得见的行」对不上。
+// ============================================================
+const {
+  selectedIds: selToolIds,
+  count: selToolCount,
+  active: toolSelActive,
+  allChecked: toolAllChecked,
+  someChecked: toolSomeChecked,
+  toggle: toggleTool,
+  toggleAll: toggleAllTools,
+  clear: clearToolSel,
+  isSelected: isToolSelected,
+} = useBatchSelect<Tool>(orderedTools)
+
+// tools.category（schema 注释）：agent | editor | terminal | runtime | design | ops | local | online | other
+const batchToolCategory = ref<string>('other')
+const batchToolCategoryOptions = [
+  { label: 'Agent', value: 'agent' },
+  { label: '编辑器', value: 'editor' },
+  { label: '终端', value: 'terminal' },
+  { label: '运行时', value: 'runtime' },
+  { label: '设计', value: 'design' },
+  { label: '运维', value: 'ops' },
+  { label: '本地', value: 'local' },
+  { label: '在线', value: 'online' },
+  { label: '其他', value: 'other' },
+]
+
+async function batchRemoveTools() {
+  const n = selToolCount.value
+  if (!n) return
+  const names = orderedTools.value
+    .filter((t) => selToolIds.value.has(t.id))
+    .slice(0, 3)
+    .map((t) => t.name)
+    .join('、')
+  const ok = await confirm({
+    title: `删除选中的 ${n} 个工具？`,
+    content: `${names}${n > 3 ? ` 等 ${n} 个` : ''}，删除后无法恢复。`,
+  })
+  if (!ok) return
+  const res = await Promise.allSettled([...selToolIds.value].map((id) => toolsRepo.remove(id)))
+  const okN = res.filter((r) => r.status === 'fulfilled').length
+  const failN = res.length - okN
+  clearToolSel()
+  if (failN === 0) message.success(`已删除 ${okN} 个工具`)
+  else message.error(`成功 ${okN} 个，失败 ${failN} 个`)
+  load()
+}
+
+async function batchSetToolCategory() {
+  const n = selToolCount.value
+  if (!n) return
+  const category = batchToolCategory.value
+  const label = batchToolCategoryOptions.find((o) => o.value === category)?.label ?? category
+  const ok = await confirm({
+    title: `将选中的 ${n} 个工具改分类为「${label}」？`,
+    content: `会写入 tools.category = ${category}（不改动 hitCount 等其它列）。`,
+    confirmText: '确认修改',
+    danger: false,
+  })
+  if (!ok) return
+  const res = await Promise.allSettled([...selToolIds.value].map((id) => toolsRepo.update(id, { category: category as Tool['category'] })))
+  const okN = res.filter((r) => r.status === 'fulfilled').length
+  const failN = res.length - okN
+  clearToolSel()
+  if (failN === 0) message.success(`已更新 ${okN} 个工具`)
+  else message.error(`成功 ${okN} 个，失败 ${failN} 个`)
+  load()
+}
+
 // F-LP-04：Alt+1..9 快速启动前 9 个工具
 function onToolHotkey(e: KeyboardEvent) {
   if (e.altKey && !e.ctrlKey && !e.metaKey && e.key >= '1' && e.key <= '9') {
@@ -1017,6 +1172,13 @@ useListNav(rollbackListEl, {
           </div>
           <div class="tool-bar">
             <NInput v-model:value="keyword" size="small" placeholder="搜索工具…" clearable style="flex: 1" />
+            <NCheckbox
+              v-if="tools.length"
+              :checked="toolAllChecked"
+              :indeterminate="toolSomeChecked"
+              size="small"
+              @update:checked="toggleAllTools"
+            >全选</NCheckbox>
             <NButton size="tiny" quaternary @click="toggleToolSort()">{{ toolSort === 'hot' ? '按频次' : '按名称' }}</NButton>
             <NButton size="tiny" quaternary @click="copyBat()">生成 .bat</NButton>
             <NButton size="tiny" type="primary" ghost @click="quickStart()">一键开始</NButton>
@@ -1024,8 +1186,19 @@ useListNav(rollbackListEl, {
           </div>
           <div class="tool-hint mono">热键：Alt+1..9 启动前 9 个工具 · F-LP-04/05/06/08</div>
           <ListSkeleton v-if="loading" :rows="6" />
+          <div v-if="toolSelActive" class="batch-bar">
+            <span class="batch-count">已选 {{ selToolCount }} 项</span>
+            <NSelect v-model:value="batchToolCategory" size="small" :options="batchToolCategoryOptions" class="batch-status-select" />
+            <NButton size="small" type="primary" ghost @click="batchSetToolCategory">批量改分类</NButton>
+            <NButton size="small" type="error" ghost @click="batchRemoveTools">
+              <template #icon><NIcon :component="Trash" /></template>
+              批量删除
+            </NButton>
+            <NButton size="small" text @click="clearToolSel">取消选择</NButton>
+          </div>
           <div v-else-if="orderedTools.length" class="tool-grid" ref="toolGridEl" tabindex="0" :aria-label="'工具列表，共 ' + orderedTools.length + ' 行，↑↓ 选择、Enter 启动'">
             <div v-for="(t, idx) in orderedTools" :key="t.id" class="tool-item" :data-row-id="t.id">
+              <span class="tool-check"><NCheckbox :checked="isToolSelected(t.id)" @update:checked="toggleTool(t.id)" @click.stop /></span>
               <div class="tool-main" @click="launchTool(t)">
                 <span class="tool-dot" :style="{ background: 'var(--wb-module-workspace)' }"></span>
                 <div class="tool-info">
@@ -1268,6 +1441,18 @@ useListNav(rollbackListEl, {
             <NButton size="small" type="primary" ghost @click="addPrompt()">保存</NButton>
           </div>
           <div v-if="promptLib.length" class="prompt-list" ref="promptListEl" tabindex="0" :aria-label="'Prompt 库列表，共 ' + promptLib.length + ' 行，↑↓ 选择'">
+            <div v-if="promptSelActive" class="batch-bar">
+              <span class="batch-count">已选 {{ promptSelCount }} 项</span>
+              <NButton size="small" type="primary" ghost @click="batchCopyPrompts">批量复制</NButton>
+              <NButton size="small" type="error" ghost @click="batchRemovePrompts">
+                <template #icon><NIcon :component="Trash" /></template>
+                批量删除
+              </NButton>
+              <NButton size="small" text @click="clearPromptSel">取消选择</NButton>
+            </div>
+            <div class="prompt-head">
+              <NCheckbox :checked="promptAllChecked" :indeterminate="promptSomeChecked" size="small" @update:checked="toggleAllPrompts">全选</NCheckbox>
+            </div>
             <div v-for="p in promptLib" :key="p.id" class="prompt-item" :data-row-id="p.id">
               <template v-if="editPromptId === p.id">
                 <NInput v-model:value="editPromptName" size="tiny" placeholder="名称" style="flex: 0 0 120px" />
@@ -1276,6 +1461,7 @@ useListNav(rollbackListEl, {
                 <NButton size="tiny" text @click="cancelEditPrompt()">取消</NButton>
               </template>
               <template v-else>
+                <NCheckbox :checked="isPromptSelected(p.id)" @update:checked="togglePrompt(p.id)" @click.stop />
                 <span class="prompt-name">{{ p.name }}</span>
                 <span class="prompt-text mono">{{ p.text }}</span>
                 <NButton size="tiny" text @click="openEditPrompt(p)">编辑</NButton>
@@ -1338,6 +1524,20 @@ useListNav(rollbackListEl, {
 </template>
 
 <style scoped>
+/* 批量操作条：沿用 DevView 同一套写法，配色只取既有 token，不引入新色 */
+.batch-bar {
+  display: flex;
+  align-items: center;
+  gap: var(--wb-sp-2);
+  flex-wrap: wrap;
+  padding: 8px 12px;
+  border: 1px solid var(--wb-border);
+  border-radius: var(--wb-radius-md);
+  background: var(--wb-card-alt);
+  font-size: var(--wb-fs-sm);
+}
+.batch-count { color: var(--wb-text-2); margin-right: var(--wb-sp-1); }
+.batch-status-select { width: 110px; }
 .grid {
   display: grid;
   grid-template-columns: 1fr 1fr;
@@ -1374,6 +1574,8 @@ useListNav(rollbackListEl, {
   align-items: center;
   gap: var(--wb-sp-2);
 }
+/* 首列 checkbox：flex 布局里靠 flex:none 占位，不影响 tool-main 的伸缩 */
+.tool-check { flex: none; display: flex; align-items: center; }
 .tool-main {
   flex: 1; display: flex; align-items: center; gap: 9px; cursor: pointer; min-width: 0;
 }
@@ -1489,6 +1691,7 @@ useListNav(rollbackListEl, {
 .notify-item { font-size: var(--wb-fs-sm); padding: 5px 8px; border: 1px solid var(--wb-border); border-radius: var(--wb-radius-sm); background: var(--wb-card-alt); }
 .notify-item.warn { border-color: var(--wb-warning, #f0a020); color: var(--wb-warning, #f0a020); }
 .prompt-list { display: flex; flex-direction: column; gap: var(--wb-sp-1); margin-top: 8px; }
+.prompt-head { display: flex; align-items: center; padding: 0 2px; }
 .prompt-item { display: flex; align-items: center; gap: var(--wb-sp-2); font-size: var(--wb-fs-sm); padding: 6px 8px; border: 1px solid var(--wb-border); border-radius: var(--wb-radius-sm); background: var(--wb-card-alt); }
 .prompt-name { flex: none; font-weight: 650; }
 .prompt-text { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--wb-text-3); }

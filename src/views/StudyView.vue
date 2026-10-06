@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { watch, ref, onMounted, computed, reactive } from 'vue'
 import { refreshTick } from '@/stores/ui'
-import { NButton, NTag, NTabs, NTabPane, NIcon, useMessage, NSelect, NDatePicker, NInput } from 'naive-ui'
+import { NButton, NTag, NTabs, NTabPane, NIcon, useMessage, NSelect, NDatePicker, NInput, NCheckbox } from 'naive-ui'
 import { Plus, Trash, Check, Checkbox, Pencil } from '@vicons/tabler'
 import EmptyState from '@/components/EmptyState.vue'
 import ListSkeleton from '@/components/ListSkeleton.vue'
@@ -11,6 +11,7 @@ import { useListNav } from '@/composables/useListNav'
 import { coursesRepo, assignmentsRepo, notesRepo, gradesRepo, flashcardsRepo, pitfallsRepo, readQueueRepo, feynmanLogsRepo, tasksRepo, pomodorosRepo } from '@/db'
 import type { Course, Assignment, Note, Grade, Flashcard, Pitfall, ReadQueueItem, FeynmanLog, Task, Pomodoro } from '../../drizzle/schema'
 import { matchKw } from '@/composables/match'
+import { useBatchSelect } from '@/composables/useBatchSelect'
 
 const message = useMessage()
 const { confirm } = useConfirm()
@@ -297,6 +298,63 @@ async function setAssignmentStatus(a: Assignment, status: string) {
     await assignmentsRepo.update(a.id, { status })
     a.status = status as Assignment['status']
   } catch { message.error('更新失败') }
+}
+
+// ---- 作业批量处理（选中 + 批量删除 / 批量改状态）----
+// 数据源传过滤后的 filteredAssignments：过滤变化时失效 id 自动剔除，避免误删看不见的行。
+const {
+  selectedIds: selAssignIds,
+  count: selAssignCount,
+  active: assignSelActive,
+  allChecked: assignAllChecked,
+  someChecked: assignSomeChecked,
+  toggle: toggleAssign,
+  toggleAll: toggleAllAssigns,
+  clear: clearAssignSel,
+  isSelected: isAssignSelected,
+} = useBatchSelect<Assignment>(filteredAssignments)
+const batchAssignStatus = ref<'todo' | 'written' | 'submitted'>('submitted')
+const batchAssignStatusOptions = [
+  { label: '待办（未写）', value: 'todo' },
+  { label: '已写未交', value: 'written' },
+  { label: '已交', value: 'submitted' },
+]
+const batchAssignStatusLabel: Record<string, string> = { todo: '待办', written: '已写未交', submitted: '已交' }
+
+async function batchRemoveAssignments() {
+  const n = selAssignCount.value
+  if (!n) return
+  const ok = await confirm({ title: `删除选中的 ${n} 条作业？`, content: '此操作不可撤销，选中的作业将被永久删除。' })
+  if (!ok) return
+  const ids = [...selAssignIds.value]
+  const res = await Promise.allSettled(ids.map((id) => assignmentsRepo.remove(id)))
+  const okN = res.filter((r) => r.status === 'fulfilled').length
+  const failN = res.length - okN
+  clearAssignSel()
+  if (failN === 0) message.success(`已删除 ${okN} 条作业`)
+  else message.error(`成功 ${okN} 条，失败 ${failN} 条`)
+  load()
+}
+
+async function batchSetAssignmentStatus() {
+  const n = selAssignCount.value
+  if (!n) return
+  const status = batchAssignStatus.value
+  const ok = await confirm({
+    title: `将选中的 ${n} 条作业标为「${batchAssignStatusLabel[status]}」？`,
+    content: `会写入 assignments.status = ${status}。`,
+    confirmText: '确认修改',
+    danger: false,
+  })
+  if (!ok) return
+  const ids = [...selAssignIds.value]
+  const res = await Promise.allSettled(ids.map((id) => assignmentsRepo.update(id, { status })))
+  const okN = res.filter((r) => r.status === 'fulfilled').length
+  const failN = res.length - okN
+  clearAssignSel()
+  if (failN === 0) message.success(`已更新 ${okN} 条作业`)
+  else message.error(`成功 ${okN} 条，失败 ${failN} 条`)
+  load()
 }
 
 // ---- F-STU-04 DDL 压力热力图：按截止周聚合未交作业数 ----
@@ -998,11 +1056,23 @@ useListNav(feynmanListEl, {
           </span>
         </div>
         <ListSkeleton v-if="loading" :rows="5" />
-        <div v-else-if="filteredAssignments.length" class="assignment-table" ref="assignmentTableEl" tabindex="0" :aria-label="'作业列表，共 ' + filteredAssignments.length + ' 行，↑↓ 选择、Enter 切换已写'">
+        <div v-if="!loading && assignSelActive" class="batch-bar">
+          <span class="batch-count">已选 {{ selAssignCount }} 项</span>
+          <NSelect v-model:value="batchAssignStatus" size="small" :options="batchAssignStatusOptions" class="batch-status-select" />
+          <NButton size="small" type="primary" ghost @click="batchSetAssignmentStatus">批量改状态</NButton>
+          <NButton size="small" type="error" ghost @click="batchRemoveAssignments">
+            <template #icon><NIcon :component="Trash" /></template>
+            批量删除
+          </NButton>
+          <NButton size="small" text @click="clearAssignSel">取消选择</NButton>
+        </div>
+        <div v-if="!loading && filteredAssignments.length" class="assignment-table with-check" ref="assignmentTableEl" tabindex="0" :aria-label="'作业列表，共 ' + filteredAssignments.length + ' 行，↑↓ 选择、Enter 切换已写'">
           <div class="a-row head">
+            <span><NCheckbox :checked="assignAllChecked" :indeterminate="assignSomeChecked" @update:checked="toggleAllAssigns" /></span>
             <span>作业</span><span>课程</span><span>截止</span><span>写完</span><span>提交</span><span></span>
           </div>
           <div v-for="a in filteredAssignments" :key="a.id" class="a-row" :data-row-id="a.id">
+            <span><NCheckbox :checked="isAssignSelected(a.id)" @update:checked="toggleAssign(a.id)" /></span>
             <span class="a-title">{{ a.title }}</span>
             <span>{{ courseName(a.courseId) }}</span>
             <span class="mono" :style="a.dueDate && a.dueDate < new Date().toISOString().slice(0, 10) && a.status !== 'submitted' ? 'color: var(--wb-danger)' : ''">
@@ -1032,7 +1102,7 @@ useListNav(feynmanListEl, {
             </span>
           </div>
         </div>
-        <EmptyState v-else :text="assignments.length ? '没有匹配的作业' : '暂无作业'" />
+        <EmptyState v-if="!loading && !filteredAssignments.length" :text="assignments.length ? '没有匹配的作业' : '暂无作业'" />
       </n-tab-pane>
 
       <!-- 学习笔记 -->
@@ -1380,6 +1450,23 @@ useListNav(feynmanListEl, {
 .toolbar { display: flex; justify-content: flex-end; margin-bottom: 12px; }
 .toolbar-split { justify-content: space-between; align-items: center; gap: var(--wb-sp-3); }
 .toolbar-search { max-width: 280px; }
+/* 批量操作条：仅在有选中项时出现在列表上方，沿用既有 token，不引入新色 */
+.batch-bar {
+  display: flex;
+  align-items: center;
+  gap: var(--wb-sp-2);
+  flex-wrap: wrap;
+  margin-bottom: 12px;
+  padding: 8px 12px;
+  border: 1px solid var(--wb-border);
+  border-radius: var(--wb-radius-md);
+  background: var(--wb-card-alt);
+  font-size: var(--wb-fs-sm);
+}
+.batch-count { color: var(--wb-text-2); margin-right: var(--wb-sp-1); }
+.batch-status-select { width: 130px; }
+/* 首列 checkbox：只给带勾选的作业表加一列 */
+.assignment-table.with-check .a-row { grid-template-columns: 32px 2.2fr 1.2fr 1.2fr 0.9fr 0.9fr 0.5fr; }
 .schedule {
   display: grid;
   grid-template-columns: repeat(7, 1fr);

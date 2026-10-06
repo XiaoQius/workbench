@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { watch, ref, onMounted, computed } from 'vue'
 import { refreshTick } from '@/stores/ui'
-import { NButton, NTag, NTabs, NTabPane, NIcon, useMessage, NProgress, NInput } from 'naive-ui'
+import { NButton, NTag, NTabs, NTabPane, NIcon, useMessage, NProgress, NInput, NCheckbox, NSelect } from 'naive-ui'
 import { Plus, Trash, Refresh } from '@vicons/tabler'
 import EmptyState from '@/components/EmptyState.vue'
 import ListSkeleton from '@/components/ListSkeleton.vue'
@@ -12,6 +12,7 @@ import type { Server, Domain, OpsFlow, OpsChange, OpsSecCheck, OpsSecret, OpsDns
 import { useConfirm } from '@/composables/useConfirm'
 import { useListNav } from '@/composables/useListNav'
 import { matchKw } from '@/composables/match'
+import { useBatchSelect } from '@/composables/useBatchSelect'
 
 const message = useMessage()
 const { confirm } = useConfirm()
@@ -445,6 +446,138 @@ async function saveEditDomain(v: Record<string, unknown>) {
 
 const fmtGb = (b: number) => (b / 1024 / 1024 / 1024).toFixed(1)
 const fmtPercent = (p: number) => p.toFixed(1)
+
+// ============================================================
+// 批量处理：服务器 / 域名
+// 与 DevView 同一套写法（useBatchSelect + useConfirm + Promise.allSettled），
+// 数据源变化时已失效的选中 id 由 composable 的 prune 自动剔除，
+// 避免「看不见的行」被一起删掉。
+// ============================================================
+const {
+  selectedIds: selServerIds,
+  count: selServerCount,
+  active: serverSelActive,
+  allChecked: serverAllChecked,
+  someChecked: serverSomeChecked,
+  toggle: toggleServer,
+  toggleAll: toggleAllServers,
+  clear: clearServerSel,
+  isSelected: isServerSelected,
+} = useBatchSelect<Server>(filteredServers)
+
+// servers.status（schema 注释）：active | stopped | expiring
+const batchServerStatus = ref<Server['status']>('active')
+const batchServerStatusOptions = [
+  { label: '运行中', value: 'active' },
+  { label: '已停', value: 'stopped' },
+  { label: '即将到期', value: 'expiring' },
+]
+
+async function batchRemoveServers() {
+  const n = selServerCount.value
+  if (!n) return
+  const names = filteredServers.value
+    .filter((s) => selServerIds.value.has(s.id))
+    .slice(0, 3)
+    .map((s) => s.name)
+    .join('、')
+  const ok = await confirm({
+    title: `删除选中的 ${n} 台服务器？`,
+    content: `${names}${n > 3 ? ` 等 ${n} 台` : ''}，删除后无法恢复。`,
+  })
+  if (!ok) return
+  const res = await Promise.allSettled([...selServerIds.value].map((id) => serversRepo.remove(id)))
+  const okN = res.filter((r) => r.status === 'fulfilled').length
+  const failN = res.length - okN
+  clearServerSel()
+  if (failN === 0) message.success(`已删除 ${okN} 台服务器`)
+  else message.error(`成功 ${okN} 台，失败 ${failN} 台`)
+  load()
+}
+
+async function batchSetServerStatus() {
+  const n = selServerCount.value
+  if (!n) return
+  const status = batchServerStatus.value
+  const label = batchServerStatusOptions.find((o) => o.value === status)?.label ?? status
+  const ok = await confirm({
+    title: `将选中的 ${n} 台服务器标为「${label}」？`,
+    content: `会写入 servers.status = ${status}。`,
+    confirmText: '确认修改',
+    danger: false,
+  })
+  if (!ok) return
+  const res = await Promise.allSettled([...selServerIds.value].map((id) => serversRepo.update(id, { status })))
+  const okN = res.filter((r) => r.status === 'fulfilled').length
+  const failN = res.length - okN
+  clearServerSel()
+  if (failN === 0) message.success(`已更新 ${okN} 台服务器`)
+  else message.error(`成功 ${okN} 台，失败 ${failN} 台`)
+  load()
+}
+
+const {
+  selectedIds: selDomainIds,
+  count: selDomainCount,
+  active: domainSelActive,
+  allChecked: domainAllChecked,
+  someChecked: domainSomeChecked,
+  toggle: toggleDomain,
+  toggleAll: toggleAllDomains,
+  clear: clearDomainSel,
+  isSelected: isDomainSelected,
+} = useBatchSelect<Domain>(filteredDomains)
+
+// domains.renewCycle（schema 注释）：yearly | monthly | once
+const batchDomainCycle = ref<string>('yearly')
+const batchDomainCycleOptions = [
+  { label: '按年', value: 'yearly' },
+  { label: '按月', value: 'monthly' },
+  { label: '一次性', value: 'once' },
+]
+
+async function batchRemoveDomains() {
+  const n = selDomainCount.value
+  if (!n) return
+  const names = filteredDomains.value
+    .filter((d) => selDomainIds.value.has(d.id))
+    .slice(0, 3)
+    .map((d) => d.name)
+    .join('、')
+  const ok = await confirm({
+    title: `删除选中的 ${n} 个域名？`,
+    content: `${names}${n > 3 ? ` 等 ${n} 个` : ''}，删除后无法恢复。`,
+  })
+  if (!ok) return
+  const res = await Promise.allSettled([...selDomainIds.value].map((id) => domainsRepo.remove(id)))
+  const okN = res.filter((r) => r.status === 'fulfilled').length
+  const failN = res.length - okN
+  clearDomainSel()
+  if (failN === 0) message.success(`已删除 ${okN} 个域名`)
+  else message.error(`成功 ${okN} 个，失败 ${failN} 个`)
+  load()
+}
+
+async function batchSetDomainCycle() {
+  const n = selDomainCount.value
+  if (!n) return
+  const cycle = batchDomainCycle.value
+  const label = batchDomainCycleOptions.find((o) => o.value === cycle)?.label ?? cycle
+  const ok = await confirm({
+    title: `将选中的 ${n} 个域名的续费周期改为「${label}」？`,
+    content: `会写入 domains.renewCycle = ${cycle}，影响年成本折算。`,
+    confirmText: '确认修改',
+    danger: false,
+  })
+  if (!ok) return
+  const res = await Promise.allSettled([...selDomainIds.value].map((id) => domainsRepo.update(id, { renewCycle: cycle })))
+  const okN = res.filter((r) => r.status === 'fulfilled').length
+  const failN = res.length - okN
+  clearDomainSel()
+  if (failN === 0) message.success(`已更新 ${okN} 个域名`)
+  else message.error(`成功 ${okN} 个，失败 ${failN} 个`)
+  load()
+}
 
 const filteredPorts = computed(() =>
   portFilter.value
@@ -1110,16 +1243,37 @@ useListNav(backupTableEl, {
       <n-tab-pane name="servers" tab="服务器">
         <div class="toolbar toolbar-split">
           <NInput v-if="servers.length" v-model:value="serverKw" size="small" placeholder="搜索服务器（名称 / IP / 区域）…" clearable class="toolbar-search" />
+          <NCheckbox
+            v-if="servers.length"
+            :checked="serverAllChecked"
+            :indeterminate="serverSomeChecked"
+            size="small"
+            class="toolbar-check"
+            @update:checked="toggleAllServers"
+          >全选</NCheckbox>
           <NButton size="small" type="primary" ghost @click="serverFormShow = true">
             <template #icon><NIcon :component="Plus" /></template>
             登记服务器
           </NButton>
         </div>
         <ListSkeleton v-if="loading" :rows="6" />
+        <div v-if="serverSelActive" class="batch-bar">
+          <span class="batch-count">已选 {{ selServerCount }} 项</span>
+          <NSelect v-model:value="batchServerStatus" size="small" :options="batchServerStatusOptions" class="batch-status-select" />
+          <NButton size="small" type="primary" ghost @click="batchSetServerStatus">批量改状态</NButton>
+          <NButton size="small" type="error" ghost @click="batchRemoveServers">
+            <template #icon><NIcon :component="Trash" /></template>
+            批量删除
+          </NButton>
+          <NButton size="small" text @click="clearServerSel">取消选择</NButton>
+        </div>
         <div v-else-if="filteredServers.length" class="server-grid" ref="serverGridEl" tabindex="0" :aria-label="'服务器列表，共 ' + filteredServers.length + ' 行，↑↓ 选择、Enter 复制 SSH 命令'">
           <div v-for="s in filteredServers" :key="s.id" class="server-card wb-card" :data-row-id="s.id">
             <div class="sc-head">
-              <span class="sc-name">{{ s.name }}</span>
+              <span class="sc-head-left">
+                <NCheckbox :checked="isServerSelected(s.id)" @update:checked="toggleServer(s.id)" @click.stop />
+                <span class="sc-name">{{ s.name }}</span>
+              </span>
               <NTag size="tiny" :bordered="false" :type="serverStatus(s).color as any">{{ serverStatus(s).label }}</NTag>
             </div>
             <div class="sc-meta mono">
@@ -1154,11 +1308,23 @@ useListNav(backupTableEl, {
           </NButton>
         </div>
         <ListSkeleton v-if="loading" :rows="6" />
-        <div v-else-if="filteredDomains.length" class="domain-table" ref="domainTableEl" tabindex="0" :aria-label="'域名列表，共 ' + filteredDomains.length + ' 行，↑↓ 选择、Enter 复制域名'">
+        <div v-if="domainSelActive" class="batch-bar">
+          <span class="batch-count">已选 {{ selDomainCount }} 项</span>
+          <NSelect v-model:value="batchDomainCycle" size="small" :options="batchDomainCycleOptions" class="batch-status-select" />
+          <NButton size="small" type="primary" ghost @click="batchSetDomainCycle">批量改续费周期</NButton>
+          <NButton size="small" type="error" ghost @click="batchRemoveDomains">
+            <template #icon><NIcon :component="Trash" /></template>
+            批量删除
+          </NButton>
+          <NButton size="small" text @click="clearDomainSel">取消选择</NButton>
+        </div>
+        <div v-else-if="filteredDomains.length" class="domain-table with-check" ref="domainTableEl" tabindex="0" :aria-label="'域名列表，共 ' + filteredDomains.length + ' 行，↑↓ 选择、Enter 复制域名'">
           <div class="d-row d-row-domain head">
+            <span><NCheckbox :checked="domainAllChecked" :indeterminate="domainSomeChecked" @update:checked="toggleAllDomains" /></span>
             <span>域名</span><span>注册商</span><span>DNS</span><span>域名到期</span><span>SSL 到期</span><span>关联服务器</span><span>年成本</span><span>剩余</span><span></span>
           </div>
           <div v-for="d in filteredDomains" :key="d.id" class="d-row d-row-domain" :data-row-id="d.id">
+            <span><NCheckbox :checked="isDomainSelected(d.id)" @update:checked="toggleDomain(d.id)" @click.stop /></span>
             <span class="mono d-name">{{ d.name }}</span>
             <span>{{ d.registrar || '—' }}</span>
             <span>{{ d.dnsProvider || '—' }}</span>
@@ -1526,6 +1692,22 @@ useListNav(backupTableEl, {
 .toolbar { display: flex; justify-content: flex-end; margin-bottom: 12px; }
 .toolbar-split { justify-content: space-between; align-items: center; gap: var(--wb-sp-3); }
 .toolbar-search { max-width: 280px; }
+.toolbar-check { flex: none; }
+/* 批量操作条：沿用 DevView 同一套写法，配色只取既有 token，不引入新色 */
+.batch-bar {
+  display: flex;
+  align-items: center;
+  gap: var(--wb-sp-2);
+  flex-wrap: wrap;
+  margin-bottom: 12px;
+  padding: 8px 12px;
+  border: 1px solid var(--wb-border);
+  border-radius: var(--wb-radius-md);
+  background: var(--wb-card-alt);
+  font-size: var(--wb-fs-sm);
+}
+.batch-count { color: var(--wb-text-2); margin-right: var(--wb-sp-1); }
+.batch-status-select { width: 110px; }
 .expire-alert {
   display: flex; align-items: center; gap: var(--wb-sp-2);
   background: color-mix(in srgb, var(--wb-warning) 14%, transparent);
@@ -1608,6 +1790,9 @@ useListNav(backupTableEl, {
 .d-row { grid-template-columns: 2fr 1fr 1fr 1.2fr 1.2fr 1fr 0.7fr 0.4fr; }
 /* 域名表比其它 .d-row 多一列「年成本」；单独覆盖，不动共用栅格 */
 .d-row-domain { grid-template-columns: 1.8fr 1fr 1fr 1.1fr 1.1fr 1fr 0.8fr 0.6fr 0.4fr; }
+/* 带勾选框的域名表：只在最前面加一列 checkbox，其余列宽沿用原栅格 */
+.domain-table.with-check .d-row-domain { grid-template-columns: 32px 1.8fr 1fr 1fr 1.1fr 1.1fr 1fr 0.8fr 0.6fr 0.4fr; }
+.sc-head-left { display: flex; align-items: center; gap: var(--wb-sp-2); min-width: 0; }
 .p-row { grid-template-columns: 0.7fr 0.8fr 1.2fr 0.8fr 2fr; }
 .d-row:last-child, .p-row:last-child { border-bottom: none; }
 .d-row.head, .p-row.head {

@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { watch, ref, onMounted, computed } from 'vue'
 import { refreshTick } from '@/stores/ui'
-import { NButton, NTag, NTabs, NTabPane, NIcon, useMessage, NInput } from 'naive-ui'
+import { NButton, NTag, NTabs, NTabPane, NIcon, useMessage, NInput, NCheckbox, NSelect } from 'naive-ui'
 import { Plus, Trash, ExternalLink, AlertTriangle, Refresh, Pencil } from '@vicons/tabler'
 import EmptyState from '@/components/EmptyState.vue'
 import ListSkeleton from '@/components/ListSkeleton.vue'
@@ -12,6 +12,7 @@ import { scanAssets, type AssetInfo } from '@/composables/useTauri'
 import { useConfirm } from '@/composables/useConfirm'
 import { pitfallFields, decisionFields, pathFields, threeDFields, portfolioFields } from './knowledge/formSchemas'
 import { useListNav } from '@/composables/useListNav'
+import { useBatchSelect } from '@/composables/useBatchSelect'
 
 const message = useMessage()
 const { confirm } = useConfirm()
@@ -286,6 +287,76 @@ const filteredPitfalls = computed(() =>
     : pitfalls.value,
 )
 
+// ============================================================
+// 批量处理：踩坑 / 学习资源
+// 写法与 DevView 一致（useBatchSelect + useConfirm + Promise.allSettled）。
+// 技能树是 v-html 渲染的树状结构，没有平铺行可选，按约定跳过不加批量选择。
+// ============================================================
+const {
+  selectedIds: selPitfallIds,
+  count: selPitfallCount,
+  active: pitfallSelActive,
+  allChecked: pitfallAllChecked,
+  someChecked: pitfallSomeChecked,
+  toggle: togglePitfall,
+  toggleAll: toggleAllPitfalls,
+  clear: clearPitfallSel,
+  isSelected: isPitfallSelected,
+} = useBatchSelect<Pitfall>(filteredPitfalls)
+
+// pitfalls.category（schema 默认「其他」，表单选项即这六类）
+const batchPitfallCategory = ref<string>('其他')
+const batchPitfallCategoryOptions = [
+  { label: '前端', value: '前端' },
+  { label: '后端', value: '后端' },
+  { label: '数据库', value: '数据库' },
+  { label: '运维', value: '运维' },
+  { label: '工具', value: '工具' },
+  { label: '其他', value: '其他' },
+]
+
+async function batchRemovePitfalls() {
+  const n = selPitfallCount.value
+  if (!n) return
+  const titles = filteredPitfalls.value
+    .filter((p) => selPitfallIds.value.has(p.id))
+    .slice(0, 3)
+    .map((p) => p.title)
+    .join('、')
+  const ok = await confirm({
+    title: `删除选中的 ${n} 条踩坑记录？`,
+    content: `${titles}${n > 3 ? ` 等 ${n} 条` : ''}，删除后无法恢复。`,
+  })
+  if (!ok) return
+  const res = await Promise.allSettled([...selPitfallIds.value].map((id) => pitfallsRepo.remove(id)))
+  const okN = res.filter((r) => r.status === 'fulfilled').length
+  const failN = res.length - okN
+  clearPitfallSel()
+  if (failN === 0) message.success(`已删除 ${okN} 条踩坑记录`)
+  else message.error(`成功 ${okN} 条，失败 ${failN} 条`)
+  load()
+}
+
+async function batchSetPitfallCategory() {
+  const n = selPitfallCount.value
+  if (!n) return
+  const category = batchPitfallCategory.value
+  const ok = await confirm({
+    title: `将选中的 ${n} 条踩坑记录改分类为「${category}」？`,
+    content: `会写入 pitfalls.category = ${category}。`,
+    confirmText: '确认修改',
+    danger: false,
+  })
+  if (!ok) return
+  const res = await Promise.allSettled([...selPitfallIds.value].map((id) => pitfallsRepo.update(id, { category })))
+  const okN = res.filter((r) => r.status === 'fulfilled').length
+  const failN = res.length - okN
+  clearPitfallSel()
+  if (failN === 0) message.success(`已更新 ${okN} 条踩坑记录`)
+  else message.error(`成功 ${okN} 条，失败 ${failN} 条`)
+  load()
+}
+
 // ---- 学习资源 ----
 const linkFields: FieldDef[] = [
   { key: 'title', label: '标题', required: true, span: 2 },
@@ -321,6 +392,78 @@ async function removeLink(l: Resource) {
 const openLink = (l: Resource) => window.open(l.url, '_blank')
 const linkColor = (c: string) =>
   ({ dev: 'success', study: 'info', life: 'warning', tool: 'default', favorite: 'error', other: 'default' })[c] ?? 'default'
+const linkLabel = (c: string) =>
+  ({ dev: '开发', study: '学习', life: '生活', tool: '工具', favorite: '收藏', other: '其他' })[c] ?? c
+
+// 学习资源原本直接用 links 渲染（没有搜索框）。批量选择需要一个「当前可见数据源」
+// 才能在过滤 / reload 后剔除失效 id，这里补一个等价 computed，渲染也统一改用它。
+const filteredLinks = computed(() => links.value)
+
+const {
+  selectedIds: selLinkIds,
+  count: selLinkCount,
+  active: linkSelActive,
+  allChecked: linkAllChecked,
+  someChecked: linkSomeChecked,
+  toggle: toggleLink,
+  toggleAll: toggleAllLinks,
+  clear: clearLinkSel,
+  isSelected: isLinkSelected,
+} = useBatchSelect<Resource>(filteredLinks)
+
+// resources.category（schema 注释）：dev | study | life | tool | favorite | other
+const batchLinkCategory = ref<string>('favorite')
+const batchLinkCategoryOptions = [
+  { label: '开发', value: 'dev' },
+  { label: '学习', value: 'study' },
+  { label: '生活', value: 'life' },
+  { label: '工具', value: 'tool' },
+  { label: '收藏', value: 'favorite' },
+  { label: '其他', value: 'other' },
+]
+
+async function batchRemoveLinks() {
+  const n = selLinkCount.value
+  if (!n) return
+  const titles = filteredLinks.value
+    .filter((l) => selLinkIds.value.has(l.id))
+    .slice(0, 3)
+    .map((l) => l.title)
+    .join('、')
+  const ok = await confirm({
+    title: `删除选中的 ${n} 条收藏链接？`,
+    content: `${titles}${n > 3 ? ` 等 ${n} 条` : ''}，删除后无法恢复。`,
+  })
+  if (!ok) return
+  const res = await Promise.allSettled([...selLinkIds.value].map((id) => resourcesRepo.remove(id)))
+  const okN = res.filter((r) => r.status === 'fulfilled').length
+  const failN = res.length - okN
+  clearLinkSel()
+  if (failN === 0) message.success(`已删除 ${okN} 条收藏链接`)
+  else message.error(`成功 ${okN} 条，失败 ${failN} 条`)
+  load()
+}
+
+async function batchSetLinkCategory() {
+  const n = selLinkCount.value
+  if (!n) return
+  const category = batchLinkCategory.value
+  const label = linkLabel(category)
+  const ok = await confirm({
+    title: `将选中的 ${n} 条收藏链接改分类为「${label}」？`,
+    content: `会写入 resources.category = ${category}。`,
+    confirmText: '确认修改',
+    danger: false,
+  })
+  if (!ok) return
+  const res = await Promise.allSettled([...selLinkIds.value].map((id) => resourcesRepo.update(id, { category })))
+  const okN = res.filter((r) => r.status === 'fulfilled').length
+  const failN = res.length - okN
+  clearLinkSel()
+  if (failN === 0) message.success(`已更新 ${okN} 条收藏链接`)
+  else message.error(`成功 ${okN} 条，失败 ${failN} 条`)
+  load()
+}
 
 // ---- F-KNW-02 决策日志（轻 ADR） ----
 async function addDecision(v: Record<string, unknown>) {
@@ -810,16 +953,37 @@ async function shareSnapshot() {
       <n-tab-pane name="pitfalls" tab="踩坑库">
         <div class="toolbar">
           <NInput v-model:value="keyword" size="small" placeholder="搜索踩坑记录…" clearable style="width: 240px" />
+          <NCheckbox
+            v-if="pitfalls.length"
+            :checked="pitfallAllChecked"
+            :indeterminate="pitfallSomeChecked"
+            size="small"
+            class="toolbar-check"
+            @update:checked="toggleAllPitfalls"
+          >全选</NCheckbox>
           <NButton size="small" type="primary" ghost @click="pitfallFormShow = true">
             <template #icon><NIcon :component="Plus" /></template>
             记录踩坑
           </NButton>
         </div>
         <ListSkeleton v-if="loading" :rows="5" />
+        <div v-if="pitfallSelActive" class="batch-bar">
+          <span class="batch-count">已选 {{ selPitfallCount }} 项</span>
+          <NSelect v-model:value="batchPitfallCategory" size="small" :options="batchPitfallCategoryOptions" class="batch-status-select" />
+          <NButton size="small" type="primary" ghost @click="batchSetPitfallCategory">批量改分类</NButton>
+          <NButton size="small" type="error" ghost @click="batchRemovePitfalls">
+            <template #icon><NIcon :component="Trash" /></template>
+            批量删除
+          </NButton>
+          <NButton size="small" text @click="clearPitfallSel">取消选择</NButton>
+        </div>
         <div v-else-if="filteredPitfalls.length" class="pitfall-list" ref="pitfallListEl" tabindex="0" :aria-label="'踩坑记录列表，共 ' + filteredPitfalls.length + ' 行，↑↓ 选择、Enter 复制内容'">
           <div v-for="p in filteredPitfalls" :key="p.id" class="pitfall-card wb-card" :data-row-id="p.id">
             <div class="pc-head">
-              <span class="pc-title"><NIcon :component="AlertTriangle" style="color: var(--wb-warning); margin-right: 7px" />{{ p.title }}</span>
+              <span class="pc-title">
+                <NCheckbox :checked="isPitfallSelected(p.id)" @update:checked="togglePitfall(p.id)" @click.stop />
+                <NIcon :component="AlertTriangle" style="color: var(--wb-warning); margin-right: 7px" />{{ p.title }}
+              </span>
               <NTag size="tiny" :bordered="false" type="warning">{{ p.category }}</NTag>
             </div>
             <div v-if="p.problem" class="pc-problem">
@@ -842,14 +1006,33 @@ async function shareSnapshot() {
       <!-- 学习资源 -->
       <n-tab-pane name="links" tab="学习资源">
         <div class="toolbar">
+          <NCheckbox
+            v-if="links.length"
+            :checked="linkAllChecked"
+            :indeterminate="linkSomeChecked"
+            size="small"
+            class="toolbar-check"
+            @update:checked="toggleAllLinks"
+          >全选</NCheckbox>
           <NButton size="small" type="primary" ghost @click="linkFormShow = true">
             <template #icon><NIcon :component="Plus" /></template>
             收藏链接
           </NButton>
         </div>
         <ListSkeleton v-if="loading" :rows="5" />
-        <div v-else-if="links.length" class="link-list" ref="linkListEl" tabindex="0" :aria-label="'学习资源列表，共 ' + links.length + ' 行，↑↓ 选择、Enter 打开链接'">
-          <div v-for="l in links" :key="l.id" class="link-item wb-card hoverable" :data-row-id="l.id" @click="openLink(l)">
+        <div v-if="linkSelActive" class="batch-bar">
+          <span class="batch-count">已选 {{ selLinkCount }} 项</span>
+          <NSelect v-model:value="batchLinkCategory" size="small" :options="batchLinkCategoryOptions" class="batch-status-select" />
+          <NButton size="small" type="primary" ghost @click="batchSetLinkCategory">批量改分类</NButton>
+          <NButton size="small" type="error" ghost @click="batchRemoveLinks">
+            <template #icon><NIcon :component="Trash" /></template>
+            批量删除
+          </NButton>
+          <NButton size="small" text @click="clearLinkSel">取消选择</NButton>
+        </div>
+        <div v-else-if="filteredLinks.length" class="link-list" ref="linkListEl" tabindex="0" :aria-label="'学习资源列表，共 ' + filteredLinks.length + ' 行，↑↓ 选择、Enter 打开链接'">
+          <div v-for="l in filteredLinks" :key="l.id" class="link-item wb-card hoverable with-check" :data-row-id="l.id" @click="openLink(l)">
+            <span class="link-check"><NCheckbox :checked="isLinkSelected(l.id)" @update:checked="toggleLink(l.id)" @click.stop /></span>
             <div class="link-main">
               <span class="link-title">{{ l.title }}</span>
               <span class="mono link-url">{{ l.url }}</span>
@@ -1141,12 +1324,28 @@ async function shareSnapshot() {
 </template>
 
 <style scoped>
+/* 批量操作条：沿用 DevView 同一套写法，配色只取既有 token，不引入新色 */
+.batch-bar {
+  display: flex;
+  align-items: center;
+  gap: var(--wb-sp-2);
+  flex-wrap: wrap;
+  margin-bottom: 12px;
+  padding: 8px 12px;
+  border: 1px solid var(--wb-border);
+  border-radius: var(--wb-radius-md);
+  background: var(--wb-card-alt);
+  font-size: var(--wb-fs-sm);
+}
+.batch-count { color: var(--wb-text-2); margin-right: var(--wb-sp-1); }
+.batch-status-select { width: 110px; }
+.toolbar-check { flex: none; }
 .wb-tabs :deep(.n-tabs-nav) { margin-bottom: 14px; }
 .toolbar { display: flex; justify-content: space-between; gap: var(--wb-sp-2); margin-bottom: 12px; }
 .pitfall-list { display: flex; flex-direction: column; gap: var(--wb-sp-3); }
 .pitfall-card { padding: 13px 16px; }
 .pc-head { display: flex; align-items: center; justify-content: space-between; gap: var(--wb-sp-2); }
-.pc-title { font-size: 13.5px; font-weight: 600; display: flex; align-items: center; }
+.pc-title { font-size: 13.5px; font-weight: 600; display: flex; align-items: center; gap: var(--wb-sp-2); }
 .pc-problem, .pc-solution {
   margin-top: 7px;
   font-size: 12.5px;
@@ -1178,6 +1377,8 @@ async function shareSnapshot() {
 .link-main { min-width: 0; display: flex; flex-direction: column; gap: var(--wb-sp-1); }
 .link-title { font-size: var(--wb-fs-md); font-weight: 550; }
 .link-url { font-size: var(--wb-fs-xs); color: var(--wb-text-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* 带勾选框的收藏链接：额外插一列 checkbox，不改动其它未加勾选的行 */
+.link-check { flex: none; display: flex; align-items: center; }
 .link-side { display: flex; align-items: center; gap: var(--wb-sp-1); flex: none; }
 .asset-section { display: flex; flex-direction: column; gap: var(--wb-sp-4); }
 .asset-group { display: flex; flex-direction: column; gap: var(--wb-sp-2); }

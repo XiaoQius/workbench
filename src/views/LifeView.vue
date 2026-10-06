@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { watch, ref, onMounted, onUnmounted, computed } from 'vue'
 import { refreshTick } from '@/stores/ui'
-import { NButton, NTag, NTabs, NTabPane, NIcon, useMessage, NInputNumber, NSelect, NInput, NSlider, NDatePicker } from 'naive-ui'
+import { NButton, NTag, NTabs, NTabPane, NIcon, useMessage, NInputNumber, NSelect, NInput, NSlider, NDatePicker, NCheckbox } from 'naive-ui'
 import { Plus, Trash, Check } from '@vicons/tabler'
 import EmptyState from '@/components/EmptyState.vue'
 import ListSkeleton from '@/components/ListSkeleton.vue'
@@ -11,6 +11,7 @@ import { useListNav } from '@/composables/useListNav'
 import { habitsRepo, habitLogsRepo, ledgerRepo, pomodorosRepo, healthLogsRepo, fixedBillsRepo, deadlinesRepo, tasksRepo } from '@/db'
 import type { Habit, HabitLog, LedgerEntry, Pomodoro, HealthLog, FixedBill, Deadline, Task } from '../../drizzle/schema'
 import { matchKw } from '@/composables/match'
+import { useBatchSelect } from '@/composables/useBatchSelect'
 
 const message = useMessage()
 const { confirm } = useConfirm()
@@ -652,6 +653,70 @@ const filteredPomoRecords = computed(() => pomoRecords.value.filter((p) => match
 const filteredHealthRecords = computed(() => healthRecords.value.filter((h) => matchKw(healthKw.value, h.date, h.note, h.sleepHours, h.exerciseMin, h.mood, h.weight)))
 const filteredBills = computed(() => bills.value.filter((b) => matchKw(billKw.value, b.name, b.category, b.cycle, b.payMethod, b.note, b.amount)))
 
+// ---- 记账批量处理（选中 + 批量删除 / 批量改分类）----
+// 数据源传过滤后的 filteredLedger（它是「最近 20 条」再过滤的结果）：
+// 翻出列表或被过滤掉的行 id 会被自动剔除，避免批量删除时误删看不见的记录。
+const {
+  selectedIds: selLedgerIds,
+  count: selLedgerCount,
+  active: ledgerSelActive,
+  allChecked: ledgerAllChecked,
+  someChecked: ledgerSomeChecked,
+  toggle: toggleLedger,
+  toggleAll: toggleAllLedger,
+  clear: clearLedgerSel,
+  isSelected: isLedgerSelected,
+} = useBatchSelect<LedgerEntry>(filteredLedger)
+// 选项与上面 ledgerFields.category 的 options 同源（避免造出「收入-购物」这类脏组合）
+const batchLedgerCategories = [
+  { label: '餐饮', value: '餐饮' }, { label: '交通', value: '交通' },
+  { label: '购物', value: '购物' }, { label: '居住', value: '居住' },
+  { label: '学习', value: '学习' }, { label: '娱乐', value: '娱乐' },
+  { label: '医疗', value: '医疗' }, { label: '订阅', value: '订阅' },
+  { label: '其他', value: '其他' },
+  { label: '工资', value: '工资' }, { label: '奖金', value: '奖金' },
+  { label: '理财', value: '理财' }, { label: '兼职', value: '兼职' },
+  { label: '报销', value: '报销' }, { label: '红包', value: '红包' },
+  { label: '其他收入', value: '其他收入' },
+]
+const batchLedgerCategory = ref('其他')
+
+async function batchRemoveLedger() {
+  const n = selLedgerCount.value
+  if (!n) return
+  const ok = await confirm({ title: `删除选中的 ${n} 条记账？`, content: '此操作不可撤销，选中的记账记录将被永久删除。' })
+  if (!ok) return
+  const ids = [...selLedgerIds.value]
+  const res = await Promise.allSettled(ids.map((id) => ledgerRepo.remove(id)))
+  const okN = res.filter((r) => r.status === 'fulfilled').length
+  const failN = res.length - okN
+  clearLedgerSel()
+  if (failN === 0) message.success(`已删除 ${okN} 条记账`)
+  else message.error(`成功 ${okN} 条，失败 ${failN} 条`)
+  load()
+}
+
+async function batchSetLedgerCategory() {
+  const n = selLedgerCount.value
+  if (!n) return
+  const category = batchLedgerCategory.value
+  const ok = await confirm({
+    title: `将选中的 ${n} 条记账的分类改为「${category}」？`,
+    content: `会写入 ledger.category = ${category}。`,
+    confirmText: '确认修改',
+    danger: false,
+  })
+  if (!ok) return
+  const ids = [...selLedgerIds.value]
+  const res = await Promise.allSettled(ids.map((id) => ledgerRepo.update(id, { category })))
+  const okN = res.filter((r) => r.status === 'fulfilled').length
+  const failN = res.length - okN
+  clearLedgerSel()
+  if (failN === 0) message.success(`已更新 ${okN} 条记账`)
+  else message.error(`成功 ${okN} 条，失败 ${failN} 条`)
+  load()
+}
+
 // ---- 提醒聚合 ----
 const remindItems = computed(() => {
   const items: { kind: string; text: string; color: 'warning' | 'error' | 'info' | 'default' }[] = []
@@ -806,11 +871,23 @@ useListNav(countdownGridEl, {
           </NButton>
         </div>
         <ListSkeleton v-if="loading" :rows="5" />
-        <div v-else-if="filteredLedger.length" class="ledger-table" ref="ledgerTableEl" tabindex="0" :aria-label="'记账明细列表，共 ' + filteredLedger.length + ' 行，↑↓ 选择'">
+        <div v-if="!loading && ledgerSelActive" class="batch-bar">
+          <span class="batch-count">已选 {{ selLedgerCount }} 项</span>
+          <NSelect v-model:value="batchLedgerCategory" size="small" :options="batchLedgerCategories" class="batch-status-select" />
+          <NButton size="small" type="primary" ghost @click="batchSetLedgerCategory">批量改分类</NButton>
+          <NButton size="small" type="error" ghost @click="batchRemoveLedger">
+            <template #icon><NIcon :component="Trash" /></template>
+            批量删除
+          </NButton>
+          <NButton size="small" text @click="clearLedgerSel">取消选择</NButton>
+        </div>
+        <div v-if="!loading && filteredLedger.length" class="ledger-table with-check" ref="ledgerTableEl" tabindex="0" :aria-label="'记账明细列表，共 ' + filteredLedger.length + ' 行，↑↓ 选择'">
           <div class="l-row head">
+            <span><NCheckbox :checked="ledgerAllChecked" :indeterminate="ledgerSomeChecked" @update:checked="toggleAllLedger" /></span>
             <span>日期</span><span>类型</span><span>分类</span><span>金额</span><span>备注</span><span></span>
           </div>
           <div v-for="e in filteredLedger" :key="e.id" class="l-row" :data-row-id="e.id">
+            <span><NCheckbox :checked="isLedgerSelected(e.id)" @update:checked="toggleLedger(e.id)" /></span>
             <span class="mono">{{ e.date }}</span>
             <span><NTag size="tiny" :bordered="false" :type="e.type === 'income' ? 'success' : 'default'">{{ e.type === 'income' ? '收入' : '支出' }}</NTag></span>
             <span>{{ e.category }}</span>
@@ -824,7 +901,7 @@ useListNav(countdownGridEl, {
             </span>
           </div>
         </div>
-        <EmptyState v-else :text="recentLedger.length ? '没有匹配的记账记录' : '暂无记账记录'" />
+        <EmptyState v-if="!loading && !filteredLedger.length" :text="recentLedger.length ? '没有匹配的记账记录' : '暂无记账记录'" />
         <ModalForm v-model:show="editLedgerShow" title="编辑记账" :fields="ledgerFields" :initial="editLedgerForm" confirm-text="保存" @submit="saveEditLedger" />
       </n-tab-pane>
 
@@ -1113,6 +1190,23 @@ useListNav(countdownGridEl, {
 .toolbar { display: flex; justify-content: flex-end; margin-bottom: 12px; }
 .toolbar-split { justify-content: space-between; align-items: center; gap: var(--wb-sp-3); }
 .toolbar-search { max-width: 280px; }
+/* 批量操作条：仅在有选中项时出现在列表上方，沿用既有 token，不引入新色 */
+.batch-bar {
+  display: flex;
+  align-items: center;
+  gap: var(--wb-sp-2);
+  flex-wrap: wrap;
+  margin-bottom: 12px;
+  padding: 8px 12px;
+  border: 1px solid var(--wb-border);
+  border-radius: var(--wb-radius-md);
+  background: var(--wb-card-alt);
+  font-size: var(--wb-fs-sm);
+}
+.batch-count { color: var(--wb-text-2); margin-right: var(--wb-sp-1); }
+.batch-status-select { width: 130px; }
+/* 首列 checkbox：只给带勾选的记账表加一列，固定账单表沿用原列数 */
+.ledger-table.with-check .l-row { grid-template-columns: 32px 1fr 0.8fr 0.9fr 1.2fr 2fr 0.5fr; }
 .habit-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));

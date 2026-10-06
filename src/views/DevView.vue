@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { watch, ref, onMounted, computed } from 'vue'
 import { refreshTick } from '@/stores/ui'
-import { NButton, NTag, NInput, NTabs, NTabPane, NIcon, useMessage, NEmpty, NDropdown, NModal } from 'naive-ui'
+import { NButton, NTag, NInput, NTabs, NTabPane, NIcon, useMessage, NEmpty, NDropdown, NModal, NCheckbox, NSelect } from 'naive-ui'
 import { Plus, Trash, Edit, Check, Book2, Code, Refresh } from '@vicons/tabler'
 import { homeDir } from '@tauri-apps/api/path'
 import EmptyState from '@/components/EmptyState.vue'
@@ -13,6 +13,7 @@ import { scanProjects, gitStatus, openPath, gitLog, codeStats, envList, repoHeal
 import { useConfirm } from '@/composables/useConfirm'
 import { useListNav } from '@/composables/useListNav'
 import { matchKw } from '@/composables/match'
+import { useBatchSelect } from '@/composables/useBatchSelect'
 
 const message = useMessage()
 const { confirm } = useConfirm()
@@ -718,6 +719,90 @@ const boardColumns = computed(() => [
   { key: 'doing', label: '进行中', items: filteredTasks.value.filter((t) => t.status === 'doing') },
   { key: 'done', label: '已完成', items: filteredTasks.value.filter((t) => t.status === 'done') },
 ])
+
+// ---- 任务批量处理（选中 + 批量删除 / 批量改状态）----
+// 数据源传过滤后的 filteredTasks：过滤变化时失效 id 会被自动剔除，
+// 避免「看不见的行还被选中、批量删除时误删」。
+const {
+  selectedIds: selTaskIds,
+  count: selTaskCount,
+  active: taskSelActive,
+  allChecked: taskAllChecked,
+  someChecked: taskSomeChecked,
+  toggle: toggleTask,
+  toggleAll: toggleAllTasks,
+  clear: clearTaskSel,
+  isSelected: isTaskSelected,
+} = useBatchSelect<Task>(filteredTasks)
+const batchTaskStatus = ref<'todo' | 'doing' | 'done'>('done')
+const batchTaskStatusOptions = [
+  { label: '待办', value: 'todo' },
+  { label: '进行中', value: 'doing' },
+  { label: '已完成', value: 'done' },
+]
+
+async function batchRemoveTasks() {
+  const n = selTaskCount.value
+  if (!n) return
+  const ok = await confirm({ title: `删除选中的 ${n} 条任务？`, content: '此操作不可撤销，选中的任务将被永久删除。' })
+  if (!ok) return
+  const ids = [...selTaskIds.value]
+  const res = await Promise.allSettled(ids.map((id) => tasksRepo.remove(id)))
+  const okN = res.filter((r) => r.status === 'fulfilled').length
+  const failN = res.length - okN
+  clearTaskSel()
+  if (failN === 0) message.success(`已删除 ${okN} 条任务`)
+  else message.error(`成功 ${okN} 条，失败 ${failN} 条`)
+  load()
+}
+
+async function batchSetTaskStatus() {
+  const n = selTaskCount.value
+  if (!n) return
+  const status = batchTaskStatus.value
+  const label = { todo: '待办', doing: '进行中', done: '已完成' }[status]
+  const ok = await confirm({
+    title: `将选中的 ${n} 条任务标为「${label}」？`,
+    content: `会写入 tasks.status = ${status}。`,
+    confirmText: '确认修改',
+    danger: false,
+  })
+  if (!ok) return
+  const ids = [...selTaskIds.value]
+  const res = await Promise.allSettled(ids.map((id) => tasksRepo.update(id, { status })))
+  const okN = res.filter((r) => r.status === 'fulfilled').length
+  const failN = res.length - okN
+  clearTaskSel()
+  if (failN === 0) message.success(`已更新 ${okN} 条任务`)
+  else message.error(`成功 ${okN} 条，失败 ${failN} 条`)
+  load()
+}
+
+async function batchToggleTaskFocus() {
+  const n = selTaskCount.value
+  if (!n) return
+  const targets = filteredTasks.value.filter((t) => selTaskIds.value.has(t.id) && !t.focusDate)
+  if (!targets.length) {
+    message.warning('选中的任务都已是今日焦点')
+    return
+  }
+  const today = new Date()
+  const todayStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`
+  const ok = await confirm({
+    title: `将选中的 ${targets.length} 条任务设为今日焦点？`,
+    content: `会写入 tasks.focusDate = ${todayStr}。`,
+    confirmText: '确认修改',
+    danger: false,
+  })
+  if (!ok) return
+  const res = await Promise.allSettled(targets.map((t) => tasksRepo.update(t.id, { focusDate: todayStr })))
+  const okN = res.filter((r) => r.status === 'fulfilled').length
+  const failN = res.length - okN
+  clearTaskSel()
+  if (failN === 0) message.success(`已标记 ${okN} 条任务`)
+  else message.error(`成功 ${okN} 条，失败 ${failN} 条`)
+  load()
+}
 </script>
 
 <template>
@@ -781,11 +866,24 @@ const boardColumns = computed(() => [
           <span class="dim" style="font-size: 12px">估时校准：近 {{ estCalib.count }} 个已完成任务平均周期约 {{ estCalib.avgHours.toFixed(1) }} 小时/个（按 createdAt→updatedAt 推算）</span>
         </div>
         <ListSkeleton v-if="loading" :rows="6" />
-        <div v-else-if="filteredTasks.length" class="task-table" ref="taskTableEl" tabindex="0" :aria-label="'任务列表，共 ' + filteredTasks.length + ' 行，↑↓ 选择、Enter 切换聚焦'">
+        <div v-if="!loading && taskSelActive" class="batch-bar">
+          <span class="batch-count">已选 {{ selTaskCount }} 项</span>
+          <NSelect v-model:value="batchTaskStatus" size="small" :options="batchTaskStatusOptions" class="batch-status-select" />
+          <NButton size="small" type="primary" ghost @click="batchSetTaskStatus">批量改状态</NButton>
+          <NButton size="small" ghost @click="batchToggleTaskFocus">设为今日焦点</NButton>
+          <NButton size="small" type="error" ghost @click="batchRemoveTasks">
+            <template #icon><NIcon :component="Trash" /></template>
+            批量删除
+          </NButton>
+          <NButton size="small" text @click="clearTaskSel">取消选择</NButton>
+        </div>
+        <div v-if="!loading && filteredTasks.length" class="task-table with-check" ref="taskTableEl" tabindex="0" :aria-label="'任务列表，共 ' + filteredTasks.length + ' 行，↑↓ 选择、Enter 切换聚焦'">
           <div class="task-row head">
+            <span><NCheckbox :checked="taskAllChecked" :indeterminate="taskSomeChecked" @update:checked="toggleAllTasks" /></span>
             <span>标题</span><span>领域</span><span>优先级</span><span>截止</span><span>状态</span><span>操作</span>
           </div>
           <div v-for="t in filteredTasks" :key="t.id" class="task-row" :data-row-id="t.id">
+            <span><NCheckbox :checked="isTaskSelected(t.id)" @update:checked="toggleTask(t.id)" /></span>
             <span class="tt">
               <span v-if="t.focusDate" class="focus-star">★</span>
               {{ t.title }}
@@ -810,7 +908,7 @@ const boardColumns = computed(() => [
             </span>
           </div>
         </div>
-        <EmptyState v-else :text="tasks.length ? '没有匹配的任务' : '暂无任务'" />
+        <EmptyState v-if="!loading && !filteredTasks.length" :text="tasks.length ? '没有匹配的任务' : '暂无任务'" />
       </n-tab-pane>
 
       <!-- 代码片段 -->
@@ -1166,6 +1264,23 @@ const boardColumns = computed(() => [
   margin-bottom: 12px;
 }
 .toolbar-split { justify-content: space-between; align-items: center; gap: var(--wb-sp-3); }
+/* 批量操作条：仅在有选中项时出现在列表上方，配色沿用既有 token，不引入新色 */
+.batch-bar {
+  display: flex;
+  align-items: center;
+  gap: var(--wb-sp-2);
+  flex-wrap: wrap;
+  margin-bottom: 12px;
+  padding: 8px 12px;
+  border: 1px solid var(--wb-border);
+  border-radius: var(--wb-radius-md);
+  background: var(--wb-card-alt);
+  font-size: var(--wb-fs-sm);
+}
+.batch-count { color: var(--wb-text-2); margin-right: var(--wb-sp-1); }
+.batch-status-select { width: 110px; }
+/* 首列 checkbox：只给带勾选的表加一列，其余表沿用原列数不动 */
+.task-table.with-check .task-row { grid-template-columns: 32px 2.2fr 0.8fr 0.9fr 1fr 0.9fr 1fr; }
 .toolbar-search { max-width: 280px; }
 .board {
   display: grid;
