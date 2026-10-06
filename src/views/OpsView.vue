@@ -943,10 +943,10 @@ async function removeDns(d: OpsDnsRecord) {
 <style scoped>
 .wb-tabs :deep(.n-tabs-nav) { margin-bottom: 14px; }
 .toolbar { display: flex; justify-content: flex-end; margin-bottom: 12px; }
-.toolbar-split { justify-content: space-between; align-items: center; gap: 10px; }
+.toolbar-split { justify-content: space-between; align-items: center; gap: var(--wb-sp-3); }
 .toolbar-search { max-width: 280px; }
 .expire-alert {
-  display: flex; align-items: center; gap: 8px;
+  display: flex; align-items: center; gap: var(--wb-sp-2);
   background: color-mix(in srgb, var(--wb-warning) 14%, transparent);
   border: 1px solid color-mix(in srgb, var(--wb-warning) 60%, transparent);
   color: var(--wb-warning);
@@ -959,12 +959,12 @@ async function removeDns(d: OpsDnsRecord) {
 .server-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
-  gap: 12px;
+  gap: var(--wb-sp-3);
 }
 .server-card { padding: 14px 16px; }
-.sc-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
-.sc-name { font-size: 14px; font-weight: 600; }
-.sc-meta { display: flex; flex-direction: column; gap: 2px; font-size: 12px; color: var(--wb-text-2); margin-top: 8px; }
+.sc-head { display: flex; align-items: center; justify-content: space-between; gap: var(--wb-sp-2); }
+.sc-name { font-size: var(--wb-fs-lg); font-weight: 600; }
+.sc-meta { display: flex; flex-direction: column; gap: var(--wb-sp-1); font-size: var(--wb-fs-sm); color: var(--wb-text-2); margin-top: 8px; }
 .dim { color: var(--wb-text-3); }
 .ellipsis { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 220px; }
 .sc-config {
@@ -972,9 +972,9 @@ async function removeDns(d: OpsDnsRecord) {
   background: var(--wb-card-alt); border-radius: var(--wb-radius-sm); padding: 6px 8px;
 }
 .sc-foot {
-  display: flex; align-items: center; gap: 12px; margin-top: 10px;
+  display: flex; align-items: center; gap: var(--wb-sp-3); margin-top: 10px;
 }
-.cost { font-size: 12px; color: var(--wb-module-ops); font-weight: 600; }
+.cost { font-size: var(--wb-fs-sm); color: var(--wb-module-ops); font-weight: 600; }
 .due { font-size: 11.5px; color: var(--wb-text-3); flex: 1; }
 .domain-table, .port-table {
   border: 1px solid var(--wb-border);
@@ -984,7 +984,7 @@ async function removeDns(d: OpsDnsRecord) {
 .d-row, .p-row {
   display: grid;
   align-items: center;
-  gap: 10px;
+  gap: var(--wb-sp-3);
   padding: 8px 14px;
   border-bottom: 1px solid var(--wb-border);
   font-size: 12.5px;
@@ -998,32 +998,32 @@ async function removeDns(d: OpsDnsRecord) {
   background: var(--wb-card-alt);
   font-weight: 600;
   color: var(--wb-text-2);
-  font-size: 12px;
+  font-size: var(--wb-fs-sm);
 }
 .d-name { font-weight: 550; }
 .disk-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
-  gap: 12px;
+  gap: var(--wb-sp-3);
 }
 .disk-card { padding: 14px 16px; }
 .dk-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
-.dk-mount { font-weight: 700; font-size: 14px; }
-.dk-pct { font-size: 13px; font-weight: 600; }
+.dk-mount { font-weight: 700; font-size: var(--wb-fs-lg); }
+.dk-pct { font-size: var(--wb-fs-md); font-weight: 600; }
 .dk-detail { display: flex; justify-content: space-between; font-size: 11.5px; color: var(--wb-text-3); margin-top: 8px; }
 .port { font-weight: 600; }
 .health-card, .proxy-card { max-width: 640px; padding: 16px 18px; }
-.hc-head, .pc-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
-.hc-target { font-size: 13px; font-weight: 600; }
-.hc-detail { display: flex; align-items: center; gap: 16px; margin-top: 12px; font-size: 12px; color: var(--wb-text-2); }
+.hc-head, .pc-head { display: flex; align-items: center; justify-content: space-between; gap: var(--wb-sp-3); }
+.hc-target { font-size: var(--wb-fs-md); font-weight: 600; }
+.hc-detail { display: flex; align-items: center; gap: var(--wb-sp-4); margin-top: 12px; font-size: var(--wb-fs-sm); color: var(--wb-text-2); }
 .detail-text { color: var(--wb-text-3); }
-.pc-title { font-size: 14px; font-weight: 600; }
-.pc-rows { display: flex; flex-direction: column; gap: 8px; margin-top: 12px; font-size: 12.5px; }
-.pc-row { display: flex; align-items: center; gap: 12px; }
+.pc-title { font-size: var(--wb-fs-lg); font-weight: 600; }
+.pc-rows { display: flex; flex-direction: column; gap: var(--wb-sp-2); margin-top: 12px; font-size: 12.5px; }
+.pc-row { display: flex; align-items: center; gap: var(--wb-sp-3); }
 .pc-label { width: 96px; color: var(--wb-text-3); }
-.wsl-list { display: flex; flex-direction: column; gap: 8px; max-width: 640px; }
+.wsl-list { display: flex; flex-direction: column; gap: var(--wb-sp-2); max-width: 640px; }
 .wsl-item { padding: 12px 16px; }
-.wsl-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.wsl-row { display: flex; align-items: center; justify-content: space-between; gap: var(--wb-sp-2); }
 .wsl-name { font-size: 13.5px; font-weight: 600; }
 .wsl-meta { display: flex; align-items: center; justify-content: space-between; margin-top: 6px; font-size: 11.5px; color: var(--wb-text-3); }
 .task-table {
@@ -1035,7 +1035,7 @@ async function removeDns(d: OpsDnsRecord) {
   display: grid;
   grid-template-columns: 2.4fr 1.2fr 0.8fr 1.2fr 0.9fr;
   align-items: center;
-  gap: 10px;
+  gap: var(--wb-sp-3);
   padding: 8px 14px;
   border-bottom: 1px solid var(--wb-border);
   font-size: 12.5px;
@@ -1045,7 +1045,7 @@ async function removeDns(d: OpsDnsRecord) {
   background: var(--wb-card-alt);
   font-weight: 600;
   color: var(--wb-text-2);
-  font-size: 12px;
+  font-size: var(--wb-fs-sm);
 }
 .t-name { font-weight: 550; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 </style>

@@ -228,7 +228,7 @@ onMounted(() => {
 .capture-row {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: var(--wb-sp-3);
 }
 .capture-bulb {
   color: var(--wb-module-inspiration);
@@ -240,7 +240,7 @@ onMounted(() => {
   outline: none;
   background: transparent;
   color: var(--wb-text-1);
-  font-size: 16px;
+  font-size: var(--wb-fs-xl);
   font-family: var(--wb-font);
   padding: 6px 0;
 }
@@ -250,21 +250,21 @@ onMounted(() => {
 .capture-preview {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--wb-sp-2);
   flex-wrap: wrap;
   margin-top: 8px;
   padding-top: 8px;
   border-top: 1px dashed var(--wb-border);
-  font-size: 13px;
+  font-size: var(--wb-fs-md);
   color: var(--wb-text-2);
 }
 .mood-hint {
-  font-size: 12px;
+  font-size: var(--wb-fs-sm);
   color: var(--wb-text-3);
 }
 .mood-picker {
   display: flex;
-  gap: 4px;
+  gap: var(--wb-sp-1);
   flex: none;
 }
 .mood-btn {
@@ -293,14 +293,14 @@ onMounted(() => {
 .tools {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: var(--wb-sp-3);
   flex-wrap: wrap;
   margin-bottom: 14px;
 }
 .search-box {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--wb-sp-2);
   color: var(--wb-text-3);
   border: var(--wb-border-w) solid var(--wb-border);
   border-radius: var(--wb-radius-md);
@@ -313,17 +313,17 @@ onMounted(() => {
   outline: none;
   background: transparent;
   color: var(--wb-text-1);
-  font-size: 13px;
+  font-size: var(--wb-fs-md);
   width: 100%;
   font-family: var(--wb-font);
 }
 .tag-cloud {
   display: flex;
-  gap: 6px;
+  gap: var(--wb-sp-2);
   flex-wrap: wrap;
 }
 .tag-btn {
-  font-size: 12px;
+  font-size: var(--wb-fs-sm);
   color: var(--wb-text-2);
   background: var(--wb-card);
   border: var(--wb-border-w) solid var(--wb-border);
@@ -341,19 +341,19 @@ onMounted(() => {
 .tag-n {
   margin-left: 4px;
   color: var(--wb-text-3);
-  font-size: 11px;
+  font-size: var(--wb-fs-xs);
 }
 
 /* 卡片列表 */
 .cards {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: var(--wb-sp-2);
 }
 .card {
   display: flex;
   align-items: flex-start;
-  gap: 10px;
+  gap: var(--wb-sp-3);
   background: var(--wb-card);
   border: var(--wb-border-w) solid var(--wb-border);
   border-radius: var(--wb-radius-md);
@@ -369,7 +369,7 @@ onMounted(() => {
 }
 .card-content {
   margin: 0 0 6px;
-  font-size: 14px;
+  font-size: var(--wb-fs-lg);
   color: var(--wb-text-1);
   line-height: 1.55;
   white-space: pre-wrap;
@@ -378,21 +378,21 @@ onMounted(() => {
 .card-meta {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--wb-sp-2);
   flex-wrap: wrap;
 }
 .card-mood {
-  font-size: 11px;
+  font-size: var(--wb-fs-xs);
   color: var(--wb-text-3);
 }
 .card-time {
-  font-size: 11px;
+  font-size: var(--wb-fs-xs);
   color: var(--wb-text-3);
   margin-left: auto;
 }
 .card-ops {
   display: flex;
-  gap: 4px;
+  gap: var(--wb-sp-1);
   flex: none;
 }
 .op-btn {
