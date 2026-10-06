@@ -12,6 +12,7 @@ import { scanAgents, portProbe, agentWorkflow, listInstalledApps, resolveShortcu
 import { useConfirm } from '@/composables/useConfirm'
 import { useListNav } from '@/composables/useListNav'
 import { useBatchSelect } from '@/composables/useBatchSelect'
+import { appUndo } from '@/composables/useUndo'
 
 const message = useMessage()
 const { confirm } = useConfirm()
@@ -665,6 +666,13 @@ async function launchTool(t: Tool) {
 async function removeTool(t: Tool) {
   const ok = await confirm({ title: '删除这个工具？', content: `「${t.name}」${t.note ? ` · ${t.note}` : ''}` })
   if (!ok) return
+  appUndo.push({
+    label: `已删除「${t.name ?? ''}」工具`,
+    undo: async () => {
+      const { id: _oldId, ...rest } = t
+      await toolsRepo.insert(rest)
+    },
+  })
   try {
     await toolsRepo.remove(t.id)
     message.success('已删除')
@@ -843,14 +851,26 @@ async function batchRemoveTools() {
     .join('、')
   const ok = await confirm({
     title: `删除选中的 ${n} 个工具？`,
-    content: `${names}${n > 3 ? ` 等 ${n} 个` : ''}，删除后无法恢复。`,
+    content: `${names}${n > 3 ? ` 等 ${n} 个` : ''}，删除后 8 秒内可点右下角「撤销」恢复。`,
   })
   if (!ok) return
   const res = await Promise.allSettled([...selToolIds.value].map((id) => toolsRepo.remove(id)))
   const okN = res.filter((r) => r.status === 'fulfilled').length
   const failN = res.length - okN
+  const undoRows = tools.value.filter((r) => selToolIds.value.has(r.id))
   clearToolSel()
-  if (failN === 0) message.success(`已删除 ${okN} 个工具`)
+  if (okN > 0) {
+    appUndo.push({
+      label: `已删除 ${okN} 个工具`,
+      undo: async () => {
+        for (const row of undoRows) {
+          const { id: _oldId, ...rest } = row
+          await toolsRepo.insert(rest)
+        }
+      },
+    })
+  }
+if (failN === 0) message.success(`已删除 ${okN} 个工具`)
   else message.error(`成功 ${okN} 个，失败 ${failN} 个`)
   load()
 }

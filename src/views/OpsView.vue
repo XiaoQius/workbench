@@ -13,6 +13,7 @@ import { useConfirm } from '@/composables/useConfirm'
 import { useListNav } from '@/composables/useListNav'
 import { matchKw } from '@/composables/match'
 import { useBatchSelect } from '@/composables/useBatchSelect'
+import { appUndo } from '@/composables/useUndo'
 
 const message = useMessage()
 const { confirm } = useConfirm()
@@ -319,8 +320,16 @@ async function addServer(v: Record<string, unknown>) {
 }
 
 async function removeServer(s: Server) {
-  const ok = await confirm({ title: '删除服务器？', content: `「${s.name}」${s.ip || '无 IP'}，删除后无法恢复。` })
+  const ok = await confirm({ title: '删除服务器？', content: `「${s.name}」${s.ip || '无 IP'}，删除后 8 秒内可点右下角「撤销」恢复。` })
   if (!ok) return
+  appUndo.push({
+      label: `已删除「${s.name ?? ''}」服务器`,
+      undo: async () => {
+        const { id: _oldId, ...rest } = s
+        await serversRepo.insert(rest)
+      },
+    })
+
   try {
     await serversRepo.remove(s.id)
     message.success('已删除')
@@ -400,8 +409,16 @@ async function addDomain(v: Record<string, unknown>) {
 }
 
 async function removeDomain(d: Domain) {
-  const ok = await confirm({ title: '删除域名？', content: `「${d.name}」删除后无法恢复。` })
+  const ok = await confirm({ title: '删除域名？', content: `「${d.name}」删除后 8 秒内可点右下角「撤销」恢复。` })
   if (!ok) return
+  appUndo.push({
+      label: `已删除「${d.name ?? ''}」域名`,
+      undo: async () => {
+        const { id: _oldId, ...rest } = d
+        await domainsRepo.insert(rest)
+      },
+    })
+
   try {
     await domainsRepo.remove(d.id)
     message.success('已删除')
@@ -483,14 +500,26 @@ async function batchRemoveServers() {
     .join('、')
   const ok = await confirm({
     title: `删除选中的 ${n} 台服务器？`,
-    content: `${names}${n > 3 ? ` 等 ${n} 台` : ''}，删除后无法恢复。`,
+    content: `${names}${n > 3 ? ` 等 ${n} 台` : ''}，删除后 8 秒内可点右下角「撤销」恢复。`,
   })
   if (!ok) return
   const res = await Promise.allSettled([...selServerIds.value].map((id) => serversRepo.remove(id)))
   const okN = res.filter((r) => r.status === 'fulfilled').length
   const failN = res.length - okN
+  const undoRows = servers.value.filter((r) => selServerIds.value.has(r.id))
   clearServerSel()
-  if (failN === 0) message.success(`已删除 ${okN} 台服务器`)
+  if (okN > 0) {
+    appUndo.push({
+      label: `已删除 ${okN} 台服务器`,
+      undo: async () => {
+        for (const row of undoRows) {
+          const { id: _oldId, ...rest } = row
+          await serversRepo.insert(rest)
+        }
+      },
+    })
+  }
+if (failN === 0) message.success(`已删除 ${okN} 台服务器`)
   else message.error(`成功 ${okN} 台，失败 ${failN} 台`)
   load()
 }
@@ -546,14 +575,26 @@ async function batchRemoveDomains() {
     .join('、')
   const ok = await confirm({
     title: `删除选中的 ${n} 个域名？`,
-    content: `${names}${n > 3 ? ` 等 ${n} 个` : ''}，删除后无法恢复。`,
+    content: `${names}${n > 3 ? ` 等 ${n} 个` : ''}，删除后 8 秒内可点右下角「撤销」恢复。`,
   })
   if (!ok) return
   const res = await Promise.allSettled([...selDomainIds.value].map((id) => domainsRepo.remove(id)))
   const okN = res.filter((r) => r.status === 'fulfilled').length
   const failN = res.length - okN
+  const undoRows = domains.value.filter((r) => selDomainIds.value.has(r.id))
   clearDomainSel()
-  if (failN === 0) message.success(`已删除 ${okN} 个域名`)
+  if (okN > 0) {
+    appUndo.push({
+      label: `已删除 ${okN} 个域名`,
+      undo: async () => {
+        for (const row of undoRows) {
+          const { id: _oldId, ...rest } = row
+          await domainsRepo.insert(rest)
+        }
+      },
+    })
+  }
+if (failN === 0) message.success(`已删除 ${okN} 个域名`)
   else message.error(`成功 ${okN} 个，失败 ${failN} 个`)
   load()
 }

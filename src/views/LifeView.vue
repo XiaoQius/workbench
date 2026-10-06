@@ -12,6 +12,7 @@ import { habitsRepo, habitLogsRepo, ledgerRepo, pomodorosRepo, healthLogsRepo, f
 import type { Habit, HabitLog, LedgerEntry, Pomodoro, HealthLog, FixedBill, Deadline, Task } from '../../drizzle/schema'
 import { matchKw } from '@/composables/match'
 import { useBatchSelect } from '@/composables/useBatchSelect'
+import { appUndo } from '@/composables/useUndo'
 
 const message = useMessage()
 const { confirm } = useConfirm()
@@ -75,8 +76,16 @@ async function addHabit(v: Record<string, unknown>) {
 }
 
 async function removeHabit(h: Habit) {
-  const ok = await confirm({ title: '删除这个习惯？', content: `「${h.name}」及其打卡记录将一并删除，无法恢复。` })
+  const ok = await confirm({ title: '删除这个习惯？', content: `「${h.name}」及其打卡记录将一并删除，删除后 8 秒内可撤销。` })
   if (!ok) return
+  appUndo.push({
+      label: `已删除「${h.name ?? ''}」习惯`,
+      undo: async () => {
+        const { id: _oldId, ...rest } = h
+        await habitsRepo.insert(rest)
+      },
+    })
+
   try {
     await habitsRepo.remove(h.id)
     message.success('已删除')
@@ -190,6 +199,14 @@ async function addLedger(v: Record<string, unknown>) {
 async function removeLedger(e: LedgerEntry) {
   const ok = await confirm({ title: '删除这笔记录？', content: `${e.category || '未分类'} · ${e.amount} 元` })
   if (!ok) return
+  appUndo.push({
+      label: `已删除「${e.category ?? ''}」记账`,
+      undo: async () => {
+        const { id: _oldId, ...rest } = e
+        await ledgerRepo.insert(rest)
+      },
+    })
+
   try {
     await ledgerRepo.remove(e.id)
     message.success('已删除')
@@ -690,8 +707,20 @@ async function batchRemoveLedger() {
   const res = await Promise.allSettled(ids.map((id) => ledgerRepo.remove(id)))
   const okN = res.filter((r) => r.status === 'fulfilled').length
   const failN = res.length - okN
+  const undoRows = ledger.value.filter((r) => selLedgerIds.value.has(r.id))
   clearLedgerSel()
-  if (failN === 0) message.success(`已删除 ${okN} 条记账`)
+  if (okN > 0) {
+    appUndo.push({
+      label: `已删除 ${okN} 条记账记录`,
+      undo: async () => {
+        for (const row of undoRows) {
+          const { id: _oldId, ...rest } = row
+          await ledgerRepo.insert(rest)
+        }
+      },
+    })
+  }
+if (failN === 0) message.success(`已删除 ${okN} 条记账`)
   else message.error(`成功 ${okN} 条，失败 ${failN} 条`)
   load()
 }

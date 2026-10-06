@@ -7,6 +7,7 @@ import { homeDir } from '@tauri-apps/api/path'
 import EmptyState from '@/components/EmptyState.vue'
 import ListSkeleton from '@/components/ListSkeleton.vue'
 import ModalForm, { type FieldDef } from '@/components/ModalForm.vue'
+import { appUndo } from '@/composables/useUndo'
 import { projectsRepo, tasksRepo, snippetsRepo, deploymentsRepo, envVarsRepo, techDebtsRepo, cmdSnippetsRepo } from '@/db'
 import type { Project, Task, Snippet, Deployment, EnvVar, TechDebt, CmdSnippet } from '../../drizzle/schema'
 import { scanProjects, gitStatus, openPath, gitLog, codeStats, envList, repoHealth, depsCheck, type ProjectInfo, type GitStatus, type GitCommitInfo, type LangStat, type RepoHealth, type DepCheckItem } from '@/composables/useTauri'
@@ -236,8 +237,16 @@ async function addTask(v: Record<string, unknown>) {
 }
 
 async function removeTask(t: Task) {
-  const ok = await confirm({ title: '删除任务？', content: `「${t.title}」删除后无法恢复。` })
+  const ok = await confirm({ title: '删除任务？', content: `「${t.title}」删除后 8 秒内可点右下角「撤销」恢复。` })
   if (!ok) return
+  appUndo.push({
+      label: `已删除「${t.title ?? ''}」任务`,
+      undo: async () => {
+        const { id: _oldId, ...rest } = t
+        await tasksRepo.insert(rest)
+      },
+    })
+
   try {
     await tasksRepo.remove(t.id)
     message.success('已删除')
@@ -744,13 +753,26 @@ const batchTaskStatusOptions = [
 async function batchRemoveTasks() {
   const n = selTaskCount.value
   if (!n) return
-  const ok = await confirm({ title: `删除选中的 ${n} 条任务？`, content: '此操作不可撤销，选中的任务将被永久删除。' })
+  const ok = await confirm({ title: `删除选中的 ${n} 条任务？`, content: '删除后 8 秒内可点右下角「撤销」恢复。' })
   if (!ok) return
   const ids = [...selTaskIds.value]
+  // 先留底：撤销要能把这些行原样插回去
+  const rows = tasks.value.filter((t) => ids.includes(t.id))
   const res = await Promise.allSettled(ids.map((id) => tasksRepo.remove(id)))
   const okN = res.filter((r) => r.status === 'fulfilled').length
   const failN = res.length - okN
   clearTaskSel()
+  if (okN > 0) {
+    appUndo.push({
+      label: `已删除 ${okN} 条任务`,
+      undo: async () => {
+        for (const row of rows) {
+          const { id: _oldId, ...rest } = row
+          await tasksRepo.insert(rest)
+        }
+      },
+    })
+  }
   if (failN === 0) message.success(`已删除 ${okN} 条任务`)
   else message.error(`成功 ${okN} 条，失败 ${failN} 条`)
   load()

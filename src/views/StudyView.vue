@@ -12,6 +12,7 @@ import { coursesRepo, assignmentsRepo, notesRepo, gradesRepo, flashcardsRepo, pi
 import type { Course, Assignment, Note, Grade, Flashcard, Pitfall, ReadQueueItem, FeynmanLog, Task, Pomodoro } from '../../drizzle/schema'
 import { matchKw } from '@/composables/match'
 import { useBatchSelect } from '@/composables/useBatchSelect'
+import { appUndo } from '@/composables/useUndo'
 
 const message = useMessage()
 const { confirm } = useConfirm()
@@ -260,6 +261,14 @@ async function addAssignment(v: Record<string, unknown>) {
 async function removeAssignment(a: Assignment) {
   const ok = await confirm({ title: `删除作业《${a.title}》？`, content: `当前状态：${{ todo: '待办', written: '已写', submitted: '已交' }[a.status] || a.status}${a.dueDate ? ' · 截止 ' + a.dueDate : ''}` })
   if (!ok) return
+  appUndo.push({
+      label: `已删除「${a.title ?? ''}」作业`,
+      undo: async () => {
+        const { id: _oldId, ...rest } = a
+        await assignmentsRepo.insert(rest)
+      },
+    })
+
   try {
     await assignmentsRepo.remove(a.id)
     message.success('已删除')
@@ -330,8 +339,20 @@ async function batchRemoveAssignments() {
   const res = await Promise.allSettled(ids.map((id) => assignmentsRepo.remove(id)))
   const okN = res.filter((r) => r.status === 'fulfilled').length
   const failN = res.length - okN
+  const undoRows = assignments.value.filter((r) => selAssignIds.value.has(r.id))
   clearAssignSel()
-  if (failN === 0) message.success(`已删除 ${okN} 条作业`)
+  if (okN > 0) {
+    appUndo.push({
+      label: `已删除 ${okN} 条作业`,
+      undo: async () => {
+        for (const row of undoRows) {
+          const { id: _oldId, ...rest } = row
+          await assignmentsRepo.insert(rest)
+        }
+      },
+    })
+  }
+if (failN === 0) message.success(`已删除 ${okN} 条作业`)
   else message.error(`成功 ${okN} 条，失败 ${failN} 条`)
   load()
 }
@@ -430,8 +451,16 @@ async function addNote(v: Record<string, unknown>) {
 }
 
 async function removeNote(n: Note) {
-  const ok = await confirm({ title: `删除笔记《${n.title}》？`, content: '笔记内容不可再生，删除后无法恢复。' })
+  const ok = await confirm({ title: `删除笔记《${n.title}》？`, content: '笔记删除后 8 秒内可点右下角「撤销」恢复。' })
   if (!ok) return
+  appUndo.push({
+      label: `已删除「${n.title ?? ''}」笔记`,
+      undo: async () => {
+        const { id: _oldId, ...rest } = n
+        await notesRepo.insert(rest)
+      },
+    })
+
   try {
     await notesRepo.remove(n.id)
     if (activeNote.value?.id === n.id) activeNote.value = null

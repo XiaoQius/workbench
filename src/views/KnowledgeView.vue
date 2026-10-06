@@ -13,6 +13,7 @@ import { useConfirm } from '@/composables/useConfirm'
 import { pitfallFields, decisionFields, pathFields, threeDFields, portfolioFields } from './knowledge/formSchemas'
 import { useListNav } from '@/composables/useListNav'
 import { useBatchSelect } from '@/composables/useBatchSelect'
+import { appUndo } from '@/composables/useUndo'
 
 const message = useMessage()
 const { confirm } = useConfirm()
@@ -270,8 +271,16 @@ async function addPitfall(v: Record<string, unknown>) {
 }
 
 async function removePitfall(p: Pitfall) {
-  const ok = await confirm({ title: '删除踩坑记录？', content: `「${p.title}」删除后无法恢复。` })
+  const ok = await confirm({ title: '删除踩坑记录？', content: `「${p.title}」删除后 8 秒内可点右下角「撤销」恢复。` })
   if (!ok) return
+  appUndo.push({
+      label: `已删除「${p.title ?? ''}」踩坑记录`,
+      undo: async () => {
+        const { id: _oldId, ...rest } = p
+        await pitfallsRepo.insert(rest)
+      },
+    })
+
   try {
     await pitfallsRepo.remove(p.id)
     message.success('已删除')
@@ -325,14 +334,26 @@ async function batchRemovePitfalls() {
     .join('、')
   const ok = await confirm({
     title: `删除选中的 ${n} 条踩坑记录？`,
-    content: `${titles}${n > 3 ? ` 等 ${n} 条` : ''}，删除后无法恢复。`,
+    content: `${titles}${n > 3 ? ` 等 ${n} 条` : ''}，删除后 8 秒内可点右下角「撤销」恢复。`,
   })
   if (!ok) return
   const res = await Promise.allSettled([...selPitfallIds.value].map((id) => pitfallsRepo.remove(id)))
   const okN = res.filter((r) => r.status === 'fulfilled').length
   const failN = res.length - okN
+  const undoRows = pitfalls.value.filter((r) => selPitfallIds.value.has(r.id))
   clearPitfallSel()
-  if (failN === 0) message.success(`已删除 ${okN} 条踩坑记录`)
+  if (okN > 0) {
+    appUndo.push({
+      label: `已删除 ${okN} 条踩坑记录`,
+      undo: async () => {
+        for (const row of undoRows) {
+          const { id: _oldId, ...rest } = row
+          await pitfallsRepo.insert(rest)
+        }
+      },
+    })
+  }
+if (failN === 0) message.success(`已删除 ${okN} 条踩坑记录`)
   else message.error(`成功 ${okN} 条，失败 ${failN} 条`)
   load()
 }
@@ -432,14 +453,26 @@ async function batchRemoveLinks() {
     .join('、')
   const ok = await confirm({
     title: `删除选中的 ${n} 条收藏链接？`,
-    content: `${titles}${n > 3 ? ` 等 ${n} 条` : ''}，删除后无法恢复。`,
+    content: `${titles}${n > 3 ? ` 等 ${n} 条` : ''}，删除后 8 秒内可点右下角「撤销」恢复。`,
   })
   if (!ok) return
   const res = await Promise.allSettled([...selLinkIds.value].map((id) => resourcesRepo.remove(id)))
   const okN = res.filter((r) => r.status === 'fulfilled').length
   const failN = res.length - okN
+  const undoRows = links.value.filter((r) => selLinkIds.value.has(r.id))
   clearLinkSel()
-  if (failN === 0) message.success(`已删除 ${okN} 条收藏链接`)
+  if (okN > 0) {
+    appUndo.push({
+      label: `已删除 ${okN} 条收藏链接`,
+      undo: async () => {
+        for (const row of undoRows) {
+          const { id: _oldId, ...rest } = row
+          await resourcesRepo.insert(rest)
+        }
+      },
+    })
+  }
+if (failN === 0) message.success(`已删除 ${okN} 条收藏链接`)
   else message.error(`成功 ${okN} 条，失败 ${failN} 条`)
   load()
 }
