@@ -452,6 +452,38 @@ function showCard(key: string) {
 }
 const anyCardHidden = computed(() => Object.values(s.homeCardsHidden).some(Boolean))
 
+// ============================================================
+// 总览卡片排序：同区块内上移/下移；order 存 settings.homeCardsOrder
+// ============================================================
+function cardOrder(key: string): number {
+  const i = s.homeCardsOrder.indexOf(key)
+  const def = HOME_CARDS.findIndex((c) => c.key === key)
+  return i === -1 ? 100 + def : i
+}
+function cardStyle(key: string) {
+  return { order: String(cardOrder(key)) }
+}
+function moveCard(key: string, dir: -1 | 1) {
+  const keys = HOME_CARDS.map((c) => c.key as string)
+  // 目标：方向上最近的一张可见卡片
+  const cur = cardOrder(key)
+  let target: string | null = null
+  let best = dir === -1 ? -Infinity : Infinity
+  for (const k of keys) {
+    if (k === key || cardHidden(k)) continue
+    const o = cardOrder(k)
+    if (dir === -1 ? (o < cur && o > best) : (o > cur && o < best)) { best = o; target = k }
+  }
+  if (!target) return
+  // 把两 key 在 order 数组里互换；不在数组里的补到最后再交换
+  const ordered = [...s.homeCardsOrder]
+  const ensure = (k: string) => { if (!ordered.includes(k)) ordered.push(k) }
+  ensure(key); ensure(target)
+  const ki = ordered.indexOf(key), ti = ordered.indexOf(target)
+  ordered[ki] = target; ordered[ti] = key
+  s.homeCardsOrder = ordered
+}
+
 const searchQuery = ref('')
 const debouncedQuery = ref('')
 let searchTimer: number | undefined
@@ -561,11 +593,13 @@ async function saveInspiration() {
     <!-- 第一屏：今日焦点 + 灵感（左，最大权重）｜ 右侧：AI 问答 + 截止预警 -->
     <div class="top-grid">
       <div class="top-left">
-      <section v-if="!cardHidden('focus')" class="wb-card focus-card">
+      <section v-if="!cardHidden('focus')" class="wb-card focus-card" :style="cardStyle('focus')">
         <header class="card-head">
           <span class="accent-bar" :style="{ background: moduleColor('home', themeStore.dark) }"></span>
           <h2>今日焦点</h2>
           <span class="mono head-meta">{{ todayLabel }}</span>
+          <button class="card-move" title="上移此卡片" @click="moveCard('focus',-1)">↑</button>
+          <button class="card-move" title="下移此卡片" @click="moveCard('focus',1)">↓</button>
           <button class="card-hide" title="隐藏此卡片（可在 设置→显示→总览卡片 恢复）" @click="hideCard('focus')">✕</button>
         </header>
         <ListSkeleton v-if="loading" :rows="5" />
@@ -597,11 +631,13 @@ async function saveInspiration() {
       </section>
 
       <!-- 灵感：最近记录（点击跳灵感页） -->
-      <section v-if="!cardHidden('insp')" class="wb-card insp-card">
+      <section v-if="!cardHidden('insp')" class="wb-card insp-card" :style="cardStyle('insp')">
         <header class="card-head">
           <span class="accent-bar" :style="{ background: moduleColor('inspiration', themeStore.dark) }"></span>
           <h2>灵感</h2>
           <span class="mono head-meta">近 7 天 · {{ recentInspirations.length }}</span>
+          <button class="card-move" title="上移此卡片" @click="moveCard('insp',-1)">↑</button>
+          <button class="card-move" title="下移此卡片" @click="moveCard('insp',1)">↓</button>
           <button class="card-hide" title="隐藏此卡片" @click="hideCard('insp')">✕</button>
           <NButton size="tiny" text type="primary" class="insp-all" @click="go('/inspiration')">全部 <template #icon><NIcon :component="ArrowRight" /></template></NButton>
         </header>
@@ -630,12 +666,14 @@ async function saveInspiration() {
 
       <div class="top-right">
         <!-- AI 智能问答（常驻） -->
-        <section v-if="!cardHidden('qa')" class="wb-card qa-card">
+        <section v-if="!cardHidden('qa')" class="wb-card qa-card" :style="cardStyle('qa')">
           <header class="card-head">
             <span class="accent-bar" :style="{ background: moduleColor('knowledge', themeStore.dark) }"></span>
             <h2>AI 问答</h2>
             <span v-if="llmConfigured()" class="ai-chip mono">{{ llmConfigLabel() }}</span>
             <span v-else class="ai-chip fallback">本地检索</span>
+            <button class="card-move" title="上移此卡片" @click="moveCard('qa',-1)">↑</button>
+            <button class="card-move" title="下移此卡片" @click="moveCard('qa',1)">↓</button>
             <button class="card-hide" title="隐藏此卡片" @click="hideCard('qa')">✕</button>
           </header>
           <div class="qa-body">
@@ -676,11 +714,13 @@ async function saveInspiration() {
         </section>
 
         <!-- 截止预警 -->
-        <section v-if="!cardHidden('watch')" class="wb-card watch-card">
+        <section v-if="!cardHidden('watch')" class="wb-card watch-card" :style="cardStyle('watch')">
           <header class="card-head">
             <span class="accent-bar" :style="{ background: moduleColor('ops', themeStore.dark) }"></span>
             <h2>截止预警 · 未来 7 天</h2>
             <span class="mono head-meta">{{ watchGroups.length }} 天</span>
+            <button class="card-move" title="上移此卡片" @click="moveCard('watch',-1)">↑</button>
+            <button class="card-move" title="下移此卡片" @click="moveCard('watch',1)">↓</button>
             <button class="card-hide" title="隐藏此卡片" @click="hideCard('watch')">✕</button>
           </header>
           <div v-if="watchGroups.length" class="watch-list">
@@ -702,7 +742,9 @@ async function saveInspiration() {
 
     <!-- 进度条区：一行四卡，均可点击跳转 -->
     <div class="prog-grid">
-      <div v-if="!cardHidden('habit')" class="wb-card hoverable prog-card clickable" @click="go('/life')">
+      <div v-if="!cardHidden('habit')" class="wb-card hoverable prog-card clickable" @click="go('/life')" :style="cardStyle('habit')">
+        <button class="card-move prog-move" title="上移此卡片" @click.stop="moveCard('habit',-1)">↑</button>
+        <button class="card-move prog-move" title="下移此卡片" @click.stop="moveCard('habit',1)">↓</button>
         <button class="card-hide prog-hide" title="隐藏此卡片" @click.stop="hideCard('habit')">✕</button>
         <div class="pg-label">习惯 · 今日</div>
         <div class="pg-value mono" :style="{ color: moduleColor('life', themeStore.dark) }">
@@ -712,7 +754,9 @@ async function saveInspiration() {
         <div class="pg-bar"><div class="pg-bar-fill" :style="{ width: (habitToday.total ? habitToday.done / habitToday.total * 100 : 0) + '%', background: 'var(--wb-module-life)' }"></div></div>
       </div>
 
-      <div v-if="!cardHidden('ledger')" class="wb-card hoverable prog-card clickable" @click="go('/life')">
+      <div v-if="!cardHidden('ledger')" class="wb-card hoverable prog-card clickable" @click="go('/life')" :style="cardStyle('ledger')">
+        <button class="card-move prog-move" title="上移此卡片" @click.stop="moveCard('ledger',-1)">↑</button>
+        <button class="card-move prog-move" title="下移此卡片" @click.stop="moveCard('ledger',1)">↓</button>
         <button class="card-hide prog-hide" title="隐藏此卡片" @click.stop="hideCard('ledger')">✕</button>
         <div class="pg-label">记账 · 本月</div>
         <div class="pg-value mono" :style="{ color: moduleColor('ops', themeStore.dark) }">¥{{ ledgerThisMonth.spend.toFixed(0) }}</div>
@@ -723,7 +767,9 @@ async function saveInspiration() {
         </div>
       </div>
 
-      <div v-if="!cardHidden('study')" class="wb-card hoverable prog-card clickable" @click="go('/study')">
+      <div v-if="!cardHidden('study')" class="wb-card hoverable prog-card clickable" @click="go('/study')" :style="cardStyle('study')">
+        <button class="card-move prog-move" title="上移此卡片" @click.stop="moveCard('study',-1)">↑</button>
+        <button class="card-move prog-move" title="下移此卡片" @click.stop="moveCard('study',1)">↓</button>
         <button class="card-hide prog-hide" title="隐藏此卡片" @click.stop="hideCard('study')">✕</button>
         <div class="pg-label">学习</div>
         <div class="pg-value mono" :style="{ color: moduleColor('study', themeStore.dark) }">
@@ -732,7 +778,9 @@ async function saveInspiration() {
         <div class="pg-sub">作业 · 课程进行中 {{ studyProgress.activeCourses }} 门</div>
       </div>
 
-      <div v-if="!cardHidden('task')" class="wb-card hoverable prog-card clickable" @click="go('/dev')">
+      <div v-if="!cardHidden('task')" class="wb-card hoverable prog-card clickable" @click="go('/dev')" :style="cardStyle('task')">
+        <button class="card-move prog-move" title="上移此卡片" @click.stop="moveCard('task',-1)">↑</button>
+        <button class="card-move prog-move" title="下移此卡片" @click.stop="moveCard('task',1)">↓</button>
         <button class="card-hide prog-hide" title="隐藏此卡片" @click.stop="hideCard('task')">✕</button>
         <div class="pg-label">任务 · 本周完成</div>
         <div class="pg-value mono" :style="{ color: moduleColor('dev', themeStore.dark) }">{{ taskWeek.thisWeek }}</div>
@@ -748,7 +796,7 @@ async function saveInspiration() {
 
     <!-- 趋势小图（纯 SVG，无新依赖） -->
     <div class="trend-grid">
-      <section v-if="!cardHidden('trend14')" class="wb-card">
+      <section v-if="!cardHidden('trend14')" class="wb-card" :style="cardStyle('trend14')">
         <header class="card-head">
           <span class="accent-bar" :style="{ background: moduleColor('life', themeStore.dark) }"></span>
           <h2>近 14 天节奏</h2>
@@ -756,6 +804,8 @@ async function saveInspiration() {
             <i class="lg-swatch bar-a"></i>打卡
             <i class="lg-swatch bar-b"></i>番茄
           </span>
+          <button class="card-move" title="上移此卡片" @click="moveCard('trend14',-1)">↑</button>
+          <button class="card-move" title="下移此卡片" @click="moveCard('trend14',1)">↓</button>
           <button class="card-hide" title="隐藏此卡片" @click="hideCard('trend14')">✕</button>
         </header>
         <div class="chart-body">
@@ -778,11 +828,13 @@ async function saveInspiration() {
         </div>
       </section>
 
-      <section v-if="!cardHidden('spend6m')" class="wb-card">
+      <section v-if="!cardHidden('spend6m')" class="wb-card" :style="cardStyle('spend6m')">
         <header class="card-head">
           <span class="accent-bar" :style="{ background: moduleColor('ops', themeStore.dark) }"></span>
           <h2>近 6 月支出</h2>
           <span class="mono head-meta">峰值 ¥{{ spend6mMax.toFixed(0) }}</span>
+          <button class="card-move" title="上移此卡片" @click="moveCard('spend6m',-1)">↑</button>
+          <button class="card-move" title="下移此卡片" @click="moveCard('spend6m',1)">↓</button>
           <button class="card-hide" title="隐藏此卡片" @click="hideCard('spend6m')">✕</button>
         </header>
         <div class="chart-body">
@@ -888,7 +940,8 @@ async function saveInspiration() {
   padding: 11px 14px;
   border-bottom: 1px solid var(--wb-border);
 }
-.card-head h2 { margin: 0; font-size: 13.5px; font-weight: 620; flex: 1; }
+.card-head h2 { margin: 0; font-size: 13.5px; font-weight: 620; }
+.card-head .head-meta { flex: 1; }
 .head-meta { font-size: var(--wb-fs-xs); color: var(--wb-text-3); }
 
 /* 今日焦点 */
@@ -1091,7 +1144,6 @@ async function saveInspiration() {
 
 /* 卡片右上角隐藏按钮：hover 才出现，避免常态干扰视线 */
 .card-hide {
-  margin-left: auto;
   width: 22px;
   height: 22px;
   border: none;
@@ -1107,16 +1159,43 @@ async function saveInspiration() {
   opacity: 0;
   transition: opacity 120ms ease-out, background-color 120ms ease-out;
 }
+/* 卡片排序按钮：同 hide 一样 hover 才出现，把 margin-left: auto 让给第一个按钮 */
+.card-move {
+  width: 22px;
+  height: 22px;
+  border: none;
+  background: transparent;
+  color: var(--wb-text-3);
+  border-radius: var(--wb-radius-sm);
+  cursor: pointer;
+  font-size: 11px;
+  line-height: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0;
+  transition: opacity 120ms ease-out, background-color 120ms ease-out;
+}
+.card-move:first-of-type,
+.card-move.card-move + .card-move + .card-hide,
+.prog-card .card-move:first-of-type { margin-left: auto; }
 .wb-card:hover .card-hide,
-.prog-card:hover .card-hide {
+.prog-card:hover .card-hide,
+.wb-card:hover .card-move,
+.prog-card:hover .card-move {
   opacity: 1;
 }
 .card-hide:hover {
   background: var(--wb-card-alt);
   color: var(--wb-danger);
 }
+.card-move:hover {
+  background: var(--wb-card-alt);
+  color: var(--wb-accent);
+}
 /* 减少动效：不淡入 */
-:global(.wb-reduced-motion) .card-hide { transition: none; }
+:global(.wb-reduced-motion) .card-hide,
+:global(.wb-reduced-motion) .card-move { transition: none; }
 
 /* 恢复入口：有任何隐藏卡片时显示 */
 .cards-restore {

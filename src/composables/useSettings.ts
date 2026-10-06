@@ -55,6 +55,7 @@ function defaults() {
     cards: [] as CustomCard[],
     sections: Object.fromEntries(modules.map((m) => [m.key, true])) as Record<ModuleKey, boolean>,
     homeCardsHidden: {} as Record<string, boolean>,
+    homeCardsOrder: [] as string[],
     llmEnabled: true,
     sidebarCollapsed: false,
     autoCheckUpdate: true,
@@ -81,6 +82,8 @@ export interface WbSettings {
   sections: Record<ModuleKey, boolean>
   /** 总览页卡片显隐：key 存在且为 true = 隐藏该卡片 */
   homeCardsHidden: Record<string, boolean>
+  /** 总览卡片在同区块内的显示顺序（key 列表，未列出的按默认顺序排在后面） */
+  homeCardsOrder: string[]
   llmEnabled: boolean
   sidebarCollapsed: boolean
   autoCheckUpdate: boolean
@@ -112,6 +115,7 @@ function load(): WbSettings {
       cards: Array.isArray(p.cards) ? p.cards : [],
       sections: { ...d.sections, ...(p.sections || {}) },
       homeCardsHidden: { ...(p.homeCardsHidden || {}) },
+      homeCardsOrder: Array.isArray(p.homeCardsOrder) ? p.homeCardsOrder.filter((x: unknown) => typeof x === 'string') : [],
       llmEnabled: p.llmEnabled !== false,
       sidebarCollapsed: !!p.sidebarCollapsed,
       autoCheckUpdate: p.autoCheckUpdate !== false,
