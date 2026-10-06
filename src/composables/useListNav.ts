@@ -1,4 +1,4 @@
-import { onMounted, onUnmounted, ref, nextTick, type Ref } from 'vue'
+import { onMounted, onUnmounted, ref, watch, type Ref } from 'vue'
 
 /**
  * 列表键盘导航（↑↓ 移动 / Enter 打开 / Home-End 首尾）。
@@ -38,9 +38,57 @@ function isEditableTarget(e: KeyboardEvent): boolean {
 export function useListNav(containerRef: Ref<HTMLElement | undefined>, opts: ListNavOptions) {
   const cursor = ref(-1)
 
+  /** 行数快照，用于 watch 感知数据源变化 */
+  const rowCount = ref(0)
+
+  // 容器子树增删（过滤/翻页）用 MutationObserver 观察最可靠：
+  // 数据源是自己传进来的外部 ref，本函数拿不到，无法直接 watch 它。
+  let observer: MutationObserver | null = null
+  /** 当前正在观察的容器节点，用于识别容器是否被换掉 */
+  let observedEl: HTMLElement | null = null
+
+  /**
+   * 观察容器子树的增删。
+   * 数据源是视图传进来的外部 ref，本函数拿不到，没法直接 watch 它；
+   * 而「行数变了」这件事最终一定会反映到 DOM 上，所以观察 DOM 最可靠。
+   * 行数变化时立即修正越界 cursor 并重绘，不必等下次按键。
+   */
+  function observeRows() {
+    const root = containerRef.value
+    if (!root || typeof MutationObserver === 'undefined') return
+    observer?.disconnect()
+    observer = new MutationObserver(() => {
+      const next = rows().length
+      if (next !== rowCount.value) {
+        rowCount.value = next
+        clamp()
+        paint()
+      }
+    })
+    observer.observe(root, { childList: true, subtree: true })
+  }
+
+  /**
+   * 惰性续订：容器换了节点（v-if 重建）时重置状态并重挂观察。
+   * 放在 rows() 里被调用而不是只靠 watch —— 因为 watch 依赖 Vue 的
+   * 调度时机，而这是纯 DOM 层面的不变式，每次取行数前先看一眼更稳。
+   */
+  function ensureObserving() {
+    const root = containerRef.value
+    if (!root) return
+    if (observedEl === root) return
+    // 容器换成新节点：旧索引不再对应任何东西，必须重置，
+    // 否则「切走 Tab 再切回」第一次按方向键会从残留旧索引继续。
+    observedEl = root
+    cursor.value = -1
+    rowCount.value = Array.from(root.querySelectorAll<HTMLElement>(opts.rowSelector)).length
+    observeRows()
+  }
+
   function rows(): HTMLElement[] {
     const root = containerRef.value
     if (!root) return []
+    ensureObserving()
     return Array.from(root.querySelectorAll<HTMLElement>(opts.rowSelector))
   }
 
@@ -149,14 +197,35 @@ export function useListNav(containerRef: Ref<HTMLElement | undefined>, opts: Lis
     }
   }
 
+  // 容器常在 Tab / 分支切换时被 v-if 销毁重建（换了一批 DOM 节点）。
+  // 监听器若只在 onMounted 绑一次，重建后 focusin 就绑在已废弃的旧节点上，
+  // 表现为「切走再切回来后方向键失灵」。
+  // 这里改为把 focusin 绑到 document 上做委托，命中容器内部时才响应——
+  // 好处是容器换节点不影响，代价是每次焦点变动都会走一次 contains 判断（可忽略）。
+  function onDocFocusIn() {
+    const root = containerRef.value
+    if (!root) return
+    const active = document.activeElement
+    if (root.contains(active)) onFocusIn()
+  }
+
   onMounted(() => {
     window.addEventListener('keydown', onKeydown)
-    containerRef.value?.addEventListener('focusin', onFocusIn)
+    document.addEventListener('focusin', onDocFocusIn)
+  })
+
+  // 容器被 v-if 重建时（切换 Tab）容器 ref 指向新节点，需重新挂观察
+  onMounted(() => {
+    // 首次挂载时容器可能还没渲染（v-else-if 的数据区），
+    // 这里先尝试挂一次，真正的续订由 ensureObserving 在每次取行时兜底。
+    ensureObserving()
   })
 
   onUnmounted(() => {
     window.removeEventListener('keydown', onKeydown)
-    containerRef.value?.removeEventListener('focusin', onFocusIn)
+    document.removeEventListener('focusin', onDocFocusIn)
+    observer?.disconnect()
+    observer = null
   })
 
   return { cursor, move, clear, paint, clamp, jumpToEdge }
