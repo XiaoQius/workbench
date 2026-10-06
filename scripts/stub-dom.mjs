@@ -86,9 +86,59 @@ class StubMutationObserver {
   disconnect() { observers.delete(this) }
 }
 
+/**
+ * 在真实的 Vue 组件实例里调用 fn，让里面的 onMounted/onUnmounted 真的注册并执行。
+ *
+ * 背景：直接在模块作用域调用 useListNav 时，Vue 会警告
+ * "onMounted is called when there is no active component instance"，
+ * 回调被丢弃 → window 上根本没有 keydown 监听 → 没法测 Enter 的回调
+ * （move/clamp 这类纯逻辑不依赖生命周期，所以老断言一直没问题）。
+ * 这里用 vue 的自定义 renderer 挂一个空组件：只需要 createRenderer + 一套
+ * 什么都不做的 nodeOps（不渲染任何东西），比拉 jsdom 轻得多。
+ */
+/** 已挂载的 app 实例，供 unmountAll 清理（避免上一个用例的监听泄漏到下一个） */
+const mountedApps = new Set()
+
+export async function mount(fn) {
+  const { createRenderer, defineComponent, h } = await import('vue')
+  const nodeOps = {
+    createElement: (tag) => new StubNode(tag),
+    createText: (t) => ({ text: t }),
+    createComment: () => ({ comment: '' }),
+    setText: () => {},
+    setElementText: () => {},
+    insert: (c, p) => { if (p && p.children) { c.parentNode = p; p.children.push(c) } },
+    remove: () => {},
+    parentNode: (n) => n.parentNode || null,
+    nextSibling: () => null,
+    patchProp: () => {},
+  }
+  const { createApp } = createRenderer(nodeOps)
+  let result
+  const Comp = defineComponent({
+    setup() { result = fn(); return () => h('div') },
+  })
+  const app = createApp(Comp)
+  app.mount(new StubNode('div'))
+  mountedApps.add(app)
+  return result
+}
+
+/**
+ * 卸载所有 mount() 起来的组件，触发它们的 onUnmounted。
+ * useListNav 在 onUnmounted 里摘掉 window 上的 keydown 监听——不摘的话
+ * 上一个用例的导航实例还挂着，press() 会同时打到它身上，断言互相污染。
+ */
+export function unmountAll() {
+  for (const app of [...mountedApps]) app.unmount()
+  mountedApps.clear()
+}
+
 export function installDomStub() {
   const root = new StubNode('div')
   const active = { el: null }
+  /** window 上的 keydown 监听（useListNav 绑在这里），供 press() 驱动 */
+  const winListeners = {}
 
   const doc = {
     activeElement: null,
@@ -98,16 +148,35 @@ export function installDomStub() {
   }
   globalThis.document = doc
   globalThis.window = {
-    addEventListener: () => {},
-    removeEventListener: () => {},
+    addEventListener: (t, fn) => { (winListeners[t] ||= []).push(fn) },
+    removeEventListener: (t, fn) => {
+      const arr = winListeners[t]
+      if (arr) winListeners[t] = arr.filter((f) => f !== fn)
+    },
     matchMedia: () => ({ matches: false, addEventListener: () => {} }),
   }
   globalThis.MutationObserver = StubMutationObserver
 
   return {
     createElement: (t) => new StubNode(t),
+    /** 让 onMounted 真的跑起来，用于测键事件路径（见上面的 mount） */
+    mount,
     /** 触发所有注册的 observer 回调（同步模拟一帧变更） */
     flushMutations() { for (const o of [...observers]) o.cb() },
+    /** 派发一次键盘事件到 window 上的 keydown 监听，返回是否被调用 preventDefault */
+    press(key, target = null) {
+      let prevented = false
+      // 真实浏览器里 keydown 的 target 就是当前焦点元素，
+      // 而 useListNav 用 document.activeElement 判断「焦点是否在容器内」——两者要一致
+      if (target) doc.activeElement = target
+      const ev = {
+        key,
+        target,
+        preventDefault() { prevented = true },
+      }
+      for (const fn of [...(winListeners.keydown || [])]) fn(ev)
+      return prevented
+    },
     root,
     setActive(el) { doc.activeElement = el },
   }
